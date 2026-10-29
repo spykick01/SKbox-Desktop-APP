@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('skbox', {
   wifi: { scan: () => inv('wifi:scan'), status: () => inv('wifi:status'), connect: a => inv('wifi:connect', a), disconnect: () => inv('wifi:disconnect') },
   sys: { power: w => inv('sys:power', w), openSettings: p => inv('sys:openSettings', p), volume: d => inv('sys:volume', d), startup: o => inv('sys:startup', o), kiosk: o => inv('sys:kiosk', o) },
   auth: { list: () => inv('auth:list'), signin: (u, p) => inv('auth:signin', u, p), refresh: u => inv('auth:refresh', u), cred: u => inv('auth:cred', u), remove: u => inv('auth:remove', u) },
+  game: { state: () => inv('game:state'), resume: () => inv('game:resume'), close: () => inv('game:close') },
+  overlay: { state: () => inv('overlay:state'), close: r => inv('overlay:close', r), home: () => inv('overlay:home'), screenshot: () => inv('overlay:screenshot'), setPlayer: (slot, u) => inv('overlay:setPlayer', slot, u), oskResult: r => inv('overlay:osk-result', r) },
+  music: { open: u => inv('music:open', u), ensure: u => inv('music:ensure', u), status: () => inv('music:status'), cmd: (c, a) => inv('music:cmd', c, a) },
   installUpdate: () => inv('update:install'),
-  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
+  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
 });

@@ -1,7 +1,7 @@
 {
   "name": "skbox",
   "productName": "SKBox",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "SKBox: a console-style media center for PC",
   "main": "src/main.js",
   "author": "SK",
@@ -49,6 +49,9 @@
       "createStartMenuShortcut": true,
       "shortcutName": "SKBox",
       "artifactName": "SKBox-Setup-${version}.${ext}"
-    }
+    },
+    "asarUnpack": [
+      "src/native/**"
+    ]
   }
 }

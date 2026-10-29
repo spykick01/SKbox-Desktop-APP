@@ -11,8 +11,10 @@
   // ---------- toast / hints ----------
   let tt = null;
   K.toast = (msg) => { const t = K.$('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 2800); };
-  const KEYS = { A: ['k-A', 'A'], B: ['k-B', 'B'], X: ['k-X', 'X'], Y: ['k-Y', 'Y'], S: ['k-S', '\u2630'], V: ['k-S', '\u29C9'], L: ['k-S', 'LB'], R: ['k-S', 'RB'] };
-  K.hints = list => { K.$('#hints').innerHTML = list.map(([k, t]) => '<span><i class="key ' + KEYS[k][0] + '">' + KEYS[k][1] + '</i>' + K.esc(t) + '</span>').join(''); };
+  const XB = { A: ['k-A', 'A'], B: ['k-B', 'B'], X: ['k-X', 'X'], Y: ['k-Y', 'Y'], S: ['k-S', '\u2630'], V: ['k-S', '\u29C9'], L: ['k-S', 'LB'], R: ['k-S', 'RB'] };
+  const PS = { A: ['k-psx', '\u2715'], B: ['k-pso', '\u25CB'], X: ['k-pss', '\u25A1'], Y: ['k-pst', '\u25B3'], S: ['k-S', '\u2630'], V: ['k-S', '\u29C9'], L: ['k-S', 'L1'], R: ['k-S', 'R1'] };
+  K.padType = 'xbox'; let lastHints = [];
+  K.hints = list => { lastHints = list; const set = K.padType === 'ps' ? PS : XB; K.$('#hints').innerHTML = list.map(([k, t]) => { const g = set[k] || XB[k]; return '<span><i class="key ' + g[0] + '">' + g[1] + '</i>' + K.esc(t) + '</span>'; }).join(''); };
 
   // ---------- background ----------
   let bgFlip = false, bgCur = '', wall = '';
@@ -159,10 +161,11 @@
   window.addEventListener('keydown', () => document.body.classList.remove('mouse'));
 
   // ---------- gamepads ----------
-  const ps = {};
+  const ps = {}; let lastN = 0;
   function fire(a, idx) {
     document.body.classList.remove('mouse');
     if (idx <= 1 && S.players[1]) S.active = idx; else S.active = 0;
+    try { const gp = navigator.getGamepads()[idx], t = gp && /054c|dualshock|dualsense|wireless controller|playstation/i.test(gp.id || '') ? 'ps' : 'xbox'; if (t !== K.padType) { K.padType = t; K.hints(lastHints); } } catch (_) {}
     if (K.onPad) K.onPad(a, idx);
     K.act(a);
   }
@@ -171,6 +174,7 @@
     if (S.screen === 'web' && !layers().lastElementChild) return;
     const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
     S.pads = pads.map(p => p.index);
+    if (pads.length !== lastN) { lastN = pads.length; if (K.onPadCount) K.onPadCount(lastN); }
     for (const p of pads) {
       const st = ps[p.index] || (ps[p.index] = { b: [], rep: {} });
       const b = p.buttons.map(x => x.pressed), ax = p.axes;

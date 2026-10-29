@@ -4,7 +4,7 @@
   const { sk, S, $, el, esc, nav, fileUrl, toast, hints, focus, ensureFocus, openLayer, closeLayer, confirm, menu, busy, osk, field, setBg } = window.K;
   const BUILTIN = [
     { id: 'skchat', name: 'SKchat', kind: 'web', url: 'https://sksmpchat.netlify.app/chat', art: 'assets/skchat.png', grad: 'linear-gradient(160deg,#0e4a5c,#0b1020)', tag: 'Chat, calls and friends' },
-    { id: 'skmusic', name: 'SKMusic', kind: 'web', url: 'https://sksmpchat.netlify.app/skmusic', art: 'assets/skmusic.png', grad: 'linear-gradient(160deg,#6b1fa0,#14081f)', tag: 'Music, radios and playlists' }
+    { id: 'skmusic', name: 'SKMusic', kind: 'music', url: 'https://sksmpchat.netlify.app/skmusic', art: 'assets/skmusic.png', grad: 'linear-gradient(160deg,#6b1fa0,#14081f)', tag: 'Keeps playing while you game' }
   ];
   const PACKS = [
     { id: 'west', name: 'Wild West', items: [['west_hat', 'Sunset Hat'], ['west_star', 'Sheriff Star'], ['west_shoe', 'Lucky Horseshoe'], ['west_cactus', 'Cactus'], ['west_mesa', 'Canyon'], ['west_boot', 'Boot']] },
@@ -37,6 +37,7 @@
     root.innerHTML = '<div class="center"><div class="logo">SKBOX</div><div style="color:var(--dim)">Starting up\u2026</div></div>';
     (async () => {
       S.settings = (await sk.store.get('settings', {})) || {}; S.apps = (await sk.store.get('apps', [])) || [];
+      try { S.game = await sk.game.state(); } catch (_) { S.game = null; }
       applyTheme(); if (window.K.audio) { window.K.audio.apply(); window.K.audio.boot(); } S.profiles = await sk.auth.list();
       await new Promise(r => setTimeout(r, 900));
       const last = S.settings.players || [];
@@ -109,7 +110,7 @@
   function profiles(root, d) {
     const slot = d.slot || 0;
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = S.players[0] ? () => go('home') : null;
-    root.innerHTML = '<div class="center"><h1 style="font-size:2.4rem">' + (slot ? 'Player 2: who\u2019s playing?' : 'Who\u2019s playing?') + '</h1></div>';
+    root.innerHTML = '<div class="center"><h1 style="font-size:2.4rem">' + (slot ? (d.auto ? 'Player 2 joined! Pick your profile' : 'Player 2: who\u2019s playing?') : 'Who\u2019s playing?') + '</h1></div>';
     const grid = el('div', 'grid'); grid.style.cssText = 'width:min(70vw,60rem);margin-top:2vh';
     S.profiles.forEach((p, i) => {
       const c = nav(el('button', 'pcard', avatar(p, true) + '<b>' + esc(p.nick || p.u) + '</b><small>@' + esc(p.u) + '</small>'));
@@ -137,6 +138,7 @@
     hints([['A', 'Open'], ['Y', 'Options'], ['S', 'Settings']]);
     S.startFn = () => go('settings'); S.backFn = null;
     const top = el('div', 'top'), left = el('div', 'grp'), right = el('div', 'grp');
+    if (S.game) { const g = nav(el('button', 'chip game', '<div class="av">\u25B6</div><span>Resume ' + esc(S.game.name) + '</span>')); g.dataset.first = ''; g.onclick = () => sk.game.resume(); g._onopts = () => confirm('Close ' + S.game.name + '?', 'Anything unsaved in the game will be lost.', 'Close game', () => sk.game.close(), true); left.appendChild(g); }
     [0, 1].forEach(i => {
       const p = S.players[i];
       if (p) { const c = nav(el('button', 'chip', avatar(p) + '<span>' + esc(p.nick || p.u) + '</span><span class="pn">P' + (i + 1) + '</span>')); c.onclick = () => go('settings', { cat: 'players' }); c._onopts = () => pfpPicker(i); left.appendChild(c); }
@@ -176,12 +178,30 @@
       { label: 'Remove', fn: () => confirm('Remove ' + a.name + '?', 'This only removes the tile. Your files are not touched.', 'Remove', () => { S.apps = S.apps.filter(x => x.id !== a.id); if (a.cover) sk.cover.remove(a.cover); saveApps(); go('home'); }, true) }
     ]);
   }
+  const activeUser = () => (S.players[S.active] || S.players[0] || { u: 'guest' }).u;
   async function openApp(a) {
+    if (a.kind === 'music') { sk.music.open(activeUser()); return; }
     if (a.kind === 'web') { go('web', { app: a }); return; }
-    const stop = busy('Launching ' + a.name + '\u2026'); const r = await sk.launch({ exe: a.exe, args: a.args }); setTimeout(stop, 700);
-    if (!r.ok) toast(r.error || 'Could not launch.');
+    const payload = replace => ({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: !!replace });
+    const run = async replace => { const stop = busy('Launching ' + a.name + '\u2026'); const r = await sk.launch(payload(replace)); setTimeout(stop, 700); if (!r.ok) toast(r.error || 'Could not launch.'); };
+    if (S.game && S.game.id !== a.id) confirm('Switch games?', S.game.name + ' is running. Close it and start ' + a.name + '?', 'Switch', () => run(true));
+    else if (S.game) sk.game.resume(); else run(false);
   }
   sk.on('launch-error', m => toast('Could not start: ' + m));
+  sk.on('game:state', g => { S.game = g; if (S.screen === 'home') go('home'); });
+  // Player 2: a second controller connects, they pick a profile, done
+  function p2Check(n) {
+    if (n >= 2 && S.players[0] && !S.players[1] && !['boot', 'welcome', 'profiles', 'web'].includes(S.screen) && !S.p2busy) { S.p2busy = true; toast('Player 2 controller connected'); go('profiles', { slot: 1, auto: true }); }
+    if (n < 2) S.p2busy = false;
+  }
+  window.K.onPadCount = p2Check; sk.on('pads', p2Check);
+  sk.on('players-changed', async () => {
+    S.settings = (await sk.store.get('settings', {})) || S.settings; S.profiles = await sk.auth.list(); const last = S.settings.players || [];
+    S.players = [S.profiles.find(p => p.u === last[0]) || (last[0] === 'guest' ? { u: 'guest', guest: true } : S.players[0]), S.profiles.find(p => p.u === last[1]) || (last[1] === 'guest' ? { u: 'guest', guest: true } : null)];
+    if (S.players[1]) S.p2busy = true; if (S.screen === 'home') go('home');
+  });
+  sk.on('music:visible', v => { window.K.audio && window.K.audio.setExternal(!!v); });
+  setInterval(async () => { try { const m = await sk.music.status(); window.K.audio && window.K.audio.setExternal(!!(m && m.ready && m.playing)); } catch (_) {} }, 6000);
   sk.on('returned', () => { const e = window.K.current(); });
   sk.on('update-ready', v => confirm('Update ready', 'SKBox ' + v + ' has been downloaded.', 'Restart now', () => sk.installUpdate()));
 
@@ -204,6 +224,12 @@
     const fName = field('Name', d.name, { placeholder: 'e.g. Minecraft', onChange: v => { d.name = v; redraw(); } });
     const fPath = field('Path or link', d.exe, { placeholder: 'C:\\Games\\game.exe  or  steam://rungameid/...', onChange: v => { d.exe = v.replace(/^"|"$/g, ''); if (!d.name) { d.name = niceName(d.exe); fName.value = d.name; fName.innerHTML = '<span>Name</span><b>' + esc(d.name) + '</b>'; redraw(); } } });
     const fArgs = field('Launch options (optional)', d.args, { placeholder: 'e.g. -fullscreen', onChange: v => { d.args = v; } });
+    const FSM = [['auto', 'Auto (recommended)'], ['stretch', 'Fill the screen'], ['aspect', 'Keep shape, black bars'], ['altenter', 'Press Alt+Enter'], ['f11', 'Press F11'], ['off', 'Leave it alone']];
+    d.fs = d.fs || 'auto'; d.compat = !!d.compat;
+    const fFs = nav(el('button', 'fld')), setFs = () => { fFs.innerHTML = '<span>Fullscreen</span><b>' + esc(FSM.find(x => x[0] === d.fs)[1]) + '</b>'; }; setFs();
+    fFs.onclick = () => { const i = FSM.findIndex(x => x[0] === d.fs); d.fs = FSM[(i + 1) % FSM.length][0]; setFs(); };
+    const fCo = nav(el('button', 'fld')), setCo = () => { fCo.innerHTML = '<span>Old game fixes</span><b>' + (d.compat ? 'On' : 'Off') + '</b>'; }; setCo();
+    fCo.onclick = () => { d.compat = !d.compat; setCo(); };
     const row1 = el('div', 'btnrow'), br = nav(el('button', 'btn', 'Browse for file\u2026')), fc = nav(el('button', 'btn', 'Find cover art'));
     br.onclick = async () => { const f = await sk.pickFile('exe'); if (f) { d.exe = f; fPath.value = f; fPath.innerHTML = '<span>Path or link</span><b>' + esc(f) + '</b>'; if (!d.name) { d.name = niceName(f); fName.innerHTML = '<span>Name</span><b>' + esc(d.name) + '</b>'; fName.value = d.name; redraw(); } } };
     fc.onclick = () => { if (!d.name && !d.exe) { toast('Enter a name first'); return; } findCover(d, redraw); };
@@ -217,7 +243,8 @@
       if (!editing) S.apps.push(d); saveApps(); toast(editing ? 'Saved' : d.name + ' added'); go('home');
     };
     row2.append(save, cancel);
-    col.append(fName, fPath, fArgs, row1, row2); form.append(col, prev); root.querySelector('.page').appendChild(form); redraw(); ensureFocus(root);
+    const tip = el('div', 'sub', 'Auto makes the game fullscreen for you, even older titles. If a game looks wrong, try another Fullscreen choice, or turn on Old game fixes for very old games.'); tip.style.cssText = 'color:var(--dim);font-size:.82rem;line-height:1.45';
+    col.append(fName, fPath, fArgs, fFs, fCo, row1, tip, row2); form.append(col, prev); root.querySelector('.page').appendChild(form); redraw(); ensureFocus(root);
   }
 
   // ---------- web apps (SKchat / SKMusic) ----------
@@ -335,6 +362,8 @@
       P.forEach(([n, k]) => pane.appendChild(row(n, '', '', () => confirm(n + '?', k === 'quit' ? 'Press Ctrl+Shift+B or use the tray icon to bring SKBox back.' : 'Anything unsaved will be lost.', n, () => sk.sys.power(k), k !== 'sleep'))));
     } else {
       h('About SKBox'); sk.info().then(i => { sub('Version ' + i.version + ' \u00B7 SKBox by SK'); });
+      sk.info().then(i => { pane.appendChild(row('Game helper', i.helper ? 'Running: fullscreen and the SK menu are active' : 'Not running. Fullscreen and the SK menu need Windows', '', null)); });
+      pane.appendChild(row('SK menu in a game', 'Press the Xbox button or PlayStation button (or Ctrl+Shift+O)', '', null));
       pane.appendChild(row('Return to SKBox from an app', 'Press Ctrl+Shift+B, or click the SKBox tray icon', '', null));
       pane.appendChild(row('Updates', 'SKBox updates itself when you are online', '', null));
     }

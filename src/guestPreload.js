@@ -2,8 +2,9 @@
 // right stick / D-pad = scroll, B = back, Select (View) = return to SKBox, Y = keyboard.
 const { ipcRenderer } = require('electron');
 let ACTIVE = 0;
+const toHost = (ch, arg) => { try { ipcRenderer.sendToHost(ch, arg); } catch (e) {} try { ipcRenderer.send('guest:' + ch, arg); } catch (e) {} };
 ipcRenderer.on('active-pad', (_e, i) => { ACTIVE = i | 0; });
-window.addEventListener('keydown', e => { if (e.ctrlKey && e.shiftKey && (e.key === 'H' || e.key === 'h')) ipcRenderer.sendToHost('home'); });
+window.addEventListener('keydown', e => { if (e.ctrlKey && e.shiftKey && (e.key === 'H' || e.key === 'h')) toHost('home'); });
 window.addEventListener('DOMContentLoaded', () => {
   const cur = document.createElement('div');
   cur.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;border:3px solid #2dd4bf;background:rgba(45,212,191,.25);box-shadow:0 0 14px #2dd4bf;display:none;left:0;top:0';
@@ -19,7 +20,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (right) { fire(el, 'contextmenu', cx, cy, { button: 2 }); return; }
     fire(el, 'click', cx, cy);
     const f = isField(el) ? el : (el.closest && el.closest('input,textarea,[contenteditable="true"]'));
-    if (f && isField(f)) { f.focus(); ipcRenderer.sendToHost('osk', { type: f.type || 'text', value: f.value || f.textContent || '' }); }
+    if (f && isField(f)) { f.focus(); toHost('osk', { type: f.type || 'text', value: f.value || f.textContent || '' }); }
   }
   function scrollAt(dy) {
     let el = document.elementFromPoint(cx, cy);
@@ -42,8 +43,8 @@ window.addEventListener('DOMContentLoaded', () => {
     if (edge(2)) click(true);
     if (edge(1)) { if (history.length > 1) history.back(); }
     if (edge(4)) history.back(); if (edge(5)) history.forward();
-    if (edge(3)) { const a = document.activeElement; ipcRenderer.sendToHost('osk', { type: (a && a.type) || 'text', value: (a && a.value) || '' }); }
-    if (edge(8) || edge(16)) ipcRenderer.sendToHost('home');
+    if (edge(3)) { const a = document.activeElement; toHost('osk', { type: (a && a.type) || 'text', value: (a && a.value) || '' }); }
+    if (edge(8) || edge(16)) toHost('home');
     prev = b;
   }
   requestAnimationFrame(loop);

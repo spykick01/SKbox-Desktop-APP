@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>SKBox</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Segoe UI",system-ui,sans-serif;color:#fff;cursor:none}
+.wrap{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.2vh;transition:opacity 1.2s ease}
+body.dim .wrap{opacity:0}
+.cover{height:42vh;aspect-ratio:2/3;border-radius:14px;background-size:cover;background-position:center;box-shadow:0 20px 60px rgba(0,0,0,.7);background-color:#10121f}
+h1{font-size:2.6vh;font-weight:700;margin:0;letter-spacing:.02em}
+p{margin:0;color:#8a90ad;font-size:1.9vh}
+.spin{width:4vh;height:4vh;border-radius:50%;border:.5vh solid rgba(255,255,255,.18);border-top-color:#2dd4bf;animation:s 1s linear infinite}@keyframes s{to{transform:rotate(360deg)}}
+</style></head>
+<body><div class="wrap"><div class="cover" id="c"></div><h1 id="n"></h1><div class="spin"></div><p>Starting\u2026</p></div>
+<script src="backdrop.js"></script></body></html>

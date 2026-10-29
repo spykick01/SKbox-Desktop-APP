@@ -108,7 +108,7 @@
   // ---- app wiring (browser only) ----
   if (typeof window === 'undefined' || !window.K) return;
   const K = window.K, S = K.S;
-  let ctx = null, eng = null, uiFx = null, uiGain = null, mGain = null, timer = null, suspended = false, started = false;
+  let ctx = null, eng = null, uiFx = null, uiGain = null, mGain = null, timer = null, suspended = false, started = false, ext = false;
   const st = () => S.settings;
   function init() {
     if (ctx) return true;
@@ -118,7 +118,7 @@
     eng = new Engine(ctx, mGain); uiFx = ui(ctx, uiGain); return true;
   }
   function tick() { if (eng && ctx.state === 'running') eng.schedule(ctx.currentTime + 2.2); }
-  function musicOn() { return st().music !== false && !suspended && !document.hidden; }
+  function musicOn() { return st().music !== false && !suspended && !ext && !document.hidden; }
   function applyMusic() {
     if (!init()) return;
     const s = st(), want = musicOn(), vol = (s.musicVol == null ? 50 : s.musicVol) / 100;
@@ -136,6 +136,7 @@
     moods: () => Object.keys(MOODS).map(id => [id, MOODS[id].name]),
     apply: applyMusic,
     setSuspended(v) { suspended = !!v; applyMusic(); },
+    setExternal(v) { if (ext !== !!v) { ext = !!v; applyMusic(); } },
     play(name) {
       if (st().sfx === false || !init()) return; if (ctx.state === 'suspended' && !musicOn()) ctx.resume();
       const v = (st().sfxVol == null ? 60 : st().sfxVol) / 100; uiGain.gain.value = v; const f = uiFx[name]; if (f) f(ctx.currentTime + 0.005);
