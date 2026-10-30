@@ -33,11 +33,14 @@ class HelperClient extends EventEmitter {
       case 'GONE': this.emit('gone'); break;
       case 'NOWIN': this.emit('nowin'); break;
       case 'ERR': this.emit('error-line', r.join(' ')); break;
+      case 'DIAG': this.emit('diag', r.join(' ')); break;
+      case 'PONG': this.emit('pong'); break;
     }
   }
   send(line) { try { if (this.child && this.child.stdin && this.child.stdin.writable) this.child.stdin.write(line + '\n'); } catch {} }
   watch(pid, mode, skPid) { this.send('WATCH ' + (pid | 0) + ' ' + (/^(auto|stretch|aspect|altenter|f11|off)$/.test(mode) ? mode : 'auto') + ' ' + (skPid | 0)); }
   unwatch() { this.send('UNWATCH'); }
+  closeWindow(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('CLOSE ' + hwnd); }
   focus(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('FOCUS ' + hwnd); }
   stop() { this.stopped = true; this.send('QUIT'); try { this.child && this.child.kill(); } catch {} }
 }

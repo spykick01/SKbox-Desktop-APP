@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, safeStorage, Tray, Menu, Notification, nativeImage, screen, desktopCapturer } = require('electron');
 const { spawn, execFile } = require('child_process');
 const path = require('path'), fs = require('fs'), crypto = require('crypto');
-const wifi = require('./lib/wifi'), covers = require('./lib/covers'), { HelperClient } = require('./lib/helperClient');
+const bt = require('./lib/bluetooth'), wifi = require('./lib/wifi'), covers = require('./lib/covers'), { HelperClient } = require('./lib/helperClient');
 const store = require('./lib/store').make(app.getPath('userData'));
 
 const API_KEY = 'AIzaSyAm2A3omt2z1dnK2Z_TdwPk1GTYuYQYdUQ', PROJECT = 'sksmpmc-e4682';
@@ -13,6 +13,7 @@ const RENDERER = (f) => path.join(__dirname, '..', 'renderer', f);
 if (!app.requestSingleInstanceLock()) app.quit();
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+const helperInfo = { error: '', lastGuide: 0, guides: 0, lastKey: '', diag: [] };
 let win = null, tray = null, kiosk = true, helper = null, game = null, backdrop = null, overlayWin = null, overlayOpen = false, musicWin = null, musicUser = '', musicVisible = false, padCount = 0;
 const send = (ch, ...a) => { try { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); } catch {} try { if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send(ch, ...a); } catch {} };
 const nativeHwnd = w => { try { const b = w.getNativeWindowHandle(); return b.length >= 8 ? String(b.readBigUInt64LE(0)) : String(b.readUInt32LE(0)); } catch { return ''; } };
@@ -53,7 +54,7 @@ app.on('web-contents-created', (_e, wc) => {
 });
 
 // ================= storage =================
-const STORES = ['apps', 'settings'];
+const STORES = ['apps', 'settings', 'stats'];
 ipcMain.handle('store:get', (_e, n, d) => STORES.includes(n) ? store.read(n, d) : d);
 ipcMain.handle('store:set', (_e, n, v) => { if (STORES.includes(n)) store.write(n, v); return true; });
 ipcMain.handle('sys:info', () => ({ version: app.getVersion(), platform: process.platform, covers: COVER_DIR(), startup: isWin ? app.getLoginItemSettings().openAtLogin : false, helper: !!(helper && helper.ready) }));
@@ -99,11 +100,15 @@ ipcMain.handle('dialog:file', async (_e, kind) => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
   return r.canceled ? null : r.filePaths[0];
 });
+const newCover = ext => path.join(COVER_DIR(), crypto.randomBytes(6).toString('hex') + (ext || '.jpg'));
+// "fill" = portrait box art that fills the tile; "fit" = wide or square images shown whole on a blurred backdrop
+function coverFit(file) { try { const z = nativeImage.createFromPath(file).getSize(); if (!z.width || !z.height) return 'fill'; return z.width / z.height <= 0.9 ? 'fill' : 'fit'; } catch { return 'fill'; } }
 ipcMain.handle('cover:candidates', (_e, term) => covers.search(term).catch(() => []));
-ipcMain.handle('cover:auto', async (_e, term) => { const id = crypto.randomBytes(6).toString('hex'), dest = path.join(COVER_DIR(), id + '.jpg'); const r = await covers.auto(term, dest).catch(() => ({ ok: false })); return r.ok ? { ok: true, file: dest, portrait: r.portrait, matched: r.matched } : { ok: false }; });
-ipcMain.handle('cover:pick', async (_e, steamId) => { const id = crypto.randomBytes(6).toString('hex'), dest = path.join(COVER_DIR(), id + '.jpg'); const r = await covers.download(steamId, dest); return r.ok ? { ok: true, file: dest, portrait: r.portrait } : { ok: false }; });
-ipcMain.handle('cover:copy', async (_e, src) => { try { const dest = path.join(COVER_DIR(), crypto.randomBytes(6).toString('hex') + path.extname(src)); fs.mkdirSync(COVER_DIR(), { recursive: true }); fs.copyFileSync(src, dest); return { ok: true, file: dest, portrait: true }; } catch { return { ok: false }; } });
-ipcMain.handle('cover:icon', async (_e, exe) => { try { if (!/^[a-z]:|^\\\\/i.test(exe)) return { ok: false }; const img = await app.getFileIcon(exe, { size: 'large' }); if (img.isEmpty()) return { ok: false }; const dest = path.join(COVER_DIR(), crypto.randomBytes(6).toString('hex') + '.png'); fs.mkdirSync(COVER_DIR(), { recursive: true }); fs.writeFileSync(dest, img.toPNG()); return { ok: true, file: dest, icon: true }; } catch { return { ok: false }; } });
+ipcMain.handle('cover:auto', async (_e, term) => { const dest = newCover('.jpg'); const r = await covers.auto(term, dest).catch(() => ({ ok: false })); return r.ok ? { ok: true, file: dest, fit: coverFit(dest), matched: r.matched, source: r.source } : { ok: false }; });
+ipcMain.handle('cover:pick', async (_e, steamId) => { const dest = newCover('.jpg'); const r = await covers.download(steamId, dest).catch(() => ({ ok: false })); return r.ok ? { ok: true, file: dest, fit: coverFit(dest) } : { ok: false, error: r.error === 'offline' ? 'No internet connection.' : 'Could not download that one.' }; });
+ipcMain.handle('cover:pickUrl', async (_e, url) => { const dest = newCover('.img'); const r = await covers.downloadUrl(String(url || '').trim(), dest); return r.ok ? { ok: true, file: dest, fit: coverFit(dest) } : { ok: false, error: r.error || 'Could not use that link.' }; });
+ipcMain.handle('cover:copy', async (_e, src) => { try { const dest = newCover(path.extname(src) || '.jpg'); fs.mkdirSync(COVER_DIR(), { recursive: true }); fs.copyFileSync(src, dest); return { ok: true, file: dest, fit: coverFit(dest) }; } catch { return { ok: false }; } });
+ipcMain.handle('cover:icon', async (_e, exe) => { try { if (!/^[a-z]:|^\\/i.test(exe)) return { ok: false }; const img = await app.getFileIcon(exe, { size: 'large' }); if (img.isEmpty()) return { ok: false }; const dest = newCover('.png'); fs.mkdirSync(COVER_DIR(), { recursive: true }); fs.writeFileSync(dest, img.toPNG()); return { ok: true, file: dest, fit: 'icon' }; } catch { return { ok: false }; } });
 ipcMain.handle('cover:remove', (_e, f) => { try { if (f && path.dirname(f) === COVER_DIR()) fs.unlinkSync(f); } catch {} return true; });
 
 // ================= running a game =================
@@ -122,20 +127,28 @@ function showBackdrop(a) {
 }
 function closeBackdrop() { try { if (backdrop && !backdrop.isDestroyed()) backdrop.destroy(); } catch {} backdrop = null; }
 function gameState() { return game ? { id: game.id, name: game.name, startedAt: game.startedAt, cover: game.cover || '', hasWindow: !!game.hwnd } : null; }
-function killGame() {
-  return new Promise(res => {
-    const pids = [...new Set([game && game.pid, game && game.wpid].filter(x => x > 0))];
-    if (!pids.length || !isWin) { res(); return; }
-    let n = pids.length; pids.forEach(p => execFile('taskkill', ['/PID', String(p), '/T', '/F'], { windowsHide: true }, () => { if (--n === 0) res(); }));
-  });
+const alive = p => { try { process.kill(p, 0); return true; } catch { return false; } };
+const waitDead = async (pids, ms) => { const t = Date.now(); while (Date.now() - t < ms) { if (!pids.some(alive)) return true; await new Promise(r => setTimeout(r, 150)); } return false; };
+const taskkill = pid => new Promise(res => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => res()));
+// Close politely first (so games can save), then force it. Returns true if we found something to close.
+async function killGame() {
+  if (!game || !isWin) return false;
+  const pidsNow = () => [...new Set([game && game.pid, game && game.wpid].filter(x => x > 0))];
+  let pids = pidsNow(), found = pids.length > 0 || !!game.hwnd;
+  if (helper && helper.ready && game.hwnd) { helper.closeWindow(game.hwnd); if (pids.length) await waitDead(pids, 3000); else await new Promise(r => setTimeout(r, 1500)); }
+  pids = pidsNow().filter(alive);
+  await Promise.all(pids.map(taskkill));
+  return found;
 }
+function statsTouch(id, ms) { if (!id) return; const st = store.read('stats', {}), x = st[id] || (st[id] = { last: 0, ms: 0, n: 0 }); x.last = Date.now(); if (ms) x.ms += ms; else x.n++; store.write('stats', st); }
 function endGame() {
-  if (!game) return; game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
+  if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
   send('game:state', null); comeBack();
 }
 ipcMain.handle('game:state', () => gameState());
+ipcMain.handle('stats:touch', (_e, id) => { statsTouch(String(id || '').slice(0, 60), 0); return true; });
 ipcMain.handle('game:resume', () => { if (!game) return false; hideMusic(false); closeOverlay(false); stepAside(); if (helper && game.hwnd) helper.focus(game.hwnd); return true; });
-ipcMain.handle('game:close', async () => { if (!game) return false; await killGame(); endGame(); return true; });
+ipcMain.handle('game:close', async () => { if (!game) return { ok: false }; const name = game.name, found = await killGame(); endGame(); return { ok: true, found, name }; });
 ipcMain.handle('app:launch', async (_e, a) => {
   const target = String(a.exe || '').trim().replace(/^"|"$/g, '');
   if (!target) return { ok: false, error: 'No file set for this app.' };
@@ -145,6 +158,7 @@ ipcMain.handle('app:launch', async (_e, a) => {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
     game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: a.fs || 'auto', noWindow: false, exited: false };
+    statsTouch(a.id, 0);
     if (a.compat && !isUrl && /\.exe$/i.test(target)) applyCompat(target);
     showBackdrop(game); send('game:state', gameState());
     let child = null;
@@ -168,13 +182,15 @@ const helperScript = () => path.join(__dirname, 'native', 'helper.ps1').replace(
 function startHelper() {
   if (!isWin) return;
   helper = new HelperClient({ script: helperScript() });
-  helper.on('guide', () => toggleOverlay());
+  helper.on('guide', k => { helperInfo.lastGuide = Date.now(); helperInfo.guides++; helperInfo.lastKey = k; toggleOverlay(); });
+  helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
+  helper.on('ready', () => { helperInfo.error = ''; });
   helper.on('pads', n => { padCount = n; send('pads', n); const pl = playersMeta(); if (n >= 2 && !pl[1] && game && !overlayOpen) openOverlay({ p2: true }); });
   helper.on('win', w => { if (game) { game.hwnd = w.hwnd; game.wpid = w.pid; send('game:state', gameState()); } });
   helper.on('fs', t => { backdropFade(); send('fs', t); });
   helper.on('gone', () => endGame());
   helper.on('nowin', () => { if (game) { game.noWindow = true; if (game.exited || !game.pid) endGame(); } });
-  helper.on('error-line', l => { try { fs.appendFileSync(path.join(app.getPath('userData'), 'helper.log'), new Date().toISOString() + ' ' + l + '\n'); } catch {} });
+  helper.on('error-line', l => { helperInfo.error = String(l).slice(0, 200); try { fs.appendFileSync(path.join(app.getPath('userData'), 'helper.log'), new Date().toISOString() + ' ' + l + '\n'); } catch {} });
   helper.start();
 }
 
@@ -202,7 +218,9 @@ function closeOverlay(refocus) {
   overlayOpen = false; try { overlayWin.webContents.send('overlay:close'); overlayWin.hide(); } catch {}
   if (refocus) { if (musicVisible && musicWin && !musicWin.isDestroyed()) { musicWin.focus(); if (helper) helper.focus(nativeHwnd(musicWin)); } else if (game && game.hwnd && helper) helper.focus(game.hwnd); }
 }
-function toggleOverlay() { if (overlayOpen) closeOverlay(true); else openOverlay({}); }
+let overlayStamp = 0;
+// Both the native helper and the browser can see the same Xbox / PS press; ignore the second one.
+function toggleOverlay() { if (Date.now() - overlayStamp < 700) return; overlayStamp = Date.now(); if (overlayOpen) closeOverlay(true); else openOverlay({}); }
 ipcMain.handle('overlay:state', () => overlayStateObj({}));
 ipcMain.handle('overlay:close', (_e, refocus) => { closeOverlay(refocus !== false); return true; });
 ipcMain.handle('overlay:home', () => { closeOverlay(false); hideMusic(false); comeBack(); return true; });
@@ -267,6 +285,23 @@ ipcMain.handle('overlay:osk-result', (_e, r) => {
   return true;
 });
 
+// ================= Xbox button: take it back from Game Bar =================
+// Windows opens Xbox Game Bar when you press the controller's Xbox button, and then SKBox never sees it.
+// This turns off just that one shortcut (Windows Settings > Gaming > Xbox Game Bar) for the current user.
+function takeGuide(on) { if (!isWin) return; execFile('reg', ['add', 'HKCU\\Software\\Microsoft\\GameBar', '/v', 'UseNexusForGameBarEnabled', '/t', 'REG_DWORD', '/d', on ? '0' : '1', '/f'], { windowsHide: true }, () => {}); }
+ipcMain.handle('helper:status', () => ({ ready: !!(helper && helper.ready), error: helperInfo.error, lastGuide: helperInfo.lastGuide, guides: helperInfo.guides, lastKey: helperInfo.lastKey, diag: helperInfo.diag.slice(), pads: padCount, takeGuide: store.read('settings', {}).takeGuide !== false }));
+ipcMain.handle('helper:testMenu', () => { if (!overlayOpen) toggleOverlay(); return true; });
+ipcMain.handle('sys:takeGuide', (_e, on) => { const s = store.read('settings', {}); s.takeGuide = !!on; store.write('settings', s); takeGuide(!!on); return !!on; });
+
+// ================= Bluetooth (inside SKBox) =================
+const btScript = () => path.join(__dirname, 'native', 'bluetooth.ps1').replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
+let btBusy = false;
+ipcMain.handle('bt:run', async (_e, action, id) => {
+  if (!['list', 'scan', 'pair', 'unpair'].includes(action)) return { ok: false, error: 'Unknown action.' };
+  if (btBusy) return { ok: false, error: 'Bluetooth is busy. Wait a moment.' };
+  btBusy = true; try { return await bt.run(btScript(), action, id ? String(id) : '', { timeout: action === 'scan' ? 100000 : 90000 }); } finally { btBusy = false; }
+});
+
 // ================= wifi / system =================
 ipcMain.handle('wifi:scan', async () => { try { return { ok: true, nets: await wifi.scan() }; } catch (e) { return { ok: false, error: 'Wi-Fi is not available on this PC.' }; } });
 ipcMain.handle('wifi:status', async () => { try { return await wifi.status(); } catch { return { connected: false, ssid: '', signal: 0 }; } });
@@ -302,6 +337,7 @@ app.on('second-instance', comeBack);
 app.whenReady().then(() => {
   const st = store.read('settings', {});
   if (st.startup === undefined && (isWin || process.platform === 'darwin')) { app.setLoginItemSettings({ openAtLogin: true }); st.startup = true; store.write('settings', st); }
+  if (st.takeGuide !== false) takeGuide(true);
   createWindow(); setupTray(); setupUpdates(); startHelper();
   globalShortcut.register('Control+Shift+B', comeBack);
   globalShortcut.register('Control+Shift+O', toggleOverlay);

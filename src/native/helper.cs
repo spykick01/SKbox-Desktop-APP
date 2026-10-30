@@ -35,6 +35,7 @@ public static class SkHelper
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
     [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
@@ -257,6 +258,7 @@ public static class SkHelper
     {
         PadMem m = Mem(key);
         if (guide && !m.GuideDown) Emit("GUIDE " + key);
+        if (guide != m.GuideDown) Emit("DIAG guide " + key + " " + (guide ? "down" : "up"));
         m.GuideDown = guide;
         if (chord) { if (m.Chord == DateTime.MinValue) m.Chord = DateTime.UtcNow; else if (!m.Fired && (DateTime.UtcNow - m.Chord).TotalMilliseconds > 1200) { m.Fired = true; Emit("GUIDE " + key + "chord"); } }
         else { m.Chord = DateTime.MinValue; m.Fired = false; }
@@ -278,7 +280,7 @@ public static class SkHelper
         for (uint i = 0; i < 4; i++)
         {
             XINPUT_STATE st = new XINPUT_STATE(); uint rc = XGet(i, ref st);
-            if (rc == 0) { count++; ushort b = st.Gamepad.wButtons; Press("x" + i, (b & 0x0400) != 0, (b & 0x0030) == 0x0030); }
+            if (rc == 0) { count++; ushort b = st.Gamepad.wButtons; Press("x" + i, (b & 0x0400) != 0, (b & 0x0030) == 0x0030 || (b & 0x0320) == 0x0320); }
             else { Press("x" + i, false, false); }
         }
         uint n = 0; try { n = Math.Min(16u, joyGetNumDevs()); } catch (Exception) { }
@@ -293,7 +295,7 @@ public static class SkHelper
             if (mid == 0x054C) Press("j" + id, (ji.dwButtons & 0x1000) != 0, (ji.dwButtons & 0x0300) == 0x0300);   // PS button; Share + Options chord
         }
         if (count != pendingCount) { pendingCount = count; countSince = DateTime.UtcNow; }
-        if (pendingCount != lastCount && (DateTime.UtcNow - countSince).TotalMilliseconds > 900) { lastCount = pendingCount; Emit("PADS " + lastCount); }
+        if (pendingCount != lastCount && (DateTime.UtcNow - countSince).TotalMilliseconds > 900) { lastCount = pendingCount; Emit("PADS " + lastCount); Emit("DIAG xinputmode " + xmode + " pads " + lastCount); }
     }
 
     // ---------------- main loop ----------------
@@ -315,6 +317,8 @@ public static class SkHelper
                     if (p[0] == "WATCH") StartWatch(p);
                     else if (p[0] == "UNWATCH") watch = null;
                     else if (p[0] == "FOCUS" && p.Length > 1) { long hv; if (long.TryParse(p[1], out hv) && IsWindow(new IntPtr(hv))) ForceForeground(new IntPtr(hv)); }
+                    else if (p[0] == "CLOSE" && p.Length > 1) { long hv2; if (long.TryParse(p[1], out hv2) && IsWindow(new IntPtr(hv2))) PostMessage(new IntPtr(hv2), 0x0010, IntPtr.Zero, IntPtr.Zero); }
+                    else if (p[0] == "PING") Emit("PONG");
                     else if (p[0] == "QUIT") quit = true;
                 }
                 catch (Exception e) { Emit("ERR " + e.Message.Replace('\n', ' ')); }

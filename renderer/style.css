@@ -142,3 +142,27 @@ body.ovl #shade,body.ovl .bg,body.ovl .fx{display:none}
 .gchips{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:.6rem}
 .qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(8.5rem,1fr));gap:1rem}
 .qt{height:12.5rem;border-radius:.9rem;background:#1b2140 center/cover;border:2px solid transparent;position:relative;overflow:hidden}.qt.focus{border-color:#fff;transform:scale(1.06)}.qt small{position:absolute;left:0;right:0;bottom:0;padding:.4rem .5rem;background:linear-gradient(0deg,rgba(0,0,0,.85),transparent);font-weight:700;font-size:.8rem}
+
+/* wide / square cover art shown whole on a blurred backdrop */
+.tile .art.fitart{background:#0b0d19;position:relative}
+.tile .art.fitart:before{content:"";position:absolute;inset:-12%;background:var(--img) center/cover;filter:blur(16px) brightness(.55) saturate(1.2)}
+.tile .art.fitart img{position:relative;width:100%;height:auto;border-radius:.5rem;box-shadow:0 8px 24px rgba(0,0,0,.6)}
+
+/* --- Library, pins, new chips (v1.3) --- */
+.badge{position:absolute;left:.5rem;top:.5rem;z-index:2;font-size:.68rem;font-weight:800;padding:.18rem .5rem;border-radius:999px;background:rgba(5,6,13,.78);border:1px solid var(--line);backdrop-filter:blur(6px)}
+.badge.run{background:var(--a);color:#05060d;border-color:transparent;left:auto;right:.5rem}
+.badge.pin{left:.5rem;right:auto}
+.chip.danger{border-color:#ff6b6b;background:linear-gradient(135deg,rgba(255,107,107,.22),var(--panel))}
+.chip.np{max-width:22rem}
+.tile .art.libart{background:linear-gradient(160deg,#243b55,#0b1020);display:flex;flex-direction:column;gap:1.2vh}
+.tile .art.libart b{font-size:1.15rem;letter-spacing:.03em}
+.libico{display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem;width:42%}
+.libico i{display:block;aspect-ratio:1;border-radius:.4rem;background:var(--a);opacity:.9}
+.libico i:nth-child(2){opacity:.6}.libico i:nth-child(3){opacity:.45}.libico i:nth-child(4){opacity:.75}
+.page.lib{display:flex;flex-direction:column;min-height:0}
+.libbar{display:flex;gap:1rem;margin:0 0 1.2vh;flex-wrap:wrap}
+.libgrid{flex:1;min-height:0;overflow-y:auto;display:flex;flex-wrap:wrap;align-content:flex-start;gap:2.4vh 1.8vw;padding:2.4vh 1.5vw 3vh;scrollbar-width:none}
+.libgrid::-webkit-scrollbar{display:none}
+.libgrid .tile{width:17vh;height:25.5vh}
+.libinfo{display:flex;gap:1rem;align-items:baseline;padding:1.2vh .5vw 0;color:var(--dim)}
+.libinfo b{color:var(--text);font-size:1.25rem}

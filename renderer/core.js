@@ -144,7 +144,7 @@
     if (a === 'up' || a === 'down' || a === 'left' || a === 'right') { move(a); return; }
     if (a === 'ok') { if (cur) { K.snd && K.snd.play('ok'); cur.click(); } return; }
     if (a === 'back') { if (top) { if (top._cancel) top._cancel(); } else if (S.backFn) { K.snd && K.snd.play('back'); S.backFn(); } return; }
-    if (a === 'alt') { if (top && top._alt) top._alt(); return; }
+    if (a === 'alt') { if (top && top._alt) top._alt(); else if (!top && cur && cur._onalt) cur._onalt(cur); return; }
     if (a === 'opts') { if (top && top._opts) top._opts(); else if (!top && cur && cur._onopts) cur._onopts(cur); return; }
     if (a === 'prev' || a === 'next') { if (!top && S.bumper) S.bumper(a); return; }
     if (a === 'start') { if (!top && S.startFn) S.startFn(); return; }
@@ -183,6 +183,7 @@
       const edge = i => b[i] && !st.b[i];
       if (edge(0)) fire('ok', p.index); if (edge(1)) fire('back', p.index); if (edge(2)) fire('alt', p.index); if (edge(3)) fire('opts', p.index);
       if (edge(4)) fire('prev', p.index); if (edge(5)) fire('next', p.index); if (edge(9)) fire('start', p.index);
+      if (edge(16) && K.sk) { if (S.screen === 'overlay') K.sk.overlay.close(); else K.sk.helper.testMenu(); }   // Xbox / PS button seen by the browser: open the SK menu
       st.b = b;
     }
   }

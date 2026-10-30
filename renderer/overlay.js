@@ -137,7 +137,7 @@
 
   // ---------- actions ----------
   async function shot() { toast('Taking screenshot\u2026'); const r = await sk.overlay.screenshot(); toast(r.ok ? 'Saved to Pictures\\SKBox' : 'Could not take a screenshot.'); }
-  function closeGame() { confirm('Close ' + st.game.name + '?', 'Anything unsaved in the game will be lost.', 'Close game', async () => { await sk.game.close(); }, true); }
+  function closeGame() { confirm('Close ' + st.game.name + '?', 'Anything unsaved in the game will be lost.', 'Close game', async () => { const r = await sk.game.close(); if (r && r.found === false) toast('Could not find the game\u2019s window.'); }, true); }
   function power() {
     const P = [['Sleep', 'sleep'], ['Restart', 'restart'], ['Shut down', 'shutdown'], ['Exit SKBox', 'quit']];
     menu('Power', P.map(([n, k]) => ({ label: n, fn: () => confirm(n + '?', k === 'quit' ? 'SKBox and the game stay open until you close them.' : 'Anything unsaved will be lost.', n, () => sk.sys.power(k), k !== 'sleep') })));
