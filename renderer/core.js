@@ -173,6 +173,7 @@
     requestAnimationFrame(poll);
     if (S.screen === 'web' && !layers().lastElementChild) return;
     const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
+    if (K.padFromHelper && S.screen === 'overlay') return;   // the helper feeds the menu instead
     S.pads = pads.map(p => p.index);
     if (pads.length !== lastN) { lastN = pads.length; if (K.onPadCount) K.onPadCount(lastN); }
     for (const p of pads) {
@@ -187,6 +188,14 @@
       st.b = b;
     }
   }
+  // Controller input that arrives from the native helper (used by the SK menu: no window focus needed)
+  K.padFromHelper = false;
+  K.padIn = (slot, a) => {
+    if (S.screen === 'web' && !layers().lastElementChild) return;
+    document.body.classList.remove('mouse'); S.active = slot === 1 && S.players[1] ? 1 : 0;
+    if (a === 'select') return;
+    if (K.onPad) K.onPad(a, slot); K.act(a);
+  };
   window.addEventListener('gamepadconnected', e => K.toast('Controller connected: ' + (e.gamepad.id || '').split('(')[0].trim().slice(0, 40)));
   window.addEventListener('gamepaddisconnected', () => K.toast('Controller disconnected'));
   K.startPads = () => requestAnimationFrame(poll);

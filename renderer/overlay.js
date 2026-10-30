@@ -11,6 +11,8 @@
   const avatar = p => { const u = avatarUrl(p); return '<div class="av"' + (u ? ' style="background-image:url(\'' + esc(u) + '\')"></div>' : '>' + (p ? esc((p.nick || p.u || '?')[0].toUpperCase()) : '+') + '</div>'); };
   const minutes = () => st && st.game ? Math.max(0, Math.round((Date.now() - st.game.startedAt) / 60000)) : 0;
 
+  const OPAQUE = /[?&]opaque=1/.test(location.search); if (OPAQUE) document.body.classList.add('opaque');
+  sk.on('padin', (slot, a) => K.padIn(slot, a));
   sk.on('overlay:open', s => open(s));
   sk.on('overlay:close', () => reset());
   sk.on('pads', n => { if (st) st.pads = n; });
@@ -18,7 +20,8 @@
   function reset() { clearTimers(); mode = 'menu'; S.screen = 'overlay'; const r = $('#screen'); r.innerHTML = ''; $('#layers').innerHTML = ''; S.osk = false; }
   function open(s) {
     reset(); st = s; S.settings = s.settings || {}; S.players = s.players || [null, null]; S.apps = s.apps || []; S.active = 0;
-    document.documentElement.style.setProperty('--a', S.settings.accent || '#2dd4bf');
+    document.documentElement.style.setProperty('--a', S.settings.accent || '#2dd4bf'); K.padFromHelper = !!s.helper;
+    if (OPAQUE) { const b = S.settings.bg || 'dynamic'; K.setWall(b.startsWith('file:') ? fileUrl(b.slice(5)) : (b === 'dynamic' ? '' : 'assets/bg/' + b + '.jpg')); }
     if (s.opts && s.opts.osk) { oskMode(s.opts.osk); return; }
     build(); if (s.opts && s.opts.p2) { toast('Player 2 controller connected'); players(true); }
   }
@@ -108,7 +111,7 @@
     subView('quick', 'Quick play', st.game ? 'Starting another game closes ' + st.game.name + '.' : 'Pick something to play.');
     if (!S.apps.length) { panel.appendChild(el('p', 'sub', 'No games added yet. Add them from the SKBox home screen.')); return; }
     const grid = el('div', 'qgrid');
-    S.apps.forEach((a, i) => {
+    const stt = st.stats || {}; S.apps.slice().sort((x, y) => ((stt[y.id] || {}).last || 0) - ((stt[x.id] || {}).last || 0)).forEach((a, i) => {
       const t = nav(el('button', 'qt', '<small>' + esc(a.name) + '</small>')); if (a.cover) t.style.backgroundImage = 'url("' + fileUrl(a.cover) + '")'; if (i === 0) t.dataset.first = '';
       t.onclick = () => { const go = async () => { const r = await sk.launch({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: true }); if (!r.ok) toast(r.error || 'Could not start that.'); else sk.overlay.close(false); }; if (st.game) confirm('Switch games?', 'This closes ' + st.game.name + ' and starts ' + a.name + '.', 'Switch', go); else go(); };
       grid.appendChild(t);

@@ -166,3 +166,19 @@ body.ovl #shade,body.ovl .bg,body.ovl .fx{display:none}
 .libgrid .tile{width:17vh;height:25.5vh}
 .libinfo{display:flex;gap:1rem;align-items:baseline;padding:1.2vh .5vw 0;color:var(--dim)}
 .libinfo b{color:var(--text);font-size:1.25rem}
+
+/* --- v1.4 --- */
+.tile .art.libart{align-items:center;justify-content:center;text-align:center}
+.tile .art.libart .libico{margin:0 auto}
+.tile .art.libart b{display:block;width:100%;text-align:center}
+body.ovl.opaque{background:#05060d}
+body.ovl.opaque .bg{display:block}
+body.ovl.opaque #shade{display:block}
+body.ovl.opaque .ovdim{display:none}
+.shots{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
+.shot{aspect-ratio:16/9;border-radius:.7rem;background:#0b0d19 center/cover;border:1px solid var(--line);position:relative;overflow:hidden;transition:transform .15s,box-shadow .15s}
+.shot small{position:absolute;left:0;right:0;bottom:0;padding:.3rem .5rem;font-size:.7rem;background:linear-gradient(0deg,rgba(0,0,0,.75),transparent);text-align:left}
+.shot.focus{transform:scale(1.04);box-shadow:0 0 0 3px var(--a)}
+.bigshot{width:min(80vw,120vh);aspect-ratio:16/9;background:#000 center/contain no-repeat;border-radius:.8rem}
+.newlist{margin:.4rem 0 1rem;padding-left:1.1rem;line-height:1.7;color:var(--dim)}
+.newlist b{color:var(--text)}

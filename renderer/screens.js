@@ -173,7 +173,7 @@
     npB.onclick = () => sk.music.cmd('toggle').then(() => setTimeout(tick, 400)); npB._onopts = () => sk.music.open(activeUser()); left.appendChild(npB);
     const wifiB = nav(el('button', 'ibtn', '<span id="wf">\u{1F4F6}</span><span id="wfn" style="font-size:.85rem;color:var(--dim)"></span>')); wifiB.onclick = () => go('settings', { cat: 'wifi' });
     const btB = nav(el('button', 'ibtn', '<span style="font-size:.85rem">\u16D2 Bluetooth</span>')); btB.onclick = () => go('settings', { cat: 'bluetooth' });
-    const pad = el('div', 'ibtn', '\u{1F3AE} <span id="padn">0</span>'); pad.style.cursor = 'default';
+    const pad = el('div', 'ibtn', '\u{1F3AE} <span id="padn">0</span><span id="bat" style="font-size:.8rem;color:var(--dim);margin-left:.4rem"></span>'); pad.style.cursor = 'default';
     const clk = el('div', 'clock'); const setB = nav(el('button', 'ibtn', '\u2699')); setB.onclick = () => go('settings'); const pw = nav(el('button', 'ibtn', '\u23FB')); pw.onclick = () => go('settings', { cat: 'power' });
     right.append(wifiB, btB, pad, clk, setB, pw); top.append(left, right);
     const wrap = el('div', 'home'), row = el('div', 'row'), info = el('div', 'info');
@@ -191,9 +191,10 @@
       row.appendChild(t);
     });
     if (S.migratedPins) { S.migratedPins = false; setTimeout(() => toast('Your apps are now in the Library. Pin or unpin them from there.'), 600); }
+    if (!S.newsChecked) { S.newsChecked = true; sk.info().then(i => { if (i && i.version && S.settings.seenVersion !== i.version) { S.settings.seenVersion = i.version; saveSettings(); setTimeout(() => { if (S.screen === 'home') showNews(); }, 900); } }); }
     if (list.length === 1) setTimeout(() => toast('Nothing pinned yet. Open the Library and press X on an app to pin it.'), 700);
     const tick = async () => {
-      clk.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); const n = (navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean).length : 0); const e = $('#padn'); if (e) e.textContent = n;
+      clk.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); const n = (navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean).length : 0); const e = $('#padn'); if (e) e.textContent = n; const be = $('#bat'); if (be) be.textContent = n ? batText() : '';
       try { const m = await sk.music.status(); if (S.screen !== 'home') return; if (m && m.ready && m.track) { npB.style.display = ''; $('#npt').textContent = (m.playing ? '\u23F8 ' : '\u25B6 ') + String(m.track.title || 'SKMusic').slice(0, 28); } else npB.style.display = 'none'; } catch (_) {}
     };
     tick(); clockTimer = setInterval(tick, 4000);
@@ -280,6 +281,7 @@
   sk.on('music:visible', v => { window.K.audio && window.K.audio.setExternal(!!v); });
   setInterval(async () => { try { const m = await sk.music.status(); window.K.audio && window.K.audio.setExternal(!!(m && m.ready && m.playing)); } catch (_) {} }, 6000);
   sk.on('returned', () => { const e = window.K.current(); });
+  sk.on('battery', (slot, type, level) => { (S.bat = S.bat || {})[slot] = { type, level }; });
   sk.on('update-ready', v => confirm('Update ready', 'SKBox ' + v + ' has been downloaded.', 'Restart now', () => sk.installUpdate()));
 
   // ---------- add / edit app ----------
@@ -366,7 +368,23 @@
   }
 
   // ---------- settings ----------
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['bluetooth', '\u16D2', 'Bluetooth'], ['sound', '\u{1F50A}', 'Sound'], ['power', '\u23FB', 'Power'], ['about', '\u2139', 'About']];
+  const NEWS = [
+    ['SK menu over any fullscreen game', 'Press the Xbox / PS button in a game and the menu now opens as a full page, so it works with every kind of fullscreen. The controller works in it too. Want to see the game behind it? Settings > Xbox / PS button > Menu style.'],
+    ['Library', 'On Home, open the Library tile. Press X on any app to pin or unpin it from Home. LB / RB changes the sort. Y has more options.'],
+    ['Close a game', 'A red Close game button shows on Home while a game runs. It also lives in the SK menu and on Y.'],
+    ['Bluetooth', 'Settings > Bluetooth (or the Bluetooth button on Home): scan, pair and forget devices without leaving SKBox.'],
+    ['Screenshots', 'Take one from the SK menu, then look at them in Settings > Screenshots.'],
+    ['Controller battery', 'Shown next to the controller icon on Home (Xbox controllers).'],
+    ['Xbox / PS button help', 'Settings > Xbox / PS button shows if the button is being seen, and can take it back from Game Bar.']
+  ];
+  const BATLV = ['Empty', 'Low', 'Medium', 'Full'];
+  const batText = () => { const b = (S.bat || {})[0]; if (!b || b.type === 0) return ''; if (b.type === 1) return 'Wired'; if (b.type === 255) return ''; return BATLV[b.level] || ''; };
+  function showNews(root) {
+    const L = el('div', 'layer'), b = el('div', 'box', '<h3>What\u2019s new in SKBox</h3>'), ul = el('ul', 'newlist');
+    NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
+    const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
+  }
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
@@ -469,6 +487,25 @@
       sb.onclick = scan; wb.onclick = () => sk.sys.openSettings('bluetooth'); bar.append(sb, wb); pane.appendChild(bar);
       pane.appendChild(el('h2', '', 'Paired')); pane.appendChild(mine); pane.appendChild(el('h2', '', 'Nearby')); pane.appendChild(near); pane.appendChild(el('div', 'sub', 'Devices that need a PIN (some keyboards) must be paired with \u201COpen Windows Bluetooth\u201D.'));
       loadMine(); near.innerHTML = '<div class="sub">Press \u201CScan for devices\u201D to look for new ones.</div>';
+    } else if (id === 'shots') {
+      h('Screenshots'); sub('Take one from the SK menu while you play. They are saved in Pictures\\SKBox.');
+      const bar = el('div', 'btnrow'), fb = nav(el('button', 'btn', 'Open folder')); fb.onclick = () => sk.shots.folder(); bar.appendChild(fb); pane.appendChild(bar);
+      const grid = el('div', 'shots'); pane.appendChild(grid);
+      sk.shots.list().then(list => {
+        if (!grid.isConnected) return; if (!list.length) { grid.replaceWith(el('div', 'sub', 'No screenshots yet.')); return; }
+        list.forEach(f => {
+          const t = nav(el('button', 'shot', '<small>' + esc(new Date(f.t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) + '</small>')); t.style.backgroundImage = 'url("' + fileUrl(f.file) + '")';
+          t.onclick = () => {
+            const L = el('div', 'layer'), b = el('div', 'box'), img = el('div', 'bigshot'), row = el('div', 'btnrow'), c = nav(el('button', 'btn p', 'Close')), d = nav(el('button', 'btn d', 'Delete'));
+            img.style.backgroundImage = 'url("' + fileUrl(f.file) + '")'; c.dataset.first = ''; c.onclick = () => closeLayer(L);
+            d.onclick = () => { closeLayer(L); confirm('Delete this screenshot?', 'It will be removed from your PC.', 'Delete', async () => { await sk.shots.remove(f.file); go('settings', { cat: 'shots' }); }, true); };
+            row.append(c, d); b.append(img, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
+          };
+          grid.appendChild(t);
+        });
+      });
+    } else if (id === 'new') {
+      h('What\u2019s new'); NEWS.forEach(([t, d]) => pane.appendChild(row(t, d, '', null)));
     } else if (id === 'guide') {
       h('Xbox / PlayStation button'); sub('This button opens the SK menu over your game. If it does nothing, check the list below.');
       const box = el('div'); pane.appendChild(box);
@@ -476,10 +513,14 @@
         const hs = await sk.helper.status(); if (S.screen !== 'settings' || !box.isConnected) return; box.innerHTML = '';
         box.appendChild(row('Controller helper', hs.ready ? 'Running' : (hs.error ? 'Not running: ' + hs.error : 'Not running yet. It needs Windows with PowerShell.'), hs.ready ? '\u2714' : '\u26A0', null));
         box.appendChild(row('Controllers seen', 'Xbox and PlayStation controllers', String(hs.pads || 0), null));
+        const bt0 = (hs.batteries || {})[0]; if (bt0 && bt0.type !== 0 && bt0.type !== 255) box.appendChild(row('Controller battery', bt0.type === 1 ? 'Plugged in' : 'Battery level', bt0.type === 1 ? '' : (BATLV[bt0.level] || ''), null));
         box.appendChild(row('Button presses seen', hs.guides ? 'Last press ' + fmtAgo(hs.lastGuide) : 'Press the Xbox / PS button now. This number should go up.', String(hs.guides || 0), null));
         (hs.diag || []).slice(-3).forEach(l => box.appendChild(row('Debug', l, '', null)));
       };
       box.appendChild(el('div', 'sub', 'Checking\u2026')); show(); clockTimer = setInterval(show, 1200);
+      const MODES = [['auto', 'Automatic', 'Full page while a game runs. Works with every kind of fullscreen.'], ['full', 'Always a full page', 'Never see-through.'], ['over', 'Over the game', 'See-through, like an overlay. Only works if the game is Borderless or Windowed.']];
+      const mrow = row('Menu style', '', 'Change', null); const setMode = () => { const m = MODES.find(x => x[0] === (S.settings.ovMode || 'auto')) || MODES[0]; mrow.firstChild.innerHTML = esc('Menu style: ' + m[1]) + '<small>' + esc(m[2]) + '</small>'; };
+      mrow.onclick = () => { const i = MODES.findIndex(x => x[0] === (S.settings.ovMode || 'auto')); S.settings.ovMode = MODES[(i + 1) % MODES.length][0]; saveSettings(); setMode(); }; setMode(); pane.appendChild(mrow);
       pane.appendChild(row('Open the SK menu now', 'Test that the menu works, without the button', '\u2192', () => sk.helper.testMenu()));
       sk.helper.status().then(hs => pane.appendChild(toggle('Take the Xbox button from Game Bar', 'Turns off \u201COpen Xbox Game Bar using this button\u201D in Windows so SKBox gets the press. Turn off to give it back.', hs.takeGuide !== false, v => { S.settings.takeGuide = v; sk.sys.takeGuide(v); toast(v ? 'Done. If it still opens Game Bar, restart SKBox.' : 'Game Bar has the button again.'); })));
       pane.appendChild(row('No guide button on your controller?', 'Hold Start + Back (Xbox) or Share + Options (PlayStation) for 1 second. LB + RB + Back also works. Keyboard: Ctrl+Shift+O.', '', null));
@@ -493,7 +534,7 @@
       h('Power'); const P = [['Sleep', 'sleep'], ['Restart', 'restart'], ['Shut down', 'shutdown'], ['Sign out of Windows', 'logoff'], ['Exit SKBox to desktop', 'quit']];
       P.forEach(([n, k]) => pane.appendChild(row(n, '', '', () => confirm(n + '?', k === 'quit' ? 'Press Ctrl+Shift+B or use the tray icon to bring SKBox back.' : 'Anything unsaved will be lost.', n, () => sk.sys.power(k), k !== 'sleep'))));
     } else {
-      h('About SKBox'); sk.info().then(i => { sub('Version ' + i.version + ' \u00B7 SKBox by SK'); });
+      h('About SKBox'); sk.info().then(i => { sub('Version ' + i.version + ' \u00B7 SKBox by SK. If this is older than the version you expect, your update has not been published or installed yet.'); });
       sk.info().then(i => { pane.appendChild(row('Game helper', i.helper ? 'Running: fullscreen and the SK menu are active' : 'Not running. Fullscreen and the SK menu need Windows', '', null)); });
       pane.appendChild(row('SK menu in a game', 'Press the Xbox button or PlayStation button (or Ctrl+Shift+O)', '', null));
       pane.appendChild(row('Return to SKBox from an app', 'Press Ctrl+Shift+B, or click the SKBox tray icon', '', null));

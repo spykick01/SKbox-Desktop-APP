@@ -55,6 +55,8 @@ public static class SkHelper
     [DllImport("xinput1_4.dll", EntryPoint = "#100")] static extern uint XInputGetStateEx14(uint i, ref XINPUT_STATE s);
     [DllImport("xinput1_3.dll", EntryPoint = "#100")] static extern uint XInputGetStateEx13(uint i, ref XINPUT_STATE s);
     [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")] static extern uint XInputGetState14(uint i, ref XINPUT_STATE s);
+    [StructLayout(LayoutKind.Sequential)] struct XINPUT_BATTERY { public byte BatteryType; public byte BatteryLevel; }
+    [DllImport("xinput1_4.dll", EntryPoint = "XInputGetBatteryInformation")] static extern uint XInputGetBattery14(uint i, byte devType, ref XINPUT_BATTERY b);
     [StructLayout(LayoutKind.Sequential)] struct JOYINFOEX { public uint dwSize, dwFlags, dwXpos, dwYpos, dwZpos, dwRpos, dwUpos, dwVpos, dwButtons, dwButtonNumber, dwPOV, dwReserved1, dwReserved2; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct JOYCAPS { public ushort wMid; public ushort wPid; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szPname; public uint wXmin, wXmax, wYmin, wYmax, wZmin, wZmax, wNumButtons, wPeriodMin, wPeriodMax, wRmin, wRmax, wUmin, wUmax, wVmin, wVmax, wCaps, wMaxAxes, wNumAxes, wMaxButtons; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szRegKey; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szOEMVxD; }
@@ -274,13 +276,61 @@ public static class SkHelper
         }
         return 1167;
     }
+    // ---- controller input stream: the SK menu cannot rely on the browser seeing the controller (it needs window focus) ----
+    static volatile bool padIn = false;
+    static readonly string[] ActNames = new string[] { "up", "down", "left", "right", "ok", "back", "alt", "opts", "prev", "next", "start", "select" };
+    class PadStream { public bool[] Prev = new bool[12]; public DateTime[] Next = new DateTime[12]; }
+    static readonly Dictionary<string, PadStream> streams = new Dictionary<string, PadStream>();
+    static void Feed(string key, int slot, bool[] cur)
+    {
+        PadStream ps; if (!streams.TryGetValue(key, out ps)) { ps = new PadStream(); streams[key] = ps; }
+        DateTime now = DateTime.UtcNow;
+        for (int i = 0; i < 12; i++)
+        {
+            if (padIn && cur[i])
+            {
+                if (!ps.Prev[i]) { Emit("PAD " + slot + " " + ActNames[i]); ps.Next[i] = now.AddMilliseconds(380); }
+                else if (i < 4 && now > ps.Next[i]) { Emit("PAD " + slot + " " + ActNames[i]); ps.Next[i] = now.AddMilliseconds(110); }
+            }
+            ps.Prev[i] = cur[i];
+        }
+    }
+    static readonly Dictionary<uint, int> lastBat = new Dictionary<uint, int>(); static DateTime nextBat = DateTime.MinValue;
+    static void PollBattery(uint i, int slot)
+    {
+        if (DateTime.UtcNow < nextBat) return;
+        try
+        {
+            XINPUT_BATTERY bi = new XINPUT_BATTERY();
+            if (XInputGetBattery14(i, 0, ref bi) != 0) return;
+            int v = bi.BatteryType * 16 + bi.BatteryLevel; int old;
+            if (!lastBat.TryGetValue(i, out old) || old != v) { lastBat[i] = v; Emit("BAT " + slot + " " + bi.BatteryType + " " + bi.BatteryLevel); }
+        }
+        catch (Exception) { }
+    }
+    static bool Hat(uint pov, int dir)   // dir 0 up, 1 right, 2 down, 3 left; pov is hundredths of a degree, 65535 = centred
+    {
+        if (pov > 35999) return false;
+        if (dir == 0) return pov == 0 || pov == 4500 || pov == 31500;
+        if (dir == 1) return pov == 4500 || pov == 9000 || pov == 13500;
+        if (dir == 2) return pov == 13500 || pov == 18000 || pov == 22500;
+        return pov == 22500 || pov == 27000 || pov == 31500;
+    }
     static void PollPads()
     {
-        int count = 0;
+        int count = 0, slot = 0;
+        bool doBat = DateTime.UtcNow >= nextBat;
         for (uint i = 0; i < 4; i++)
         {
             XINPUT_STATE st = new XINPUT_STATE(); uint rc = XGet(i, ref st);
-            if (rc == 0) { count++; ushort b = st.Gamepad.wButtons; Press("x" + i, (b & 0x0400) != 0, (b & 0x0030) == 0x0030 || (b & 0x0320) == 0x0320); }
+            if (rc == 0)
+            {
+                count++; ushort b = st.Gamepad.wButtons; Press("x" + i, (b & 0x0400) != 0, (b & 0x0030) == 0x0030 || (b & 0x0320) == 0x0320);
+                XINPUT_GAMEPAD g = st.Gamepad; bool[] c = new bool[12]; int sl = Math.Min(slot, 1);
+                c[0] = (b & 1) != 0 || g.sThumbLY > 16000; c[1] = (b & 2) != 0 || g.sThumbLY < -16000; c[2] = (b & 4) != 0 || g.sThumbLX < -16000; c[3] = (b & 8) != 0 || g.sThumbLX > 16000;
+                c[4] = (b & 0x1000) != 0; c[5] = (b & 0x2000) != 0; c[6] = (b & 0x4000) != 0; c[7] = (b & 0x8000) != 0; c[8] = (b & 0x0100) != 0; c[9] = (b & 0x0200) != 0; c[10] = (b & 0x0010) != 0; c[11] = (b & 0x0020) != 0;
+                Feed("x" + i, sl, c); if (doBat) PollBattery(i, sl); slot++;
+            }
             else { Press("x" + i, false, false); }
         }
         uint n = 0; try { n = Math.Min(16u, joyGetNumDevs()); } catch (Exception) { }
@@ -293,7 +343,14 @@ public static class SkHelper
             if (mid == 0x045E) continue;                               // Xbox pads are already read through XInput
             count++;
             if (mid == 0x054C) Press("j" + id, (ji.dwButtons & 0x1000) != 0, (ji.dwButtons & 0x0300) == 0x0300);   // PS button; Share + Options chord
+            {
+                uint jb = ji.dwButtons; bool[] c = new bool[12]; int sl = Math.Min(slot, 1);
+                c[0] = Hat(ji.dwPOV, 0) || ji.dwYpos < 16000; c[1] = Hat(ji.dwPOV, 2) || ji.dwYpos > 49000; c[2] = Hat(ji.dwPOV, 3) || ji.dwXpos < 16000; c[3] = Hat(ji.dwPOV, 1) || ji.dwXpos > 49000;
+                c[4] = (jb & 0x2) != 0; c[5] = (jb & 0x4) != 0; c[6] = (jb & 0x1) != 0; c[7] = (jb & 0x8) != 0; c[8] = (jb & 0x10) != 0; c[9] = (jb & 0x20) != 0; c[10] = (jb & 0x200) != 0; c[11] = (jb & 0x100) != 0;
+                Feed("j" + id, sl, c); slot++;
+            }
         }
+        if (doBat) nextBat = DateTime.UtcNow.AddSeconds(20);
         if (count != pendingCount) { pendingCount = count; countSince = DateTime.UtcNow; }
         if (pendingCount != lastCount && (DateTime.UtcNow - countSince).TotalMilliseconds > 900) { lastCount = pendingCount; Emit("PADS " + lastCount); Emit("DIAG xinputmode " + xmode + " pads " + lastCount); }
     }
@@ -319,6 +376,7 @@ public static class SkHelper
                     else if (p[0] == "FOCUS" && p.Length > 1) { long hv; if (long.TryParse(p[1], out hv) && IsWindow(new IntPtr(hv))) ForceForeground(new IntPtr(hv)); }
                     else if (p[0] == "CLOSE" && p.Length > 1) { long hv2; if (long.TryParse(p[1], out hv2) && IsWindow(new IntPtr(hv2))) PostMessage(new IntPtr(hv2), 0x0010, IntPtr.Zero, IntPtr.Zero); }
                     else if (p[0] == "PING") Emit("PONG");
+                    else if (p[0] == "PADIN") padIn = p.Length > 1 && p[1] == "1";
                     else if (p[0] == "QUIT") quit = true;
                 }
                 catch (Exception e) { Emit("ERR " + e.Message.Replace('\n', ' ')); }

@@ -13,6 +13,8 @@ const RENDERER = (f) => path.join(__dirname, '..', 'renderer', f);
 if (!app.requestSingleInstanceLock()) app.quit();
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+const batteries = {};
+let overlayOpaque = false;
 const helperInfo = { error: '', lastGuide: 0, guides: 0, lastKey: '', diag: [] };
 let win = null, tray = null, kiosk = true, helper = null, game = null, backdrop = null, overlayWin = null, overlayOpen = false, musicWin = null, musicUser = '', musicVisible = false, padCount = 0;
 const send = (ch, ...a) => { try { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); } catch {} try { if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send(ch, ...a); } catch {} };
@@ -184,10 +186,12 @@ function startHelper() {
   helper = new HelperClient({ script: helperScript() });
   helper.on('guide', k => { helperInfo.lastGuide = Date.now(); helperInfo.guides++; helperInfo.lastKey = k; toggleOverlay(); });
   helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
-  helper.on('ready', () => { helperInfo.error = ''; });
+  helper.on('ready', () => { helperInfo.error = ''; if (overlayOpen) helper.padIn(true); });
+  helper.on('padin', (slot, act) => { try { if (overlayOpen && overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send('padin', slot, act); } catch {} });
+  helper.on('battery', (slot, type, level) => { batteries[slot] = { type, level }; send('battery', slot, type, level); });
   helper.on('pads', n => { padCount = n; send('pads', n); const pl = playersMeta(); if (n >= 2 && !pl[1] && game && !overlayOpen) openOverlay({ p2: true }); });
   helper.on('win', w => { if (game) { game.hwnd = w.hwnd; game.wpid = w.pid; send('game:state', gameState()); } });
-  helper.on('fs', t => { backdropFade(); send('fs', t); });
+  helper.on('fs', t => { backdropFade(); if (game) game.fsOk = /^(already|borderless)/.test(String(t)); send('fs', t); });
   helper.on('gone', () => endGame());
   helper.on('nowin', () => { if (game) { game.noWindow = true; if (game.exited || !game.pid) endGame(); } });
   helper.on('error-line', l => { helperInfo.error = String(l).slice(0, 200); try { fs.appendFileSync(path.join(app.getPath('userData'), 'helper.log'), new Date().toISOString() + ' ' + l + '\n'); } catch {} });
@@ -195,25 +199,31 @@ function startHelper() {
 }
 
 // ================= SK overlay (the "guide" menu) =================
+// While a game runs, the menu is a full opaque page by default: this works with every kind of fullscreen, because a game in
+// exclusive fullscreen simply minimizes when the menu takes focus. "Over the game" (see-through) is optional.
+function wantOpaque() { const m = store.read('settings', {}).ovMode || 'auto'; if (m === 'over') return false; if (m === 'full') return true; return !!game; }
 function ensureOverlay() {
-  if (overlayWin && !overlayWin.isDestroyed()) return overlayWin;
+  const opaque = wantOpaque();
+  if (overlayWin && !overlayWin.isDestroyed()) { if (opaque === overlayOpaque) return overlayWin; try { overlayWin.destroy(); } catch {} overlayWin = null; }
+  overlayOpaque = opaque;
   const d = displayNow();
-  overlayWin = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, transparent: true, frame: false, show: false, skipTaskbar: true, hasShadow: false, resizable: false, movable: false, alwaysOnTop: true, backgroundColor: '#00000000', webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: true, backgroundThrottling: false } });
+  overlayWin = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, transparent: !opaque, frame: false, show: false, skipTaskbar: true, hasShadow: false, resizable: false, movable: false, alwaysOnTop: true, backgroundColor: opaque ? '#05060d' : '#00000000', webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: true, backgroundThrottling: false } });
   overlayWin.setAlwaysOnTop(true, 'screen-saver');
-  overlayWin.loadFile(RENDERER('overlay.html'));
+  overlayWin.loadFile(RENDERER('overlay.html'), { query: { opaque: opaque ? '1' : '' } });
   overlayWin.on('closed', () => { overlayWin = null; overlayOpen = false; });
   return overlayWin;
 }
 function overlayStateObj(opts) {
-  return { game: gameState(), players: playersMeta(), apps: store.read('apps', []), settings: store.read('settings', {}), pads: padCount, music: !!(musicWin && !musicWin.isDestroyed()), opts: opts || {}, helper: !!(helper && helper.ready), covers: COVER_DIR() };
+  return { game: gameState(), players: playersMeta(), apps: store.read('apps', []), settings: store.read('settings', {}), pads: padCount, music: !!(musicWin && !musicWin.isDestroyed()), opts: opts || {}, helper: !!(helper && helper.ready), covers: COVER_DIR(), stats: store.read('stats', {}), batteries, opaque: overlayOpaque };
 }
 function openOverlay(opts) {
   const w = ensureOverlay(), d = displayNow(); try { w.setBounds(d.bounds); } catch {}
-  overlayOpen = true;
+  overlayOpen = true; if (helper) helper.padIn(true);
   const show = () => { try { w.setAlwaysOnTop(true, 'screen-saver'); w.show(); w.moveTop(); w.focus(); if (helper) helper.focus(nativeHwnd(w)); w.webContents.send('overlay:open', overlayStateObj(opts)); } catch {} };
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', show); else show();
 }
 function closeOverlay(refocus) {
+  if (helper) helper.padIn(false);
   if (!overlayWin || overlayWin.isDestroyed() || !overlayOpen) { overlayOpen = false; return; }
   overlayOpen = false; try { overlayWin.webContents.send('overlay:close'); overlayWin.hide(); } catch {}
   if (refocus) { if (musicVisible && musicWin && !musicWin.isDestroyed()) { musicWin.focus(); if (helper) helper.focus(nativeHwnd(musicWin)); } else if (game && game.hwnd && helper) helper.focus(game.hwnd); }
@@ -229,13 +239,15 @@ ipcMain.handle('overlay:setPlayer', (_e, slot, u) => {
 });
 ipcMain.handle('overlay:screenshot', async () => {
   try {
-    const wasOpen = overlayOpen; if (wasOpen && overlayWin) overlayWin.hide(); await new Promise(r => setTimeout(r, 350));
+    const wasOpen = overlayOpen, giveBack = wasOpen && overlayOpaque && !!game;
+    if (giveBack) { closeOverlay(true); await new Promise(r => setTimeout(r, 1600)); } else { if (wasOpen && overlayWin) overlayWin.hide(); await new Promise(r => setTimeout(r, 350)); }
     const d = displayNow(), srcs = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: d.size.width * d.scaleFactor, height: d.size.height * d.scaleFactor } });
     const s = srcs.find(x => String(x.display_id) === String(d.id)) || srcs[0];
     const dir = path.join(app.getPath('pictures'), 'SKBox'); fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, (game ? game.name.replace(/[^\w\- ]+/g, '') + ' ' : 'SKBox ') + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.png');
     fs.writeFileSync(file, s.thumbnail.toPNG());
-    if (wasOpen && overlayWin) { overlayWin.show(); overlayWin.focus(); }
+    if (giveBack) { try { new Notification({ title: 'Screenshot saved', body: 'Pictures\\SKBox', silent: true }).show(); } catch {} }
+    else if (wasOpen && overlayWin) { overlayWin.show(); overlayWin.focus(); }
     return { ok: true, file };
   } catch (e) { return { ok: false, error: String(e.message || e) }; }
 });
@@ -289,9 +301,15 @@ ipcMain.handle('overlay:osk-result', (_e, r) => {
 // Windows opens Xbox Game Bar when you press the controller's Xbox button, and then SKBox never sees it.
 // This turns off just that one shortcut (Windows Settings > Gaming > Xbox Game Bar) for the current user.
 function takeGuide(on) { if (!isWin) return; execFile('reg', ['add', 'HKCU\\Software\\Microsoft\\GameBar', '/v', 'UseNexusForGameBarEnabled', '/t', 'REG_DWORD', '/d', on ? '0' : '1', '/f'], { windowsHide: true }, () => {}); }
-ipcMain.handle('helper:status', () => ({ ready: !!(helper && helper.ready), error: helperInfo.error, lastGuide: helperInfo.lastGuide, guides: helperInfo.guides, lastKey: helperInfo.lastKey, diag: helperInfo.diag.slice(), pads: padCount, takeGuide: store.read('settings', {}).takeGuide !== false }));
+ipcMain.handle('helper:status', () => ({ ready: !!(helper && helper.ready), error: helperInfo.error, lastGuide: helperInfo.lastGuide, guides: helperInfo.guides, lastKey: helperInfo.lastKey, diag: helperInfo.diag.slice(), pads: padCount, batteries, ovMode: store.read('settings', {}).ovMode || 'auto', takeGuide: store.read('settings', {}).takeGuide !== false }));
 ipcMain.handle('helper:testMenu', () => { if (!overlayOpen) toggleOverlay(); return true; });
 ipcMain.handle('sys:takeGuide', (_e, on) => { const s = store.read('settings', {}); s.takeGuide = !!on; store.write('settings', s); takeGuide(!!on); return !!on; });
+
+// ================= screenshots =================
+const shotDir = () => path.join(app.getPath('pictures'), 'SKBox');
+ipcMain.handle('shots:list', () => { try { return fs.readdirSync(shotDir()).filter(f => /\.png$/i.test(f)).map(f => { const p = path.join(shotDir(), f); return { file: p, name: f.replace(/\.png$/i, ''), t: fs.statSync(p).mtimeMs }; }).sort((a, b) => b.t - a.t).slice(0, 60); } catch { return []; } });
+ipcMain.handle('shots:delete', (_e, f) => { try { if (f && path.dirname(f) === shotDir() && /\.png$/i.test(f)) { fs.unlinkSync(f); return true; } } catch {} return false; });
+ipcMain.handle('shots:folder', () => { try { fs.mkdirSync(shotDir(), { recursive: true }); shell.openPath(shotDir()); return true; } catch { return false; } });
 
 // ================= Bluetooth (inside SKBox) =================
 const btScript = () => path.join(__dirname, 'native', 'bluetooth.ps1').replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
