@@ -117,6 +117,17 @@ ipcMain.handle('cover:icon', async (_e, exe) => { try { if (!/^[a-z]:|^\\/i.test
 ipcMain.handle('cover:remove', (_e, f) => { try { if (f && path.dirname(f) === COVER_DIR()) fs.unlinkSync(f); } catch {} return true; });
 
 // ================= running a game =================
+function notify(title, body, force) { try { if (!force && store.read('settings', {}).notifications === false) return; new Notification({ title, body }).show(); } catch {} }
+let lastRemoteInput = Date.now(), lastLvl = 0, swTicks = 0, swTold = false;
+const fitArgs = () => { const s = store.read('settings', {}); return { fit: ['auto', 'stretch', 'aspect'].includes(s.remoteFit) ? s.remoteFit : 'auto', taskbar: s.remoteTaskbar !== false }; };
+const extras = require('./lib/extras').create({
+  store, notify, getGame: () => game, helper: () => helper, remoteLive: () => remoteLive, lastInput: () => lastRemoteInput, fitArgs,
+  remoteState: () => remoteState(), newPin: () => { try { if (remote && remote.on_) remote.newPin(); } catch {} },
+  remoteKick: why => { try { if (remote) remote.endSession(why); } catch {} },
+  closeGame: async () => { if (!game) return; await killGame(); endGame(); },
+  diag: () => ['Helper lines: ' + (helperInfo.diag || []).join(' | '), 'Helper error: ' + (helperInfo.error || 'none')].join('\n')
+});
+ipcMain.handle('extras:do', (_e, n, a) => extras.run(String(n || ''), a));
 const splitArgs = s => (String(s || '').match(/"[^"]*"|\S+/g) || []).map(x => x.replace(/^"|"$/g, ''));
 function applyCompat(exe) { // old-game fixes: Windows compatibility flags for this one program (current user only). Fullscreen optimizations stay ON so games can be streamed.
   if (!isWin) return;
@@ -145,7 +156,7 @@ function prepWindowedFs(exe) {
 // Windowing is applied by the helper ONLY while a Remote play player is connected (see helper.remote). Otherwise games are left exactly as they are.
 let remoteLive = false;
 function gameMode(m) { m = m || 'auto'; if (m === 'off') return 'off'; if (store.read('settings', {}).gameWindow === 'off') return 'off'; return 'auto'; }
-function setRemoteLive(on) { remoteLive = !!on; if (helper && helper.ready) { helper.remote(on && store.read('settings', {}).gameWindow !== 'off'); if (on && game && game.hwnd) setTimeout(() => helper.winFit(game && game.hwnd), 1500); } if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
+function setRemoteLive(on) { remoteLive = !!on; if (on) { lastRemoteInput = Date.now(); lastLvl = 0; swTicks = 0; swTold = false; } const fa = fitArgs(); if (helper && helper.ready) { helper.remote(on && store.read('settings', {}).gameWindow !== 'off', fa.fit, fa.taskbar); if (on && game && game.hwnd) setTimeout(() => helper.winFit(game && game.hwnd), 1500); } if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
 function showBackdrop(a) {
   closeBackdrop(); const d = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   backdrop = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, backgroundColor: '#000000', show: false, skipTaskbar: true, focusable: false, movable: false, resizable: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -171,7 +182,7 @@ async function killGame() {
 }
 function statsTouch(id, ms) { if (!id) return; const st = store.read('stats', {}), x = st[id] || (st[id] = { last: 0, ms: 0, n: 0 }); x.last = Date.now(); if (ms) { x.ms += ms; x.best = Math.max(x.best || 0, ms); } else x.n++; store.write('stats', st); }
 function endGame() {
-  if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
+  if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} try { extras.onGameEnd(game.name, Date.now() - game.startedAt); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
   send('game:state', null); comeBack();
 }
 ipcMain.handle('game:state', () => gameState());
@@ -218,7 +229,7 @@ function startHelper() {
     toggleOverlay();
   });
   helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
-  helper.on('ready', () => { helperInfo.error = ''; if (remoteLive) helper.remote(store.read('settings', {}).gameWindow !== 'off'); if (overlayOpen) helper.padIn(true); });
+  helper.on('ready', () => { helperInfo.error = ''; if (remoteLive) helper.remote(store.read('settings', {}).gameWindow !== 'off', fitArgs().fit, fitArgs().taskbar); if (overlayOpen) helper.padIn(true); });
   helper.on('padin', (slot, act) => {
     try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (padTest) send('padtest', slot, act); } catch {}
   });
@@ -428,7 +439,7 @@ const remoteDisplay = () => { try { if (win && !win.isDestroyed() && win.isVisib
 setInterval(() => { try { if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) lastDisp = screen.getDisplayMatching(win.getBounds()); } catch {} }, 1500);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const REMOTE_DIR = () => path.join(__dirname, '..', 'renderer', 'remote');
-const rset = () => { const s = store.read('settings', {}); return { quality: ['smooth', 'low', 'balanced', 'high'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth', autoFix: s.remoteAutoFix !== false, allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
+const rset = () => { const s = store.read('settings', {}); return { quality: ['instant', 'smooth', 'low', 'balanced', 'high'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth', autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
 const remoteState = () => Object.assign(remote ? remote.state() : { on: false, port: 0, pin: '', ips: [], client: null }, { stats: remoteStats, cfg: rset(), helper: !!(helper && helper.ready), supported: isWin });
 const pushRemote = () => send('remote:state', remoteState());
 const hin = line => { if (helper && helper.ready) helper.send(line); };
@@ -461,7 +472,7 @@ async function remoteCreateSession({ sid, name, offer }) {
   const p = new Promise((resolve, reject) => { const t = setTimeout(() => { delete answers[sid]; reject(new Error('The PC took too long to start the stream.')); }, 20000); answers[sid] = { resolve: d => { clearTimeout(t); delete answers[sid]; d && d.error ? reject(new Error(d.error)) : resolve(d); } }; });
   remoteWin.webContents.executeJavaScript('window.__skhostOffer(' + JSON.stringify({ sid, offer, cfg }) + ')', true).catch(() => {});
   const ans = await p; startMapper(); remoteStats = null; setRemoteLive(true);
-  try { new Notification({ title: 'Remote play', body: name + ' connected to SKBox' }).show(); } catch {}
+  try { notify('Remote play', name + ' connected to SKBox'); } catch {}
   return ans;
 }
 const toClient = o => { try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:toClient', JSON.stringify(o)); } catch {} };
@@ -484,7 +495,7 @@ function remoteFixFs() {   // manual: fit the window, then the same ladder, from
   fixStage = Math.min(fixStage, 1); fixTold = false; remoteLadder();
 }
 function remoteEndSession() {
-  setRemoteLive(false);
+  const wasLive = remoteLive; setRemoteLive(false); if (wasLive) { try { extras.onRemoteLeft(); } catch {} }
   frozenCount = 0; frozenTold = false; fixStage = 0; badCount = 0; remoteSrc = 'screen'; stopMapper(); remoteStats = null; hin('IR');
   try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:kick'); } catch {}
 }
@@ -492,7 +503,7 @@ function remoteInit() {
   if (remote) return remote;
   remote = new RemoteHost({ name: os.hostname(), version: app.getVersion(), webDir: REMOTE_DIR(), createSession: remoteCreateSession, endSession: () => remoteEndSession() });
   remote.on('state', pushRemote);
-  remote.on('ended', (c, why) => { try { new Notification({ title: 'Remote play', body: (c && c.name ? c.name + ' disconnected' : 'Disconnected') }).show(); } catch {} });
+  remote.on('ended', (c, why) => { try { notify('Remote play', (c && c.name ? c.name + ' disconnected' : 'Disconnected')); } catch {} });
   return remote;
 }
 ipcMain.handle('remote:state', () => remoteState());
@@ -508,7 +519,7 @@ ipcMain.handle('remote:fix', () => { remoteFixFs(); return true; });
 ipcMain.handle('remote:kick', () => { if (remote) remote.endSession('Disconnected from SKBox'); return remoteState(); });
 ipcMain.handle('remote:cfg', (_e, patch) => {
   const s = store.read('settings', {}); patch = patch || {};
-  if (['smooth', 'low', 'balanced', 'high'].includes(patch.quality)) s.remoteQuality = patch.quality;
+  if (['instant', 'smooth', 'low', 'balanced', 'high'].includes(patch.quality)) s.remoteQuality = patch.quality;
   if (typeof patch.autoFix === 'boolean') s.remoteAutoFix = patch.autoFix;
   if (typeof patch.allowInput === 'boolean') s.remoteInput = patch.allowInput;
   if (['menus', 'keys', 'off'].includes(patch.padMode)) { s.remotePad = patch.padMode; if (mapper) mapper.setMode(patch.padMode); }
@@ -521,11 +532,15 @@ ipcMain.on('remote:stats', (e, st) => { if (!fromRemoteWin(e) || !st || typeof s
   if (game && fixGame !== game.id) { fixGame = game.id; fixStage = 0; fixTold = false; remoteSrc = 'screen'; }
   const bad = !!game && !fixBusy && !!st.black;
   if (bad) { if (++badCount >= 4) { if (rset().autoFix) remoteLadder(true); else if (!frozenTold) { frozenTold = true; toClient({ t: 'notice', text: 'Picture black or frozen? Turn on \u201CFix fullscreen games automatically\u201D in SKBox Remote play settings.' }); } badCount = 0; } } else if (!fixBusy) badCount = 0;
+  { const st2 = store.read('settings', {}), lv = st.lvl | 0;
+    if (st2.remoteNotices !== false) { if (lv > lastLvl) toClient({ t: 'notice', text: 'Connection is weak: lowering quality to keep it smooth.' }); else if (lv < lastLvl) toClient({ t: 'notice', text: 'Connection recovered: quality raised.' }); }
+    lastLvl = lv;
+    if (st2.remoteEncWarn !== false && st.hw === false && (st.w | 0) > 0 && ++swTicks === 6 && !swTold) { swTold = true; toClient({ t: 'notice', text: 'This PC is encoding video on the CPU, which adds delay. Updating the graphics driver usually fixes it.' }); } }
   if (++modeTick % 3 === 1) toClient({ t: 'mode', game: !!game });
   remoteStats = { fps: st.fps | 0, kbps: st.kbps | 0, rtt: st.rtt | 0, codec: String(st.codec || '').slice(0, 12), w: st.w | 0, h: st.h | 0, limit: String(st.limit || '').slice(0, 12), hw: !!st.hw }; pushRemote(); });
 ipcMain.on('remote:input', (e, raw) => {
   if (!fromRemoteWin(e) || !remote || !remote.session || remote.session.pending || typeof raw !== 'string' || raw.length > 600) return;
-  const cfg = rset(); if (!cfg.allowInput || !helper || !helper.ready) return;
+  lastRemoteInput = Date.now(); const cfg = rset(); if (!cfg.allowInput || !helper || !helper.ready) return;
   const now = Date.now(); if (now - inWindow > 1000) { inWindow = now; inCount = 0; } if (++inCount > 3000) return;   // flood guard
   let m; try { m = JSON.parse(raw); } catch { return; } if (!m || typeof m.t !== 'string') return;
   const I = v => Math.round(+v) || 0, cl = (v, a, b) => Math.max(a, Math.min(b, I(v)));
@@ -568,10 +583,12 @@ app.whenReady().then(() => {
   const st = store.read('settings', {});
   if (st.startup === undefined && (isWin || process.platform === 'darwin')) { app.setLoginItemSettings({ openAtLogin: true }); st.startup = true; store.write('settings', st); }
   if (st.takeGuide !== false) takeGuide(true);
-  createWindow(); setupTray(); setupUpdates(); startHelper();
+  createWindow(); setupTray(); setupUpdates(); startHelper(); extras.start();
+  if (isWin && store.read('settings', {}).remoteAutoStart) setTimeout(async () => { try { await remoteInit().start(); pushRemote(); } catch {} }, 4000);
   globalShortcut.register('Control+Shift+B', comeBack);
   globalShortcut.register('Control+Shift+O', toggleOverlay);
   globalShortcut.register('Control+Shift+S', () => { takeShot(true); });
+  extras.hotkeys(globalShortcut);
 });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); try { helper && helper.stop(); } catch {} });
 app.on('window-all-closed', () => app.quit());

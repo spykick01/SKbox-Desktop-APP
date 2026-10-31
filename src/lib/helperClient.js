@@ -42,7 +42,8 @@ class HelperClient extends EventEmitter {
   send(line) { try { if (this.child && this.child.stdin && this.child.stdin.writable) this.child.stdin.write(line + '\n'); } catch {} }
   watch(pid, mode, skPid) { this.send('WATCH ' + (pid | 0) + ' ' + (/^(auto|stretch|aspect|altenter|f11|off)$/.test(mode) ? mode : 'auto') + ' ' + (skPid | 0)); }
   winFit(hwnd) { this.send('WINFIT ' + (/^-?\d+$/.test(String(hwnd || 0)) ? (hwnd || 0) : 0)); }
-  remote(on) { this.send('REMOTE ' + (on ? 1 : 0)); }
+  remote(on, fit, taskbar) { this.send('REMOTE ' + (on ? 1 : 0) + ' ' + (/^(auto|stretch|aspect)$/.test(fit) ? fit : 'auto') + ' ' + (taskbar === false ? 0 : 1)); }
+  restoreWin() { this.send('RESTOREWIN'); }
   unwatch() { this.send('UNWATCH'); }
   minimize(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('MIN ' + hwnd); }
   restore(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('RESTORE ' + hwnd); }

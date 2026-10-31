@@ -435,7 +435,8 @@
     const row1 = el('div', 'btnrow'), br = nav(el('button', 'btn', 'Browse for file\u2026')), fc = nav(el('button', 'btn', 'Find cover art'));
     br.onclick = async () => { const f = await sk.pickFile('exe'); if (f) { d.exe = f; fPath.value = f; fPath.innerHTML = '<span>Path or link</span><b>' + esc(f) + '</b>'; if (!d.name) { d.name = niceName(f); fName.innerHTML = '<span>Name</span><b>' + esc(d.name) + '</b>'; fName.value = d.name; redraw(); } } };
     fc.onclick = () => findCover(d, redraw);
-    row1.append(br, fc);
+    const ofd = nav(el('button', 'btn', 'Open game folder')); ofd.onclick = async () => { const r = await sk.extras.do('folder', d.exe); if (r && !r.ok) toast(r.error || 'Could not open it'); };
+    row1.append(br, fc, ofd);
     const row2 = el('div', 'btnrow'), save = nav(el('button', 'btn p', 'Save')), cancel = nav(el('button', 'btn', 'Cancel'));
     cancel.onclick = () => go('library');
     save.onclick = async () => {
@@ -495,7 +496,7 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
@@ -603,6 +604,46 @@
       pane.appendChild(toggle('Show CPU and memory', 'On Home and in the SK menu', !!S.settings.hud, v => sv('hud', v)));
       const autoOpts = [['', 'Nothing']].concat(allApps().map(a => [a.id, a.name]));
       pane.appendChild(cyc('Open an app when SKBox starts', 'For example SKMusic', autoOpts, () => S.settings.autoApp || '', v => sv('autoApp', v)));
+    } else if (id === 'extras') {
+      h('Extras & QOL'); sub('Remote play tuning, reminders and helpers. Changes apply right away.');
+      const sv = (k, v) => { S.settings[k] = v; saveSettings(); };
+      const sec = t => pane.appendChild(el('h3', '', t));
+      const X = (n, a) => sk.extras.do(n, a);
+      const say = (r, ok) => toast(r && r.ok ? (ok || 'Done') : ((r && r.error) || 'That did not work'));
+      sec('Remote play: speed and quality');
+      pane.appendChild(toggle('Auto quality', 'Lowers quality when the connection is weak, raises it again when it recovers', S.settings.remoteAutoQ !== false, v => sv('remoteAutoQ', v)));
+      pane.appendChild(toggle('Tell the player when quality changes', 'Small notices on the player: weak connection, recovered', S.settings.remoteNotices !== false, v => sv('remoteNotices', v)));
+      pane.appendChild(toggle('Warn about CPU video encoding', 'Software encoding adds delay. Shows a tip on the player', S.settings.remoteEncWarn !== false, v => sv('remoteEncWarn', v)));
+      pane.appendChild(toggle('Show the mouse cursor in the stream', 'Turn off if the cursor is in the way', S.settings.remoteCursor !== false, v => sv('remoteCursor', v)));
+      sec('Remote play: the game window');
+      pane.appendChild(toggle('Hide the taskbar while streaming', 'It comes back when the player disconnects', S.settings.remoteTaskbar !== false, v => sv('remoteTaskbar', v)));
+      pane.appendChild(cyc('Game window fit', 'How the game fills the screen while streaming', [['auto', 'Auto'], ['stretch', 'Fill the screen'], ['aspect', 'Keep shape, black bars']], () => S.settings.remoteFit || 'auto', v => sv('remoteFit', v)));
+      pane.appendChild(row('Fit the game window now', 'Same as Ctrl+Alt+Shift+F', '\u2192', async () => { sk.remote.fix(); toast('Fitting the window\u2026'); }));
+      pane.appendChild(row('Undo window fit', 'Gives the game its normal window and menu back', '\u2192', async () => say(await X('undoFit'), 'Window restored')));
+      pane.appendChild(toggle('Fit hotkey (Ctrl+Alt+Shift+F)', 'Fits the game window from the keyboard', S.settings.fitKey !== false, v => sv('fitKey', v)));
+      sec('Remote play: safety and power');
+      pane.appendChild(toggle('Turn Remote play on when SKBox starts', 'Off by default. The PIN is still required', !!S.settings.remoteAutoStart, v => sv('remoteAutoStart', v)));
+      pane.appendChild(cyc('Disconnect when nobody uses it', 'Ends the session if no key, mouse or button is used', [['0', 'Never'], ['5', 'After 5 min'], ['15', 'After 15 min'], ['30', 'After 30 min'], ['60', 'After 1 hour']], () => String(S.settings.remoteIdle || 0), v => sv('remoteIdle', +v)));
+      pane.appendChild(cyc('When the player disconnects', 'What happens to the game that is running', [['nothing', 'Keep playing'], ['minimize', 'Minimize the game'], ['close', 'Close the game']], () => S.settings.remoteLeave || 'nothing', v => sv('remoteLeave', v)));
+      pane.appendChild(toggle('New PIN after every session', 'Someone who saw the old PIN cannot reuse it', !!S.settings.remoteNewPin, v => sv('remoteNewPin', v)));
+      pane.appendChild(toggle('Keep this PC awake while streaming', 'No screen sleep during a session', S.settings.remoteAwake !== false, v => sv('remoteAwake', v)));
+      pane.appendChild(row('Copy the Remote play address', 'Paste it in a browser on the other device', '\u2192', async () => say(await X('copyAddr'), 'Address copied')));
+      sec('Playing');
+      const tr = row('Played today', 'Counts only while a game started from SKBox is running', '', null); pane.appendChild(tr);
+      X('today').then(r => { if (tr.isConnected) tr.querySelector('.r').textContent = Math.round((r.ms || 0) / 60000) + ' min'; });
+      pane.appendChild(cyc('Break reminder', 'A notification while a game runs', [['0', 'Off'], ['30', 'Every 30 min'], ['60', 'Every hour'], ['90', 'Every 90 min'], ['120', 'Every 2 hours']], () => String(S.settings.breakMin || 0), v => sv('breakMin', +v)));
+      pane.appendChild(cyc('Daily play limit', 'One notification when you pass it', [['0', 'Off'], ['1', '1 hour'], ['2', '2 hours'], ['3', '3 hours'], ['4', '4 hours'], ['6', '6 hours']], () => String(S.settings.dailyLimit || 0), v => sv('dailyLimit', +v)));
+      pane.appendChild(toggle('Session summary', 'A notification with your time when a game closes', S.settings.summary !== false, v => sv('summary', v)));
+      pane.appendChild(toggle('Panic hotkey (Ctrl+Alt+Shift+K)', 'Closes the running game right away', S.settings.panicKey !== false, v => sv('panicKey', v)));
+      sec('Helpers');
+      pane.appendChild(toggle('Windows notifications', 'Turn off to silence everything SKBox shows', S.settings.notifications !== false, v => sv('notifications', v)));
+      pane.appendChild(row('Send a test notification', '', '\u2192', async () => say(await X('testNotify'), 'Sent')));
+      pane.appendChild(row('Check for updates now', 'SKBox also checks every few hours', '\u2192', async () => { toast('Checking\u2026'); const r = await X('update'); say(r, r && r.latest && r.latest !== r.current ? 'Update ' + r.latest + ' is downloading' : 'You have the newest version'); }));
+      pane.appendChild(row('Restart SKBox', 'Closes and opens SKBox again', '\u2192', () => confirm('Restart SKBox?', 'A running game keeps running.', 'Restart', () => X('restart'), false)));
+      pane.appendChild(row('Copy diagnostics', 'Version, helper status, Remote play stats. Paste it when asking for help', '\u2192', async () => say(await X('diag'), 'Copied')));
+      pane.appendChild(row('Open the SKBox data folder', 'Settings, covers and logs', '\u2192', async () => say(await X('openData'))));
+      pane.appendChild(row('Open the helper log', 'Shows errors from the controller / window helper', '\u2192', async () => say(await X('openLog'))));
+      pane.appendChild(row('Reset Extras to defaults', '', '\u2192', () => confirm('Reset Extras?', 'Every setting on this page goes back to its default.', 'Reset', async () => { await X('reset'); S.settings = await sk.store.get('settings', {}) || S.settings; toast('Extras reset'); go('settings', { cat: 'extras' }); }, false)));
     } else if (id === 'stats') {
       h('Play stats'); const st = S.stats || {}, rows = allApps().map(a => ({ a, x: st[a.id] || { ms: 0, n: 0, last: 0, best: 0 } })).filter(o => o.x.ms || o.x.n);
       const total = rows.reduce((t, o) => t + (o.x.ms || 0), 0), opens = rows.reduce((t, o) => t + (o.x.n || 0), 0), fh = ms => { const m = Math.round(ms / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
@@ -626,7 +667,7 @@
       h('Remote play'); sub('Play this PC from a Mac or another PC on the same Wi-Fi. It only runs while you turn it on here, and it turns itself off when SKBox closes.');
       const box = el('div'); pane.appendChild(box); let st = null;
       const fmtSt = s => s ? [s.w && s.h ? s.w + 'x' + s.h : '', s.fps ? s.fps + ' fps' : '', s.kbps ? (s.kbps / 1000).toFixed(1) + ' Mbps' : '', s.rtt ? s.rtt + ' ms' : '', s.codec || '', s.hw === false && s.codec ? 'software encode' : ''].filter(Boolean).join(' \u00B7 ') : '';
-      const QO = [['smooth', '720p \u00B7 60 fps (fastest)'], ['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']], PO = [['menus', 'Menus (arrows, Enter)'], ['keys', 'Keyboard and mouse preset'], ['off', 'Off']];
+      const QO = [['instant', '540p \u00B7 60 fps (lowest delay)'], ['smooth', '720p \u00B7 60 fps (fastest)'], ['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']], PO = [['menus', 'Menus (arrows, Enter)'], ['keys', 'Keyboard and mouse preset'], ['off', 'Off']];
       const render = s => {
         st = s; const fk = K.current && K.current() && K.current().dataset ? K.current().dataset.rk : ''; box.innerHTML = '';
         if (!s.supported) { box.appendChild(row('Remote play host needs Windows', 'Use SKBox on your Windows PC as the host. This device can still be the player.', '', null)); return; }
@@ -718,6 +759,7 @@
         const set = (m, a, label) => ({ label, fn: async () => { await sk.timer.set(m, a); toast('Timer set: ' + label); tdraw(); } });
         menu('Sleep timer', [set(30, 'sleep', 'Sleep in 30 min'), set(60, 'sleep', 'Sleep in 1 hour'), set(120, 'sleep', 'Sleep in 2 hours'), set(60, 'shutdown', 'Shut down in 1 hour'), set(30, 'closegame', 'Close game in 30 min'), set(60, 'closegame', 'Close game in 1 hour'), { label: 'Turn timer off', fn: async () => { await sk.timer.set(0, 'sleep'); toast('Timer off'); tdraw(); } }]);
       };
+      pane.appendChild(row('Restart SKBox', 'Closes and opens SKBox again', '', () => confirm('Restart SKBox?', 'A running game keeps running.', 'Restart', () => sk.extras.do('restart'), false)));
       P.forEach(([n, k]) => pane.appendChild(row(n, '', '', () => confirm(n + '?', k === 'quit' ? 'Press Ctrl+Shift+B or use the tray icon to bring SKBox back.' : 'Anything unsaved will be lost.', n, () => sk.sys.power(k), k !== 'sleep'))));
     } else {
       h('About SKBox'); sk.info().then(i => { sub('Version ' + i.version + ' \u00B7 SKBox by SK. If this is older than the version you expect, your update has not been published or installed yet.'); });

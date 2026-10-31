@@ -1,10 +1,10 @@
 // Runs in a hidden window while a remote player is connected: captures the screen + system audio and streams it over WebRTC.
 (() => {
-  const PRESETS = { smooth: { w: 1280, h: 720, fps: 60, kbps: 7000 }, low: { w: 1280, h: 720, fps: 30, kbps: 4000 }, balanced: { w: 1920, h: 1080, fps: 30, kbps: 8000 }, high: { w: 1920, h: 1080, fps: 60, kbps: 14000 } };
-  let ctl = null, pc = null, sid = null, stream = null, statsTimer = null, grace = null, prevStat = null, curP = null, bv = null, bc = null, blackT = null, isBlack = false;
+  const PRESETS = { instant: { w: 960, h: 540, fps: 60, kbps: 4500 }, smooth: { w: 1280, h: 720, fps: 60, kbps: 7000 }, low: { w: 1280, h: 720, fps: 30, kbps: 4000 }, balanced: { w: 1920, h: 1080, fps: 30, kbps: 8000 }, high: { w: 1920, h: 1080, fps: 60, kbps: 14000 } };
+  let ctl = null, pc = null, sid = null, stream = null, statsTimer = null, grace = null, prevStat = null, curP = null, curCfg = null, lvl = 0, goodT = 0, badT = 0, lastShift = 0, bv = null, bc = null, blackT = null, isBlack = false;
 
   function cleanup() {
-    stopBlack(); ctl = null; clearInterval(statsTimer); clearTimeout(grace); statsTimer = null; prevStat = null;
+    stopBlack(); lvl = 0; goodT = 0; badT = 0; ctl = null; clearInterval(statsTimer); clearTimeout(grace); statsTimer = null; prevStat = null;
     try { pc && pc.close(); } catch (_) {} pc = null;
     try { stream && stream.getTracks().forEach(t => t.stop()); } catch (_) {} stream = null;
   }
@@ -36,7 +36,7 @@
   function finish(why) { const s = sid; sid = null; cleanup(); if (s) skremote.ended(s); }
 
   async function capture(P) {
-    const video = { width: { ideal: P.w }, height: { ideal: P.h }, frameRate: { ideal: P.fps, max: P.fps }, cursor: 'always' };
+    const video = { width: { ideal: P.w }, height: { ideal: P.h }, frameRate: { ideal: P.fps, max: P.fps }, cursor: curCfg && curCfg.cursor === false ? 'never' : 'always' };
     try { return await navigator.mediaDevices.getDisplayMedia({ video, audio: true }); }
     catch (e) { return await navigator.mediaDevices.getDisplayMedia({ video, audio: false }); }   // no system audio available
   }
@@ -56,20 +56,38 @@
       await snd.setParameters(p);
     } catch (_) {}
   }
+  // Auto quality: if the connection is weak (slow round trip, packet loss, or the encoder is struggling) step down; step back up after 18 calm seconds.
+  const LV = [{ s: 1, b: 1, f: 1 }, { s: 1.5, b: 0.6, f: 1 }, { s: 2, b: 0.35, f: 0.75 }];
+  async function setLevel(n) {
+    try {
+      lvl = n; const snd = pc && pc.getSenders().find(x => x.track && x.track.kind === 'video'); if (!snd || !curP) return;
+      const p = snd.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+      p.encodings[0].maxBitrate = Math.round(curP.kbps * 1000 * LV[n].b); p.encodings[0].scaleResolutionDownBy = LV[n].s; p.encodings[0].maxFramerate = Math.round(curP.fps * LV[n].f);
+      await snd.setParameters(p);
+    } catch (_) {}
+  }
+  function adapt(rtt, limit, loss) {
+    if (!pc || !curCfg || curCfg.autoQ === false) return; const now = performance.now();
+    const bad = rtt > 90 || loss > 0.03 || limit === 'bandwidth' || limit === 'cpu';
+    if (bad) { goodT = 0; if (++badT >= 2 && lvl < 2 && now - lastShift > 5000) { badT = 0; lastShift = now; setLevel(lvl + 1); } }
+    else { badT = 0; if (++goodT >= 12 && lvl > 0 && now - lastShift > 5000) { goodT = 0; lastShift = now; setLevel(lvl - 1); } }
+  }
   function startStats() {
     statsTimer = setInterval(async () => {
       if (!pc) return;
       try {
-        const rep = await pc.getStats(); let out = null, rtt = 0, codec = '';
+        const rep = await pc.getStats(); let out = null, rtt = 0, codec = '', loss = 0;
         const codecs = {}; rep.forEach(r => { if (r.type === 'codec') codecs[r.id] = r.mimeType; });
         rep.forEach(r => {
           if (r.type === 'outbound-rtp' && r.kind === 'video') { out = r; codec = codecs[r.codecId] || ''; }
+          if (r.type === 'remote-inbound-rtp' && r.kind === 'video' && typeof r.fractionLost === 'number') loss = r.fractionLost;
           if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated && r.currentRoundTripTime) rtt = Math.round(r.currentRoundTripTime * 1000);
         });
         if (!out) return; const now = performance.now(); let kbps = 0;
         if (prevStat) kbps = Math.round((out.bytesSent - prevStat.b) * 8 / Math.max(1, now - prevStat.t));
         prevStat = { b: out.bytesSent, t: now };
-        skremote.stats({ /* sent every 1.5 s */ fps: Math.round(out.framesPerSecond || 0), kbps, rtt, codec: codec.replace('video/', ''), w: out.frameWidth || 0, h: out.frameHeight || 0, limit: out.qualityLimitationReason || 'none', black: isBlack, hw: !!(out.encoderImplementation && !/openh264|libvpx|software/i.test(out.encoderImplementation)) });
+        adapt(rtt, out.qualityLimitationReason || 'none', loss);
+        skremote.stats({ lvl, /* sent every 1.5 s */ fps: Math.round(out.framesPerSecond || 0), kbps, rtt, codec: codec.replace('video/', ''), w: out.frameWidth || 0, h: out.frameHeight || 0, limit: out.qualityLimitationReason || 'none', black: isBlack, hw: !!(out.encoderImplementation && !/openh264|libvpx|software/i.test(out.encoderImplementation)) });
       } catch (_) {}
     }, 1500);
   }
@@ -78,7 +96,7 @@
   skremote.on('toClient', text => { try { if (ctl && ctl.readyState === 'open') ctl.send(text); } catch (_) {} });
   // Chromium only allows screen capture right after a user gesture; SKBox starts this through executeJavaScript(..., true), which counts as one.
   async function onOffer(m) {
-    cleanup(); sid = m.sid; const P = curP = PRESETS[m.cfg && m.cfg.quality] || PRESETS.smooth;
+    cleanup(); sid = m.sid; curCfg = m.cfg || null; const P = curP = PRESETS[m.cfg && m.cfg.quality] || PRESETS.smooth;
     try {
       stream = await capture(P);
       stream.getVideoTracks()[0].addEventListener('ended', () => finish('capture ended'));

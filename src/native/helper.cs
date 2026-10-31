@@ -198,10 +198,11 @@ public static class SkHelper
     class Watch
     {
         public int Pid; public string Mode; public int SkPid; public DateTime Start; public IntPtr Hwnd; public uint WinPid; public DateTime HwndSince;
-        public bool Applied; public int Reapply; public DateTime AppliedAt; public bool FallbackUsed; public bool Found; public DateTime LastAlive; public RECT Target; public bool KeyDone; public bool ExclTried; public bool Saved; public int OStyle, OEx; public IntPtr OMenu; public RECT ORect;
+        public bool Applied; public int Reapply; public DateTime AppliedAt; public bool FallbackUsed; public bool Found; public DateTime LastAlive; public RECT Target; public bool KeyDone; public bool ExclTried; public DateTime LastReapply; public bool Saved; public int OStyle, OEx; public IntPtr OMenu; public RECT ORect;
     }
     static Watch watch;
     static volatile bool remoteOn = false;
+    static string remoteFit = "auto";
 
     static Dictionary<uint, List<uint>> ProcessChildren()
     {
@@ -340,13 +341,15 @@ public static class SkHelper
             }
             if (ApplyRemote(w)) { w.Applied = true; w.AppliedAt = DateTime.UtcNow; Emit("FS remote window"); } else Emit("FS fail");
         }
-        else if (w.Reapply < 6 && (DateTime.UtcNow - w.AppliedAt).TotalSeconds < 90)
-        {   // some games put their title bar / menu / size back: put ours back (a few times at most, so nothing flickers)
+        else
+        {   // keep it that way: some games (and emulators) put their title bar / menu / size back. Check every tick, but with a cooldown so nothing flickers.
+            double cool = w.Reapply < 10 ? 2.5 : 15.0;
+            if ((DateTime.UtcNow - w.LastReapply).TotalSeconds < cool) return;
             RECT r; if (GetWindowRect(h, out r) && !IsIconic(h))
             {
                 int st = GetWindowLong(h, -16); bool cap = (st & 0x00C00000) == 0x00C00000;
                 if (cap || GetMenu(h) != IntPtr.Zero || Math.Abs(r.Left - w.Target.Left) > 3 || Math.Abs(r.Top - w.Target.Top) > 3 || Math.Abs(r.Right - w.Target.Right) > 3 || Math.Abs(r.Bottom - w.Target.Bottom) > 3)
-                { w.Reapply++; ApplyRemote(w); }
+                { w.Reapply++; w.LastReapply = DateTime.UtcNow; ApplyRemote(w); }
             }
         }
     }
@@ -365,7 +368,7 @@ public static class SkHelper
         ex &= ~(0x00000001 | 0x00000200 | 0x00020000 | 0x00000100);
         SetWindowLong(h, -16, style); SetWindowLong(h, -20, ex);
         if (GetMenu(h) != IntPtr.Zero) { SetMenu(h, IntPtr.Zero); DrawMenuBar(h); }   // e.g. Cemu's menu bar
-        int x, y, ww, hh; Fit(mon.Left, mon.Top, mon.Right - mon.Left, mon.Bottom - mon.Top, cw, ch, "auto", out x, out y, out ww, out hh);
+        int x, y, ww, hh; Fit(mon.Left, mon.Top, mon.Right - mon.Left, mon.Bottom - mon.Top, cw, ch, remoteFit, out x, out y, out ww, out hh);
         hh -= 1;   // never exactly the whole monitor
         SetWindowPos(h, new IntPtr(-1), x, y, ww, hh, 0x0020 | 0x0040);   // topmost (over the taskbar), frame changed, show
         // If a title bar / menu / border is still there (the game refused the style change), push it off-screen: make the CLIENT area fill the target.
@@ -547,7 +550,8 @@ public static class SkHelper
                     else if (p[0] == "PING") Emit("PONG");
                     else if (p[0] == "MIN" && p.Length > 1) { long hv3; if (long.TryParse(p[1], out hv3)) MinimizeWin(new IntPtr(hv3)); }
                     else if (p[0] == "RESTORE" && p.Length > 1) { long hv4; if (long.TryParse(p[1], out hv4)) { IntPtr hh4 = new IntPtr(hv4); Thread t4 = new Thread(delegate() { RestoreWin(hh4); }); t4.IsBackground = true; t4.Start(); } }
-                    else if (p[0] == "REMOTE" && p.Length > 1) { bool on = p[1] == "1"; remoteOn = on; Taskbar(on); Watch ww = watch; if (ww != null) { if (on) { ww.Applied = false; ww.Reapply = 0; ww.ExclTried = false; } else RestoreWindow(ww); } }
+                    else if (p[0] == "REMOTE" && p.Length > 1) { bool on = p[1] == "1"; remoteOn = on; if (p.Length > 2 && (p[2] == "auto" || p[2] == "stretch" || p[2] == "aspect")) remoteFit = p[2]; Taskbar(on && !(p.Length > 3 && p[3] == "0")); Watch ww = watch; if (ww != null) { if (on) { ww.Applied = false; ww.Reapply = 0; ww.ExclTried = false; } else RestoreWindow(ww); } }
+                    else if (p[0] == "RESTOREWIN") { if (watch != null) RestoreWindow(watch); }
                     else if (p[0] == "WINFIT")
                     {   // manual: fit this window (or the one in front) right now, whatever the watcher thinks
                         long hv9 = 0; if (p.Length > 1) long.TryParse(p[1], out hv9); IntPtr h9 = hv9 != 0 ? new IntPtr(hv9) : (watch != null && watch.Hwnd != IntPtr.Zero ? watch.Hwnd : GetForegroundWindow());
