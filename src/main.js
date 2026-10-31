@@ -139,7 +139,15 @@ function prepWindowedFs(exe) {
   });
 }
 // Every game starts in windowed fullscreen (borderless) unless the person turned that off, or set this one app to 'Leave it alone'.
-function gameMode(m) { m = m || 'auto'; if (m === 'auto' && store.read('settings', {}).gameWindow === 'off') return 'off'; return m; }
+const EMU_RE = /(cemu|yuzu|suyu|ryujinx|citra|lime3ds|azahar|rpcs3|dolphin|pcsx2|duckstation|ppsspp|retroarch|xemu|xenia|melonds|vita3k|shadps4|mgba|snes9x|bsnes|mesen)/i;
+// Emulators draw and resize their own window, so SKBox must not keep forcing its window style (that is what makes them flash).
+// For them it only asks the emulator to go fullscreen itself (Alt+Enter), once, and then leaves it alone.
+function gameMode(m, exe) {
+  m = m || 'auto';
+  if (m !== 'auto') return m;
+  if (store.read('settings', {}).gameWindow === 'off') return 'off';
+  return EMU_RE.test(path.basename(String(exe || ''))) ? 'altenter' : 'auto';
+}
 function showBackdrop(a) {
   closeBackdrop(); const d = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   backdrop = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, backgroundColor: '#000000', show: false, skipTaskbar: true, focusable: false, movable: false, resizable: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -180,7 +188,7 @@ ipcMain.handle('app:launch', async (_e, a) => {
   try {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
-    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: gameMode(a.fs), noWindow: false, exited: false };
+    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: gameMode(a.fs, target), noWindow: false, exited: false };
     statsTouch(a.id, 0);
     if (!isUrl && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
     if (a.compat && !isUrl && /\.exe$/i.test(target)) applyCompat(target);
@@ -463,8 +471,8 @@ let frozenCount = 0, frozenTold = false;
 const recapture = () => (remoteWin && !remoteWin.isDestroyed() ? remoteWin.webContents.executeJavaScript('window.__skhostRecap && window.__skhostRecap()', true).catch(() => false) : Promise.resolve(false));
 // Black or frozen picture while a game runs. Steps: capture the game window instead of the screen, then take the game out of
 // exclusive fullscreen and capture the screen again, then try the window again, then tell the player what to change in the game.
-async function remoteLadder() {
-  if (fixBusy || !game) return; fixBusy = true; badCount = 0;
+async function remoteLadder(auto) {
+  if (fixBusy || !game) return; if (auto && fixStage > 0) return; fixBusy = true; badCount = 0;
   try {
     if (fixStage === 0) { fixStage = 1; remoteSrc = 'window'; toClient({ t: 'notice', text: 'Fixing the picture (step 1)\u2026' }); await recapture(); }
     else if (fixStage === 1) { fixStage = 2; remoteSrc = 'screen'; toClient({ t: 'notice', text: 'Fixing the picture (step 2)\u2026 leaving exclusive fullscreen.' }); if (helper && helper.ready) helper.fixFullscreen(game && game.hwnd ? game.hwnd : 0); await sleep(3800); await recapture(); }
@@ -511,8 +519,8 @@ ipcMain.on('remote:answer', (e, sid, d) => { if (fromRemoteWin(e) && answers[sid
 ipcMain.on('remote:ended', (e, sid) => { if (fromRemoteWin(e) && remote) remote.sessionEnded(sid); });
 ipcMain.on('remote:stats', (e, st) => { if (!fromRemoteWin(e) || !st || typeof st !== 'object') return;
   if (game && fixGame !== game.id) { fixGame = game.id; fixStage = 0; fixTold = false; remoteSrc = 'screen'; }
-  const bad = !!game && !fixBusy && (st.black || ((st.fps | 0) <= 1 && (st.kbps | 0) < 150));
-  if (bad) { if (++badCount >= 4) { if (rset().autoFix) remoteLadder(); else if (!frozenTold) { frozenTold = true; toClient({ t: 'notice', text: 'Picture black or frozen? Turn on \u201CFix fullscreen games automatically\u201D in SKBox Remote play settings.' }); } badCount = 0; } } else if (!fixBusy) badCount = 0;
+  const bad = !!game && !fixBusy && !!st.black;
+  if (bad) { if (++badCount >= 4) { if (rset().autoFix) remoteLadder(true); else if (!frozenTold) { frozenTold = true; toClient({ t: 'notice', text: 'Picture black or frozen? Turn on \u201CFix fullscreen games automatically\u201D in SKBox Remote play settings.' }); } badCount = 0; } } else if (!fixBusy) badCount = 0;
   if (++modeTick % 3 === 1) toClient({ t: 'mode', game: !!game });
   remoteStats = { fps: st.fps | 0, kbps: st.kbps | 0, rtt: st.rtt | 0, codec: String(st.codec || '').slice(0, 12), w: st.w | 0, h: st.h | 0, limit: String(st.limit || '').slice(0, 12), hw: !!st.hw }; pushRemote(); });
 ipcMain.on('remote:input', (e, raw) => {

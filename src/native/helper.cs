@@ -358,7 +358,7 @@ public static class SkHelper
                     }
                 }
             }
-            else if (w.Applied && w.Reapply < 8 && (DateTime.UtcNow - w.AppliedAt).TotalSeconds < 90 && (w.Mode == "auto" || w.Mode == "stretch" || w.Mode == "aspect"))
+            else if (w.Applied && !w.FallbackUsed && w.Reapply < 3 && (DateTime.UtcNow - w.AppliedAt).TotalSeconds < 90 && (w.Mode == "auto" || w.Mode == "stretch" || w.Mode == "aspect"))
             {   // some games put their borders back: keep it borderless for the first minute and a half
                 RECT r; if (GetWindowRect(w.Hwnd, out r) && !IsIconic(w.Hwnd) && (caption || Math.Abs(r.Left - w.Target.Left) > 3 || Math.Abs(r.Right - w.Target.Right) > 3 || Math.Abs(r.Top - w.Target.Top) > 3 || Math.Abs(r.Bottom - w.Target.Bottom) > 3))
                 { w.Reapply++; RECT t; if (Borderless(w.Hwnd, w.Mode, out t)) w.Target = t; }
