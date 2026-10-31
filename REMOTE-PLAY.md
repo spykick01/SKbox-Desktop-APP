@@ -19,10 +19,14 @@ The app is not signed with an Apple developer certificate, so macOS blocks it at
 Needs macOS 10.15 (Catalina) or newer. Older macOS: use the browser version.
 
 ## While playing
-Move the mouse to the top of the screen for the toolbar: Fullscreen, **Game mouse**, **Fix black screen**, (hides the cursor and sends raw movement, use it in games), Stats, Disconnect. Ctrl+Alt+Shift+D disconnects. On a Mac, Command acts as Ctrl.
+The player is just the picture, sound, keyboard and mouse. It goes fullscreen by itself and has no buttons on top.
+All the controls are on the PC, in the **SKBox menu** (press the Xbox / PlayStation button, or Ctrl+Shift+O, then pick **Remote play**):
+Disconnect player, Fix black screen, New PIN, Quality, Keyboard & mouse on/off, Auto-fix games, Turn Remote play off.
+Emergency exit on the player device: Ctrl+Alt+Shift+D. On a Mac, Command acts as Ctrl.
+Raw mouse movement for games turns on by itself at your first click while a game is running (Esc lets go).
 
 ## Settings (on the PC)
-Quality (720p30, 1080p30, 1080p60), let the other device use keyboard and mouse (off = view only), controller mode (menus / keyboard-and-mouse preset / off), New PIN, Disconnect.
+Quality (720p60 is the default and the fastest, 720p30, 1080p30, 1080p60), keyboard and mouse on/off (off = view only), controller mode, auto-fix, New PIN, Disconnect.
 
 ## Security
 Only devices on your local network can connect (anything else is refused). A random PIN is required; 5 wrong tries lock that device for a minute. One player at a time. Turning Remote play off closes the port and ends the session.
@@ -30,6 +34,6 @@ Only devices on your local network can connect (anything else is refused). A ran
 ## Limits you should know
 - A **real controller cannot be passed through** without a virtual-controller driver (ViGEmBus). Instead the controller on the other device acts as keyboard and mouse input.
 - Games running **as administrator** ignore injected input unless SKBox is also run as administrator.
-- Games in **exclusive fullscreen** may stream black (the screen capture cannot see them). Use **Fix black screen** in the player's top bar, or set the game to Borderless / Windowed.
+- **Exclusive fullscreen games:** SKBox streams the monitor SKBox itself is on. If the picture goes black or freezes while a game runs, SKBox fixes it by itself in steps (capture the game window, then leave exclusive fullscreen with Alt+Enter, then capture again). You can run the same fix from the SKBox menu. If it is still black, set the game to Borderless or Windowed in its video settings.
 - The PC keeps playing sound on its own speakers too.
 - Hardware video encoding depends on the PC's graphics driver; if it falls back to software, use the 720p preset.

@@ -13,9 +13,14 @@
     { id: 'cozy', name: 'Cozy', items: [['cozy_fire', 'Campfire'], ['cozy_mug', 'Hot Cocoa'], ['cozy_cabin', 'Cabin'], ['cozy_cat', 'Moon Cat'], ['cozy_shroom', 'Mushroom'], ['cozy_plant', 'Plant']] }
   ];
   const BGS = [['dynamic', 'Dynamic'], ['west_dusk', 'Wild West Dusk'], ['blocks_day', 'Blocky Meadow'], ['neon_city', 'Neon City'], ['cabin_night', 'Cabin Night'], ['rainy_window', 'Rainy Window'], ['campfire', 'Campfire'], ['aurora', 'Aurora'], ['sunrise_hills', 'Sunrise Hills']];
-  const BGMOOD = { west_dusk: 'west', blocks_day: 'pixel', neon_city: 'neon', cabin_night: 'campfire', rainy_window: 'lofi', campfire: 'campfire', aurora: 'lofi', sunrise_hills: 'pixel' };
-  const FXCOL = { dynamic: '#ffe2a8', west_dusk: '#ffb870', blocks_day: '#ffffff', neon_city: '#ff6aa8', cabin_night: '#ffd98a', rainy_window: '#8fb4ff', campfire: '#ffae50', aurora: '#8fffd0', sunrise_hills: '#fff0c8' };
-  const ACCENTS = ['#2dd4bf', '#818cf8', '#f472b6', '#fb923c', '#4ade80', '#60a5fa'];
+  const BGMOOD = { west_dusk: 'west', blocks_day: 'pixel', neon_city: 'neon', cabin_night: 'campfire', rainy_window: 'lofi', campfire: 'campfire', aurora: 'lofi', sunrise_hills: 'pixel', grad_dusk: 'dream', grad_ocean: 'ocean', grad_ember: 'jazz', grad_mint: 'forest', grad_violet: 'space', grad_slate: 'lofi' };
+  const FXCOL = { dynamic: '#ffe2a8', west_dusk: '#ffb870', blocks_day: '#ffffff', neon_city: '#ff6aa8', cabin_night: '#ffd98a', rainy_window: '#8fb4ff', campfire: '#ffae50', aurora: '#8fffd0', sunrise_hills: '#fff0c8', grad_dusk: '#ffc9d6', grad_ocean: '#a6f0ff', grad_ember: '#ffb35c', grad_mint: '#d6ffe4', grad_violet: '#e3c9ff', grad_slate: '#cfd8ea' };
+  const ACCENTS = ['#2dd4bf', '#818cf8', '#f472b6', '#fb923c', '#4ade80', '#60a5fa', '#f87171', '#facc15', '#a78bfa', '#22d3ee', '#e879f9', '#34d399'];
+  const GRADS = { grad_dusk: ['#2b1055', '#7a3b8f', '#ff9a8b'], grad_ocean: ['#031a33', '#0a5a8a', '#38d0c9'], grad_ember: ['#1a0a0a', '#7a1f1f', '#ff9b3d'], grad_mint: ['#06201a', '#12805f', '#b8f5c9'], grad_violet: ['#0a0720', '#3d1f8a', '#c18bff'], grad_slate: ['#0d1117', '#2a3341', '#7d8aa3'] };
+  const GRADN = { grad_dusk: 'Dusk Glow', grad_ocean: 'Deep Ocean', grad_ember: 'Ember', grad_mint: 'Mint Haze', grad_violet: 'Violet Night', grad_slate: 'Slate' };
+  const gradUrl = k => { const c = GRADS[k]; if (!c) return ''; const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='none'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='" + c[0] + "'/><stop offset='.55' stop-color='" + c[1] + "'/><stop offset='1' stop-color='" + c[2] + "'/></linearGradient><radialGradient id='r' cx='.78' cy='.18' r='.65'><stop offset='0' stop-color='#fff' stop-opacity='.22'/><stop offset='1' stop-color='#fff' stop-opacity='0'/></radialGradient><radialGradient id='q' cx='.1' cy='.95' r='.7'><stop offset='0' stop-color='" + c[2] + "' stop-opacity='.35'/><stop offset='1' stop-color='" + c[2] + "' stop-opacity='0'/></radialGradient></defs><rect width='1600' height='900' fill='url(#g)'/><rect width='1600' height='900' fill='url(#r)'/><rect width='1600' height='900' fill='url(#q)'/></svg>"; return 'data:image/svg+xml,' + encodeURIComponent(svg); };
+  const bgUrl = k => k.startsWith('grad_') ? gradUrl(k) : 'assets/bg/' + k + '.jpg';
+  Object.keys(GRADN).forEach(k => BGS.push([k, GRADN[k]]));
   const gradFor = n => { let h = 0; for (const c of String(n)) h = (h * 31 + c.charCodeAt(0)) % 360; return 'linear-gradient(160deg,hsl(' + h + ',55%,32%),hsl(' + ((h + 50) % 360) + ',60%,12%))'; };
   const saveApps = () => sk.store.set('apps', S.apps);
   const saveSettings = () => sk.store.set('settings', S.settings);
@@ -27,19 +32,39 @@
   function go(name, data) {
     clearTimers(); S.screen = name; if (window.K.audio) window.K.audio.setSuspended(name === 'web'); S.backFn = null; S.startFn = null; S.bumper = null;
     const root = $('#screen'); root.innerHTML = ''; root.className = 'fade';
-    ({ boot, welcome, profiles, home, library, settings, addApp, web }[name])(root, data || {});
+    ({ boot, start, welcome, profiles, home, library, settings, addApp, web }[name])(root, data || {});
   }
   window.K.go = go;
 
-  // ---------- screensaver (a slow clock so a TV does not burn in) ----------
+  // ---------- idle screen: a fancy clock with soft music (moves slowly so a TV does not burn in) ----------
   let saverEl = null, saverAnim = null;
-  K.saverOff = () => { if (saverEl) { saverEl.remove(); saverEl = null; } clearInterval(saverAnim); K.saverOn = false; K.lastInput = Date.now(); };
+  const p2 = n => String(n).padStart(2, '0');
+  const greet = h => h < 5 ? 'Still up?' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  K.saverOff = () => { if (saverEl) { saverEl.remove(); saverEl = null; } clearInterval(saverAnim); K.saverOn = false; K.lastInput = Date.now(); if (K.audio && K.audio.idle) K.audio.idle(null); };
   function saverShow() {
-    K.saverOn = true; saverEl = el('div', 'saver', '<div class="sv"><b></b><span></span></div>'); document.body.appendChild(saverEl);
-    const sv = saverEl.firstChild, upd = () => { const n = new Date(); sv.querySelector('b').textContent = K.fmtTime(n); sv.querySelector('span').textContent = n.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); sv.style.left = (5 + Math.random() * 50) + '%'; sv.style.top = (8 + Math.random() * 60) + '%'; };
-    upd(); saverAnim = setInterval(upd, 20000);
+    K.saverOn = true; const style = S.settings.saverStyle || 'ambient';
+    if (style === 'minimal') {
+      saverEl = el('div', 'saver', '<div class="sv"><b></b><span></span></div>'); document.body.appendChild(saverEl);
+      const sv = saverEl.firstChild, upd = () => { const n = new Date(); sv.querySelector('b').textContent = K.fmtTime(n); sv.querySelector('span').textContent = n.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); sv.style.left = (5 + Math.random() * 50) + '%'; sv.style.top = (8 + Math.random() * 60) + '%'; };
+      upd(); saverAnim = setInterval(upd, 20000); return;
+    }
+    let stars = ''; for (let i = 0; i < 46; i++) stars += '<i style="left:' + (Math.random() * 100).toFixed(1) + '%;top:' + (Math.random() * 100).toFixed(1) + '%;--d:' + (3 + Math.random() * 6).toFixed(1) + 's;--l:-' + (Math.random() * 8).toFixed(1) + 's;--s:' + (1 + Math.random() * 2.2).toFixed(1) + 'px"></i>';
+    saverEl = el('div', 'saver amb', '<div class="ab a1"></div><div class="ab a2"></div><div class="ab a3"></div><div class="stars">' + stars + '</div>' +
+      '<div class="ambclock"><div class="hello"></div><div class="dial"><svg viewBox="0 0 200 200"><circle class="trk" cx="100" cy="100" r="94"/><circle class="prg" cx="100" cy="100" r="94" transform="rotate(-90 100 100)"/></svg><div class="tm"><b></b><em></em></div></div><div class="dt"></div><div class="np"></div></div>');
+    document.body.appendChild(saverEl);
+    const q = x => saverEl.querySelector(x), prg = q('.prg'), C = 2 * Math.PI * 94; prg.style.strokeDasharray = C;
+    const upd = () => {
+      const n = new Date(), h = n.getHours(), c24 = !!S.settings.clock24;
+      q('.tm b').textContent = (c24 ? p2(h) : (h % 12 || 12)) + ':' + p2(n.getMinutes()); q('.tm em').textContent = c24 ? '' : (h < 12 ? 'AM' : 'PM');
+      q('.dt').textContent = n.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); q('.hello').textContent = greet(h);
+      prg.style.strokeDashoffset = C * (1 - (n.getSeconds() + 1) / 60);
+      const hue = Math.round(((h * 60 + n.getMinutes()) / 1440) * 360); saverEl.style.setProperty('--h', hue);
+    };
+    upd(); saverAnim = setInterval(upd, 1000);
+    const im = S.settings.idleMood == null ? 'twilight' : S.settings.idleMood;
+    if (K.audio && K.audio.idle && im !== 'off') { K.audio.idle(im); const nm = (K.audio.moods().find(x => x[0] === im) || [])[1]; if (nm) saverEl.querySelector('.np').textContent = '\u266A ' + nm; }
   }
-  setInterval(() => { const m = +S.settings.saver || 0; if (!m || K.saverOn || S.game || !['home', 'library', 'settings'].includes(S.screen)) return; if (Date.now() - K.lastInput > m * 60000) saverShow(); }, 5000);
+  setInterval(() => { const m = +S.settings.saver || 0; if (!m || K.saverOn || S.game || !['home', 'library', 'settings', 'start'].includes(S.screen)) return; if (Date.now() - K.lastInput > m * 60000) saverShow(); }, 5000);
 
   // ---------- boot ----------
   function boot(root) {
@@ -51,16 +76,23 @@
       try { S.game = await sk.game.state(); } catch (_) { S.game = null; }
       applyTheme(); if (window.K.audio) { window.K.audio.apply(); window.K.audio.boot(); } S.profiles = await sk.auth.list();
       await new Promise(r => setTimeout(r, 900));
-      const last = S.settings.players || [];
-      S.players = [S.profiles.find(p => p.u === last[0]) || (last[0] === 'guest' ? { u: 'guest', guest: true } : null), S.profiles.find(p => p.u === last[1]) || null];
-      if (S.players[0]) { go('home'); S.players[0].u !== 'guest' && sk.auth.refresh(S.players[0].u).then(m => { if (m) { S.players[0] = m; const i = S.profiles.findIndex(p => p.u === m.u); if (i >= 0) S.profiles[i] = m; } }); }
-      else if (S.profiles.length) go('profiles', { slot: 0 }); else go('welcome');
+      const last = S.settings.players || []; S.lastP0 = last[0] || '';
+      const mem = [S.profiles.find(p => p.u === last[0]) || (last[0] === 'guest' ? { u: 'guest', guest: true } : null), S.profiles.find(p => p.u === last[1]) || null];
+      if (S.settings.askWho === false && mem[0]) { S.players = mem; go('home'); mem[0].u !== 'guest' && sk.auth.refresh(mem[0].u).then(m => { if (m) { S.players[0] = m; const i = S.profiles.findIndex(p => p.u === m.u); if (i >= 0) S.profiles[i] = m; } }); return; }
+      S.players = [null, null]; go('start');
     })();
   }
   function applyTheme() {
     const a = S.settings.accent || ACCENTS[0]; document.documentElement.style.setProperty('--a', a);
     document.body.classList.toggle('calm', !!S.settings.calm);
-    const TH = { midnight: {}, oled: { '--bg': '#000', '--panel': 'rgba(10,10,14,.9)', '--panel2': 'rgba(22,22,28,.95)' }, daylight: { '--bg': '#e9edf7', '--panel': 'rgba(255,255,255,.86)', '--panel2': 'rgba(240,243,252,.96)', '--line': 'rgba(10,15,40,.14)', '--text': '#101428', '--dim': '#4a5170' } };
+    const TH = { midnight: {}, oled: { '--bg': '#000', '--panel': 'rgba(10,10,14,.9)', '--panel2': 'rgba(22,22,28,.95)' }, daylight: { '--bg': '#e9edf7', '--panel': 'rgba(255,255,255,.86)', '--panel2': 'rgba(240,243,252,.96)', '--line': 'rgba(10,15,40,.14)', '--text': '#101428', '--dim': '#4a5170' },
+      sunset: { '--bg': '#1a0f24', '--panel': 'rgba(42,22,52,.86)', '--panel2': 'rgba(58,30,66,.95)', '--line': 'rgba(255,190,150,.16)', '--text': '#fff1e8', '--dim': '#c9a4b8' },
+      ocean: { '--bg': '#061a2b', '--panel': 'rgba(10,36,58,.86)', '--panel2': 'rgba(14,52,80,.95)', '--line': 'rgba(140,210,255,.16)', '--text': '#eaf7ff', '--dim': '#8fb4cc' },
+      forest: { '--bg': '#0a1a12', '--panel': 'rgba(16,40,28,.86)', '--panel2': 'rgba(22,56,38,.95)', '--line': 'rgba(160,230,180,.15)', '--text': '#eefaf0', '--dim': '#93b8a0' },
+      rose: { '--bg': '#1d0c16', '--panel': 'rgba(46,18,34,.86)', '--panel2': 'rgba(64,24,46,.95)', '--line': 'rgba(255,160,200,.16)', '--text': '#fff0f6', '--dim': '#c99ab2' },
+      cyber: { '--bg': '#0b0720', '--panel': 'rgba(24,14,56,.86)', '--panel2': 'rgba(34,18,78,.95)', '--line': 'rgba(170,120,255,.2)', '--text': '#f2ecff', '--dim': '#a99bd6' },
+      graphite: { '--bg': '#121316', '--panel': 'rgba(30,32,38,.9)', '--panel2': 'rgba(42,45,53,.95)', '--line': 'rgba(255,255,255,.1)', '--text': '#eceef2', '--dim': '#9096a4' },
+      sakura: { '--bg': '#fbeef3', '--panel': 'rgba(255,255,255,.86)', '--panel2': 'rgba(255,240,246,.96)', '--line': 'rgba(80,20,50,.14)', '--text': '#2a1020', '--dim': '#7a5468' } };
     ['--bg', '--panel', '--panel2', '--line', '--text', '--dim'].forEach(k => document.documentElement.style.removeProperty(k));
     Object.entries(TH[S.settings.theme] || {}).forEach(([k, v]) => document.documentElement.style.setProperty(k, v));
     document.documentElement.style.fontSize = 'calc(clamp(13px, 2vh, 26px) * ' + ({ small: .9, normal: 1, large: 1.15, huge: 1.3 }[S.settings.uiSize] || 1) + ')';
@@ -73,7 +105,7 @@
   }
   function applyWall() {
     const b = S.settings.bg || 'dynamic'; let url = '';
-    if (b.startsWith('file:')) url = fileUrl(b.slice(5)); else if (b !== 'dynamic') url = 'assets/bg/' + b + '.jpg';
+    if (b.startsWith('file:')) url = fileUrl(b.slice(5)); else if (b !== 'dynamic') url = bgUrl(b);
     window.K.setWall(url); const fx = $('#fx'); if (fx) fx.style.setProperty('--fx', FXCOL[b] || FXCOL.dynamic);
   }
   function setBgChoice(key) {
@@ -114,6 +146,17 @@
       } });
     } });
   }
+  // ---------- press A to start, then pick Player 1 ----------
+  function start(root) {
+    hints([['A', 'Start']]); S.backFn = null; S.startFn = null; setBg('');
+    root.innerHTML = '<div class="startscr amb"><div class="ab a1"></div><div class="ab a2"></div><div class="ab a3"></div><div class="stc"><div class="logo">SKBOX</div><div class="sclock"><b></b><span></span></div></div></div>';
+    const wrap = root.firstChild, stc = wrap.querySelector('.stc');
+    const go1 = nav(el('button', 'pressa', '<span class="pa"></span>')); go1.dataset.first = ''; stc.appendChild(go1);
+    const upd = () => { const n = new Date(), h = n.getHours(), c24 = !!S.settings.clock24; wrap.querySelector('.sclock b').textContent = (c24 ? p2(h) : (h % 12 || 12)) + ':' + p2(n.getMinutes()) + (c24 ? '' : ' ' + (h < 12 ? 'AM' : 'PM')); wrap.querySelector('.sclock span').textContent = greet(h) + ' \u00B7 ' + n.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); go1.firstChild.textContent = K.padType === 'ps' ? 'Press \u2715 to start' : 'Press A to start'; };
+    upd(); clockTimer = setInterval(upd, 1000);
+    go1.onclick = () => { if (S.profiles.length) go('profiles', { slot: 0 }); else go('welcome'); };
+    ensureFocus(root);
+  }
   function welcome(root) {
     hints([['A', 'Select']]);
     root.innerHTML = '<div class="center"><div class="logo">SKBOX</div><p style="color:var(--dim);max-width:34rem;line-height:1.6">Sign in with your SKchat account. Your profile, SKchat and SKMusic come with you.</p></div>';
@@ -125,11 +168,11 @@
   function profiles(root, d) {
     const slot = d.slot || 0;
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = S.players[0] ? () => go('home') : null;
-    root.innerHTML = '<div class="center"><h1 style="font-size:2.4rem">' + (slot ? (d.auto ? 'Player 2 joined! Pick your profile' : 'Player 2: who\u2019s playing?') : 'Who\u2019s playing?') + '</h1></div>';
+    root.innerHTML = '<div class="center"><h1 style="font-size:2.4rem">' + (slot ? (d.auto ? 'Player 2 joined! Pick your profile' : 'Player 2: who\u2019s playing?') : 'Player 1: who\u2019s playing?') + '</h1></div>';
     const grid = el('div', 'grid'); grid.style.cssText = 'width:min(70vw,60rem);margin-top:2vh';
     S.profiles.forEach((p, i) => {
       const c = nav(el('button', 'pcard', avatar(p, true) + '<b>' + esc(p.nick || p.u) + '</b><small>@' + esc(p.u) + '</small>'));
-      if (i === 0) c.dataset.first = '';
+      if (i === 0 || (slot === 0 && p.u === S.lastP0)) { grid.querySelectorAll('[data-first]').forEach(x => delete x.dataset.first); c.dataset.first = ''; }
       c.onclick = () => { S.players[slot] = p; if (slot === 1 && S.players[0] && S.players[0].u === p.u) { toast('That profile is already Player 1'); S.players[1] = null; return; } rememberPlayers(); sk.auth.refresh(p.u).then(m => { if (m) S.players[slot] = m; }); go('home'); };
       grid.appendChild(c);
     });
@@ -518,7 +561,7 @@
       const grid = el('div', 'bgrid'), cur = S.settings.bg || 'dynamic';
       BGS.forEach(([key, name]) => {
         const b = nav(el('button', 'bgt' + (key === 'dynamic' ? ' dyn' : '') + (cur === key ? ' sel' : ''), key === 'dynamic' ? 'Dynamic<br>(follows the app you pick)' : '<small>' + esc(name) + '</small>'));
-        if (key !== 'dynamic') b.style.backgroundImage = 'url("assets/bg/' + key + '.jpg")';
+        if (key !== 'dynamic') b.style.backgroundImage = 'url("' + bgUrl(key) + '")';
         b.onclick = () => { setBgChoice(key); [...grid.children].forEach(x => x.classList.remove('sel')); b.classList.add('sel'); refreshMoods && refreshMoods(); };
         grid.appendChild(b);
       });
@@ -544,10 +587,14 @@
     } else if (id === 'prefs') {
       h('Preferences'); sub('Press A on a row to change it.');
       const sv = (k, v) => { S.settings[k] = v; saveSettings(); };
-      pane.appendChild(cyc('Look', 'Midnight is the default. OLED black saves power on OLED TVs.', [['midnight', 'Midnight'], ['oled', 'OLED black'], ['daylight', 'Daylight']], () => S.settings.theme || 'midnight', v => { sv('theme', v); applyTheme(); }));
+      pane.appendChild(cyc('Look', 'Midnight is the default. OLED black saves power on OLED TVs.', [['midnight', 'Midnight'], ['oled', 'OLED black'], ['daylight', 'Daylight'], ['sunset', 'Sunset'], ['ocean', 'Ocean'], ['forest', 'Forest'], ['rose', 'Rose'], ['cyber', 'Cyber'], ['graphite', 'Graphite'], ['sakura', 'Sakura']], () => S.settings.theme || 'midnight', v => { sv('theme', v); applyTheme(); }));
       pane.appendChild(cyc('Text and tile size', 'Bigger is easier to read from the couch.', [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large'], ['huge', 'Huge']], () => S.settings.uiSize || 'normal', v => { sv('uiSize', v); applyTheme(); }));
       pane.appendChild(cyc('Clock', '', [['12', '12-hour'], ['24', '24-hour']], () => S.settings.clock24 ? '24' : '12', v => sv('clock24', v === '24')));
-      pane.appendChild(cyc('Screensaver', 'A slow clock after you have been idle on Home. Any button wakes it.', [['0', 'Off'], ['2', '2 min'], ['5', '5 min'], ['10', '10 min'], ['20', '20 min']], () => String(S.settings.saver || 0), v => sv('saver', +v)));
+      pane.appendChild(toggle('Ask who is playing at startup', 'Press A, then pick Player 1\u2019s profile every time SKBox opens', S.settings.askWho !== false, v => sv('askWho', v)));
+      pane.appendChild(cyc('Idle screen', 'What shows when SKBox is left alone. Any button wakes it.', [['0', 'Off'], ['1', 'After 1 min'], ['2', 'After 2 min'], ['5', 'After 5 min'], ['10', 'After 10 min'], ['20', 'After 20 min']], () => String(S.settings.saver || 0), v => sv('saver', +v)));
+      pane.appendChild(cyc('Idle screen style', 'A fancy clock with a soft glow, or a tiny drifting clock.', [['ambient', 'Fancy clock'], ['minimal', 'Simple clock']], () => S.settings.saverStyle || 'ambient', v => sv('saverStyle', v)));
+      const IA = window.K.audio; pane.appendChild(cyc('Idle screen music', 'Plays softly while the idle screen is up.', [['off', 'Off']].concat(IA ? IA.moods() : []), () => S.settings.idleMood == null ? 'twilight' : S.settings.idleMood, v => { sv('idleMood', v); if (K.saverOn && IA && IA.idle) IA.idle(v === 'off' ? null : v); }));
+      pane.appendChild(row('Show the idle screen now', 'Try it out. Press any button to leave it.', '\u2192', () => { K.lastInput = Date.now(); setTimeout(() => { if (!K.saverOn) saverShow(); }, 150); }));
       pane.appendChild(toggle('Controller vibration', 'A tiny buzz when you press A', S.settings.rumble !== false, v => sv('rumble', v)));
       pane.appendChild(toggle('Swap A and B', 'For Nintendo-style layout: B selects, A goes back', !!S.settings.swapAB, v => sv('swapAB', v)));
       pane.appendChild(toggle('Swap X and Y', 'X opens options, Y pins', !!S.settings.swapXY, v => sv('swapXY', v)));
@@ -578,7 +625,7 @@
       h('Remote play'); sub('Play this PC from a Mac or another PC on the same Wi-Fi. It only runs while you turn it on here, and it turns itself off when SKBox closes.');
       const box = el('div'); pane.appendChild(box); let st = null;
       const fmtSt = s => s ? [s.w && s.h ? s.w + 'x' + s.h : '', s.fps ? s.fps + ' fps' : '', s.kbps ? (s.kbps / 1000).toFixed(1) + ' Mbps' : '', s.rtt ? s.rtt + ' ms' : '', s.codec || '', s.hw === false && s.codec ? 'software encode' : ''].filter(Boolean).join(' \u00B7 ') : '';
-      const QO = [['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']], PO = [['menus', 'Menus (arrows, Enter)'], ['keys', 'Keyboard and mouse preset'], ['off', 'Off']];
+      const QO = [['smooth', '720p \u00B7 60 fps (fastest)'], ['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']], PO = [['menus', 'Menus (arrows, Enter)'], ['keys', 'Keyboard and mouse preset'], ['off', 'Off']];
       const render = s => {
         st = s; const fk = K.current && K.current() && K.current().dataset ? K.current().dataset.rk : ''; box.innerHTML = '';
         if (!s.supported) { box.appendChild(row('Remote play host needs Windows', 'Use SKBox on your Windows PC as the host. This device can still be the player.', '', null)); return; }
@@ -594,6 +641,8 @@
         const q = cyc('Quality', 'Lower is smoother on weak Wi-Fi. 1080p 60 needs 5 GHz Wi-Fi or a cable on the PC.', QO, () => s.cfg.quality, v => { s.cfg.quality = v; sk.remote.cfg({ quality: v }); }); q.dataset.rk = 'q'; box.appendChild(q);
         const ai = toggle('Let the other device use keyboard and mouse', 'Off = view only', !!s.cfg.allowInput, v => { s.cfg.allowInput = v; sk.remote.cfg({ allowInput: v }); }); ai.dataset.rk = 'ai'; box.appendChild(ai);
         const pm = cyc('Controller on the other device', 'It becomes keyboard and mouse input here. Real controller pass-through needs a virtual controller driver.', PO, () => s.cfg.padMode, v => { s.cfg.padMode = v; sk.remote.cfg({ padMode: v }); }); pm.dataset.rk = 'pm'; box.appendChild(pm);
+        const af = toggle('Fix fullscreen games automatically', 'If a game looks black or frozen on the other device, SKBox switches how it captures the game and takes it out of exclusive fullscreen.', s.cfg.autoFix !== false, v => { s.cfg.autoFix = v; sk.remote.cfg({ autoFix: v }); }); af.dataset.rk = 'af'; box.appendChild(af);
+        if (s.on) { const fx = row('Fix the picture now', 'Black or frozen picture on the other device? Press A.', '\u2192', () => { sk.remote.fix(); toast('Trying to fix the picture\u2026'); }); fx.dataset.rk = 'fx'; box.appendChild(fx); }
         box.appendChild(row('First time?', 'Windows may ask to let SKBox use private networks. Choose Allow. Both devices must be on the same Wi-Fi.', '', null));
         box.appendChild(row('Get the SKBox Remote app', 'Mac and Windows downloads are on the SKBox GitHub releases page (look for \u201Cremote-v\u201D). Or open the address above in a browser.', '', null));
         if (fk) { const n = box.querySelector('[data-rk="' + fk + '"]'); if (n) focus(n); }

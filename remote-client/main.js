@@ -22,6 +22,7 @@ function discover(ms) {
   });
 }
 ipcMain.handle('discover', () => discover(1500));
+ipcMain.on('fs', (_e, on) => { try { if (win && !win.isDestroyed()) win.setFullScreen(!!on); } catch (_) {} });
 
 let win = null;
 function create() {

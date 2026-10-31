@@ -36,6 +36,8 @@
     const c = this.ctx, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(); s.buffer = this.noise; s.loop = true;
     if (kind === 'rain') { f.type = 'bandpass'; f.frequency.value = 3800; f.Q.value = 0.35; g.gain.value = 0.1; }
     else if (kind === 'wind') { f.type = 'lowpass'; f.frequency.value = 420; g.gain.value = 0.1; const l = c.createOscillator(), lg = c.createGain(); l.frequency.value = 0.09; lg.gain.value = 0.06; l.connect(lg); lg.connect(g.gain); l.start(); this.beds.push(l); }
+    else if (kind === 'surf') { f.type = 'lowpass'; f.frequency.value = 900; g.gain.value = 0.07; const l = c.createOscillator(), lg = c.createGain(); l.frequency.value = 0.11; lg.gain.value = 0.06; l.connect(lg); lg.connect(g.gain); l.start(); this.beds.push(l); }
+    else if (kind === 'night') { f.type = 'lowpass'; f.frequency.value = 220; g.gain.value = 0.05; }
     else { f.type = 'lowpass'; f.frequency.value = 300; g.gain.value = 0.06; }
     s.connect(f); f.connect(g); g.connect(this.dry); s.start(); this.beds.push(s); this.beds.push(g);
   };
@@ -82,6 +84,51 @@
         if ([0, 6, 10].includes(s)) m.osc('sine', midi(ch[0] - 12), t, 0.55, 0.14, 0.01, 0.4, m.dry, 380);
         if (s === 0 || s === 8) m.kick(t, 0.32); if (s === 8) m.snare(t, 0.09); if (s % 4 === 2) m.hat(t, 0.025);
         if ((s === 4 || s === 12) && Math.random() < 0.3) m.pluck(midi(pick(this.pent) + 12), t, 0.08, 1.6, 'triangle', 2800);
+      } },
+    dream: { name: 'Dreamy Clouds', bpm: 52, beds: [], chords: [[53, 60, 64, 67], [50, 57, 62, 65], [48, 55, 60, 64], [55, 62, 65, 69]], pent: [72, 74, 76, 79, 81, 84],
+      step(m, t, i, ch, s) {
+        if (s === 0) ch.forEach(n => m.pad(midi(n + 12), t, 5.2, 0.045, 'sine', 1400));
+        if (s === 0) m.osc('sine', midi(ch[0] - 12), t, 4.5, 0.09, 0.4, 2, m.dry, 300);
+        if ([2, 6, 10, 14].includes(s) && Math.random() < 0.5) m.bell(midi(pick(this.pent)), t, 0.06, 2.8);
+      } },
+    space: { name: 'Deep Space', bpm: 44, beds: ['night'], chords: [[38, 45, 52, 57], [36, 43, 50, 55], [41, 48, 55, 60], [34, 41, 48, 53]], pent: [74, 77, 79, 81, 84],
+      step(m, t, i, ch, s) {
+        if (s === 0) ch.forEach((n, k) => m.pad(midi(n), t, 7, 0.05, 'sawtooth', 320 + k * 90));
+        if ((s === 4 || s === 12) && Math.random() < 0.35) m.bell(midi(pick(this.pent)), t, 0.05, 3.6);
+        if (s === 8 && Math.random() < 0.25) m.pluck(midi(pick(this.pent) + 12), t, 0.04, 3, 'sine', 3200);
+      } },
+    ocean: { name: 'Ocean Calm', bpm: 56, beds: ['surf'], chords: [[48, 55, 59, 64], [45, 52, 57, 62], [43, 50, 55, 59], [41, 48, 53, 57]], pent: [67, 71, 74, 76, 79],
+      step(m, t, i, ch, s) {
+        if (s === 0) ch.forEach(n => m.pad(midi(n + 12), t, 4.6, 0.04, 'triangle', 900));
+        if ([0, 8].includes(s) && Math.random() < 0.7) m.pluck(midi(pick(this.pent)), t + rnd(0, 0.1), 0.08, 2.4, 'sine', 2600);
+        if (s === 12 && Math.random() < 0.3) m.bell(midi(pick(this.pent) + 12), t, 0.05, 2.6);
+      } },
+    forest: { name: 'Forest Morning', bpm: 70, beds: ['wind'], chords: [[48, 55, 60, 64], [52, 59, 64, 67], [45, 52, 57, 60], [43, 50, 55, 59]], pent: [72, 74, 76, 79, 81],
+      step(m, t, i, ch, s) {
+        if (s === 0) ch.forEach(n => m.pad(midi(n), t, 3.4, 0.035, 'triangle', 800));
+        if ([0, 4, 8, 12].includes(s)) m.pluck(midi(ch[(s / 4) % ch.length] + 12), t, 0.09, 1.3, 'triangle', 2200);
+        if (Math.random() < 0.06) { const f = rnd(2400, 3600), q = t + rnd(0, 0.3); m.osc('sine', f, q, 0.08, 0.018, 0.01, 0.05, m.bus); m.osc('sine', f * 1.18, q + 0.1, 0.08, 0.016, 0.01, 0.05, m.bus); }
+      } },
+    jazz: { name: 'Late Night Jazz', bpm: 78, swing: 0.06, beds: ['night'], chords: [[50, 57, 60, 64], [43, 55, 59, 65], [48, 55, 59, 64], [45, 52, 58, 62]], pent: [62, 65, 67, 69, 72, 74],
+      step(m, t, i, ch, s) {
+        const ts = SW(m, t, s, 0.06);
+        if (s % 4 === 0) m.osc('sine', midi(ch[0] - 12 + [0, 7, 12, 7][(s / 4) % 4]), ts, 0.5, 0.13, 0.01, 0.4, m.dry, 420);
+        if (s === 0 || s === 6 || s === 10) ch.forEach((n, k) => m.rhodes(midi(n + 12), ts + k * 0.02, 0.06, 1.1));
+        if (s % 4 === 2) m.hat(ts, 0.03); if (s === 0 || s === 8) m.hit(ts, 0.04, 0.12, 'bandpass', 5200, 1.2);
+        if ((s === 3 || s === 7 || s === 11 || s === 14) && Math.random() < 0.4) m.rhodes(midi(pick(this.pent) + 12), ts, 0.06, 0.6);
+      } },
+    arcade: { name: 'Arcade Chill', bpm: 100, beds: [], chords: [[45, 52, 57, 60], [41, 48, 53, 57], [43, 50, 55, 59], [40, 47, 52, 56]], pent: [69, 72, 74, 76, 81, 84],
+      step(m, t, i, ch, s) {
+        if (s % 2 === 0) m.pluck(midi(ch[(s / 2) % ch.length] + 24), t, 0.05, 0.28, 'square', 2600);
+        if ([0, 6, 10].includes(s)) m.osc('triangle', midi(ch[0] - 12), t, 0.4, 0.12, 0.01, 0.3, m.dry, 500);
+        if (s === 0 || s === 8) m.kick(t, 0.22); if (s === 4 || s === 12) m.hat(t, 0.035);
+        if (s === 0) ch.forEach(n => m.pad(midi(n + 12), t, 2.6, 0.02, 'sine', 1300));
+      } },
+    twilight: { name: 'Twilight Clock', bpm: 48, beds: [], chords: [[57, 64, 69, 72], [53, 60, 65, 69], [55, 62, 67, 71], [52, 59, 64, 67]], pent: [76, 79, 81, 83, 88],
+      step(m, t, i, ch, s) {
+        if (s === 0) ch.forEach(n => m.pad(midi(n), t, 6.4, 0.04, 'sine', 1200));
+        if (s === 0 || s === 8) m.bell(midi(pick(this.pent)), t + 0.05, 0.07, 4);
+        if (s === 12 && Math.random() < 0.4) m.bell(midi(pick(this.pent) - 12), t, 0.05, 3.2);
       } }
   };
   P.moods = MOODS;
@@ -108,7 +155,7 @@
   // ---- app wiring (browser only) ----
   if (typeof window === 'undefined' || !window.K) return;
   const K = window.K, S = K.S;
-  let ctx = null, eng = null, uiFx = null, uiGain = null, mGain = null, timer = null, suspended = false, started = false, ext = false;
+  let ctx = null, eng = null, uiFx = null, uiGain = null, mGain = null, timer = null, suspended = false, started = false, ext = false, idleMood = null;
   const st = () => S.settings;
   function init() {
     if (ctx) return true;
@@ -118,13 +165,13 @@
     eng = new Engine(ctx, mGain); uiFx = ui(ctx, uiGain); return true;
   }
   function tick() { if (eng && ctx.state === 'running') eng.schedule(ctx.currentTime + 2.2); }
-  function musicOn() { return st().music !== false && !suspended && !ext && !document.hidden; }
+  function musicOn() { return (st().music !== false || !!idleMood) && !suspended && !ext && !document.hidden; }
   function applyMusic() {
     if (!init()) return;
     const s = st(), want = musicOn(), vol = (s.musicVol == null ? 50 : s.musicVol) / 100;
     if (want) {
       if (ctx.state === 'suspended') ctx.resume();
-      if (!eng.mood || eng.mood !== MOODS[s.mood || 'campfire']) { eng.start(s.mood || 'campfire'); }
+      const mid = idleMood || s.mood || 'campfire'; if (!eng.mood || eng.mood !== MOODS[mid]) { eng.start(mid); }
       if (!timer) timer = setInterval(tick, 400);
       tick(); mGain.gain.cancelScheduledValues(ctx.currentTime); mGain.gain.setTargetAtTime(vol * 1.1, ctx.currentTime, 0.8);
     } else {
@@ -136,6 +183,7 @@
     moods: () => Object.keys(MOODS).map(id => [id, MOODS[id].name]),
     apply: applyMusic,
     setSuspended(v) { suspended = !!v; applyMusic(); },
+    idle(id) { idleMood = id && MOODS[id] ? id : null; applyMusic(); },
     setExternal(v) { if (ext !== !!v) { ext = !!v; applyMusic(); } },
     play(name) {
       if (st().sfx === false || !init()) return; if (ctx.state === 'suspended' && !musicOn()) ctx.resume();

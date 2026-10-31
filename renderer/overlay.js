@@ -13,6 +13,7 @@
 
   const OPAQUE = /[?&]opaque=1/.test(location.search); if (OPAQUE) document.body.classList.add('opaque');
   sk.on('padin', (slot, a) => K.padIn(slot, a));
+  K.startPads();   // the menu window also reads the controller itself (the old build never started this, so only the mouse worked)
   sk.on('overlay:open', s => open(s));
   sk.on('overlay:close', () => reset());
   sk.on('pads', n => { if (st) st.pads = n; });
@@ -47,6 +48,7 @@
       ['music', '\u266A', 'Music', () => music(), 'Control SKMusic: skip, pause, volume and quick radios.'],
       ['quick', '\u{1F3AE}', 'Quick play', () => quick(), 'Switch to another game or app.'],
       ['players', '\u{1F465}', 'Players & controllers', () => players(false), 'See who is playing and set up Player 2.'],
+      ...(st.remote && st.remote.on ? [['remote', '\u{1F4E1}', 'Remote play', () => remotePanel(), st.remote.client ? st.remote.client.name + ' is playing. Disconnect, fix the picture or change quality.' : 'Remote play is on. Nobody is connected.']] : []),
       ['vol', '\u{1F50A}', 'Volume', () => sk.sys.volume('mute'), 'Left and right change the volume. Press A to mute.'],
       ['shot', '\u{1F4F8}', 'Screenshot', () => shot(), 'Saves a picture to Pictures\\SKBox.'],
       ['close', '\u2716', 'Close game', () => closeGame(), 'Quit the running game and go home.'],
@@ -105,6 +107,32 @@
       else np.innerHTML = '<div class="art"></div><div><b>' + (s.ready ? 'Nothing playing' : 'SKMusic is not started') + '</b><small>' + (s.ready ? 'Pick a radio below' : 'Press \u201CStart SKMusic\u201D') + '</small></div>';
     }
     poll(); timers.push(setInterval(poll, 3000)); ensureFocus(panel.parentNode.querySelector('.ovpanel'), bar.firstChild);
+  }
+
+  // ---------- remote play (controls live here, not in the player app) ----------
+  function remotePanel() {
+    subView('remote', 'Remote play', '');
+    const QO = [['smooth', '720p \u00B7 60 fps (fastest)'], ['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']];
+    let rs = st.remote || { cfg: {} };
+    const info = el('div', 'np', ''); panel.appendChild(info);
+    const btn = (fn, first) => { const b = nav(el('button', 'btn', '')); if (first) b.dataset.first = ''; b.onclick = fn; return b; };
+    const bBye = btn(async () => { if (!rs.client) { toast('Nobody is connected'); return; } rs = await sk.remote.kick(); toast('Player disconnected'); draw(); }, true);
+    const bFix = btn(() => { sk.remote.fix(); toast('Trying to fix the picture\u2026'); });
+    const bPin = btn(async () => { rs = await sk.remote.newPin(); draw(); });
+    const bQ = btn(async () => { const i = QO.findIndex(x => x[0] === rs.cfg.quality); rs = await sk.remote.cfg({ quality: QO[(i + 1) % QO.length][0] }); draw(); toast('Quality applies the next time a player connects'); });
+    const bIn = btn(async () => { rs = await sk.remote.cfg({ allowInput: !rs.cfg.allowInput }); draw(); });
+    const bAf = btn(async () => { rs = await sk.remote.cfg({ autoFix: rs.cfg.autoFix === false }); draw(); });
+    const bOff = btn(async () => { const r = await sk.remote.set(false); st.remote = r && r.state ? r.state : { on: false }; toast('Remote play is off'); build(); });
+    const r1 = el('div', 'cbar'), r2 = el('div', 'cbar'); r1.append(bBye, bFix, bPin); r2.append(bQ, bIn, bAf, bOff); panel.append(r1, r2);
+    function draw() {
+      const c = rs.client, q = QO.find(x => x[0] === rs.cfg.quality) || QO[0], t = rs.stats;
+      const line = t ? [t.w && t.h ? t.w + 'x' + t.h : '', t.fps ? t.fps + ' fps' : '', t.rtt ? t.rtt + ' ms' : ''].filter(Boolean).join(' \u00B7 ') : '';
+      info.innerHTML = '<div class="art"></div><div><b>' + (c ? esc(c.name) + ' is playing' : 'Waiting for a player') + '</b><small>PIN ' + esc((rs.pin || '').replace(/^(\d{3})(\d{3})$/, '$1 $2')) + (line ? ' \u00B7 ' + esc(line) : '') + '</small></div>';
+      bBye.textContent = 'Disconnect player'; bFix.textContent = 'Fix black screen'; bPin.textContent = 'New PIN';
+      bQ.textContent = 'Quality: ' + q[1]; bIn.textContent = 'Keyboard & mouse: ' + (rs.cfg.allowInput === false ? 'view only' : 'on'); bAf.textContent = 'Auto-fix games: ' + (rs.cfg.autoFix === false ? 'off' : 'on'); bOff.textContent = 'Turn Remote play off';
+    }
+    draw(); timers.push(setInterval(async () => { try { rs = await sk.remote.state(); if (mode === 'remote') draw(); } catch (_) {} }, 2000));
+    ensureFocus(panel.parentNode.querySelector('.ovpanel'), r1.firstChild);
   }
 
   // ---------- quick play ----------

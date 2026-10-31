@@ -186,15 +186,14 @@
     return player === 0 ? ((K.pads()[0] || {}).index || 0) : -1;
   };
   K.padName = idx => { const p = K.pads().find(x => x.index === idx); return p ? String(p.id || 'Controller').replace(/\s*\(.*$/, '').slice(0, 40) : 'Controller'; };
-  const whoTag = e => {
-    document.querySelectorAll('.who').forEach(x => x.remove()); document.body.classList.toggle('pl2', S.active === 1 && K.twoPlayers());
-    if (!e || !K.twoPlayers()) return;
-    try { if (getComputedStyle(e).position === 'static') e.style.position = 'relative'; } catch (_) {}
-    const t = document.createElement('span'); t.className = 'who p' + (S.active + 1); t.textContent = 'P' + (S.active + 1); e.appendChild(t);
-  };
-  K.whoRefresh = () => { if (cur) whoTag(cur); };
+  // The player is shown in the top bar chips (P1 / P2), not on every tile.
+  const whoTag = () => { document.body.classList.toggle('pl2', S.active === 1 && K.twoPlayers()); };
+  K.whoRefresh = () => whoTag();
   let movingT = null;
-  const markMoving = p => { if (!K.twoPlayers()) return; document.querySelectorAll('[data-owner]').forEach(c => c.classList.toggle('moving', c.dataset.owner === String(p))); clearTimeout(movingT); movingT = setTimeout(() => document.querySelectorAll('.moving').forEach(c => c.classList.remove('moving')), 1600); };
+  const markMoving = p => {
+    document.querySelectorAll('.chip[data-owner]').forEach(c => c.classList.toggle('moving', c.dataset.owner === String(p) && K.twoPlayers()));
+    clearTimeout(movingT); movingT = setTimeout(() => document.querySelectorAll('.chip.moving').forEach(c => c.classList.remove('moving')), 2200);
+  };
   let deniedAt = 0;
   K.denied = el => { el.classList.remove('deny'); void el.offsetWidth; el.classList.add('deny'); setTimeout(() => el.classList.remove('deny'), 400); if (Date.now() - deniedAt > 1500) { deniedAt = Date.now(); K.toast && K.toast('That belongs to Player ' + (+el.dataset.owner + 1)); } };
   const notMine = () => K.fromPad && cur && cur.dataset && cur.dataset.owner !== undefined && cur.dataset.owner !== String(S.active);

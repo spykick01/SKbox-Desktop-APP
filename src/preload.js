@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('skbox', {
   game: { state: () => inv('game:state'), resume: () => inv('game:resume'), close: () => inv('game:close') },
   stats: { touch: id => inv('stats:touch', id) },
   perf: { get: () => inv('sys:stats') },
-  remote: { state: () => inv('remote:state'), set: on => inv('remote:set', !!on), newPin: () => inv('remote:pin'), kick: () => inv('remote:kick'), cfg: p => inv('remote:cfg', p) },
+  remote: { state: () => inv('remote:state'), set: on => inv('remote:set', !!on), newPin: () => inv('remote:pin'), kick: () => inv('remote:kick'), cfg: p => inv('remote:cfg', p), fix: () => inv('remote:fix') },
   timer: { get: () => inv('timer:get'), set: (m, a) => inv('timer:set', m, a) },
   backup: { save: () => inv('backup:export'), load: () => inv('backup:import') },
   shots: { list: () => inv('shots:list'), remove: f => inv('shots:delete', f), folder: () => inv('shots:folder') },

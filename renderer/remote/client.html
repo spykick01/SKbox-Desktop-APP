@@ -17,21 +17,13 @@
     <input id="name" maxlength="32" autocomplete="off">
     <button id="go" class="primary">Connect</button>
     <div id="msg" role="status"></div>
-    <p class="tiny">Tip: press Ctrl+Alt+Shift+D to disconnect. Use the cog at the top while playing for fullscreen, game mouse and stats.</p>
+    <p class="tiny">Everything else (disconnect, quality, fixing a fullscreen game) is in the SKBox menu on the PC: press the Xbox or PlayStation button there, then pick Remote play. Emergency exit on this device: Ctrl+Alt+Shift+D.</p>
   </div>
 </main>
 <section id="stage" hidden>
-  <video id="v" autoplay playsinline></video>
-  <div id="tap" hidden>Click to start</div>
-  <div id="stats" hidden></div>
-  <div id="notice" hidden></div>
-  <div id="bar">
-    <button id="bFull" title="Fullscreen">&#x26F6; Fullscreen</button>
-    <button id="bMouse" title="Game mouse: hides the cursor and sends raw movement">&#128433; Game mouse</button>
-    <button id="bFix" title="Black or frozen picture in a fullscreen game? This asks the PC to leave exclusive fullscreen">&#129695; Fix black screen</button>
-    <button id="bStats" title="Show connection stats">&#128202; Stats</button>
-    <button id="bBye" class="danger">&#10006; Disconnect</button>
-  </div>
+  <video id="v" autoplay playsinline muted></video>
+  <div id="tap" hidden>Click to show the picture</div>
+    <div id="notice" hidden></div>
 </section>
 <script src="client.js"></script>
 </body></html>

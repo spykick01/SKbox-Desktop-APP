@@ -224,7 +224,7 @@ function ensureOverlay() {
   return overlayWin;
 }
 function overlayStateObj(opts) {
-  return { game: gameState(), players: playersMeta(), apps: store.read('apps', []), settings: store.read('settings', {}), pads: padCount, music: !!(musicWin && !musicWin.isDestroyed()), opts: opts || {}, helper: !!(helper && helper.ready), covers: COVER_DIR(), stats: store.read('stats', {}), batteries, opaque: overlayOpaque };
+  return { game: gameState(), players: playersMeta(), apps: store.read('apps', []), settings: store.read('settings', {}), pads: padCount, music: !!(musicWin && !musicWin.isDestroyed()), opts: opts || {}, helper: !!(helper && helper.ready), covers: COVER_DIR(), stats: store.read('stats', {}), batteries, opaque: overlayOpaque, remote: remoteState() };
 }
 function openOverlay(opts) {
   const w = ensureOverlay(), d = displayNow(); try { w.setBounds(d.bounds); } catch {}
@@ -395,8 +395,12 @@ ipcMain.handle('sys:kiosk', (_e, on) => { kiosk = !!on; const s = store.read('se
 // Off until the user turns it on in Settings > Remote play. While off there is no server, no open port and no broadcast reply.
 let remote = null, remoteWin = null, remoteLoaded = null, remoteStats = null, mapper = null, mapperT = null, inCount = 0, inWindow = 0;
 const answers = {};
+let remoteSrc = 'screen', lastDisp = null, fixStage = 0, badCount = 0, fixBusy = false, fixTold = false, modeTick = 0, fixGame = '';
+const remoteDisplay = () => { try { if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) { lastDisp = screen.getDisplayMatching(win.getBounds()); return lastDisp; } } catch {} return lastDisp || screen.getPrimaryDisplay(); };
+setInterval(() => { try { if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) lastDisp = screen.getDisplayMatching(win.getBounds()); } catch {} }, 1500);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 const REMOTE_DIR = () => path.join(__dirname, '..', 'renderer', 'remote');
-const rset = () => { const s = store.read('settings', {}); return { quality: ['low', 'balanced', 'high'].includes(s.remoteQuality) ? s.remoteQuality : 'balanced', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
+const rset = () => { const s = store.read('settings', {}); return { quality: ['smooth', 'low', 'balanced', 'high'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth', autoFix: s.remoteAutoFix !== false, allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
 const remoteState = () => Object.assign(remote ? remote.state() : { on: false, port: 0, pin: '', ips: [], client: null }, { stats: remoteStats, cfg: rset(), helper: !!(helper && helper.ready), supported: isWin });
 const pushRemote = () => send('remote:state', remoteState());
 const hin = line => { if (helper && helper.ready) helper.send(line); };
@@ -405,7 +409,12 @@ function ensureRemoteWin() {
   const ses = session.fromPartition('skremote');
   ses.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'media' || perm === 'display-capture'));
   ses.setDisplayMediaRequestHandler(async (_req, cb) => {
-    try { const d = displayNow(), srcs = await desktopCapturer.getSources({ types: ['screen'] }); const s0 = srcs.find(x => String(x.display_id) === String(d.id)) || srcs[0]; cb(s0 ? { video: s0, audio: 'loopback' } : {}); } catch { cb({}); }
+    try {
+      // Streams the screen SKBox is on (not wherever the mouse happens to be). If a game hides from screen capture,
+      // the auto-fix switches to capturing the game window itself.
+      if (remoteSrc === 'window' && game && game.hwnd) { const ws = await desktopCapturer.getSources({ types: ['window'] }); const w = ws.find(x => String(x.id).split(':')[1] === String(game.hwnd)); if (w) { cb({ video: w, audio: 'loopback' }); return; } }
+      const d = remoteDisplay(), srcs = await desktopCapturer.getSources({ types: ['screen'] }); const s0 = srcs.find(x => String(x.display_id) === String(d.id)) || (srcs.length > 1 ? srcs.find(x => String(x.display_id) === String(screen.getPrimaryDisplay().id)) : null) || srcs[0]; cb(s0 ? { video: s0, audio: 'loopback' } : {});
+    } catch { cb({}); }
   });
   remoteWin = new BrowserWindow({ show: false, width: 320, height: 240, webPreferences: { preload: path.join(__dirname, 'remotePreload.js'), partition: 'skremote', contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
   remoteWin.on('closed', () => { remoteWin = null; remoteLoaded = null; });
@@ -419,6 +428,7 @@ function startMapper() {
 }
 function stopMapper() { clearInterval(mapperT); mapperT = null; if (mapper) { try { mapper.reset(); } catch {} mapper = null; } }
 async function remoteCreateSession({ sid, name, offer }) {
+  remoteDisplay(); remoteSrc = 'screen'; fixStage = 0; badCount = 0; fixTold = false; modeTick = 0;
   await ensureRemoteWin(); const cfg = rset();
   const p = new Promise((resolve, reject) => { const t = setTimeout(() => { delete answers[sid]; reject(new Error('The PC took too long to start the stream.')); }, 20000); answers[sid] = { resolve: d => { clearTimeout(t); delete answers[sid]; d && d.error ? reject(new Error(d.error)) : resolve(d); } }; });
   remoteWin.webContents.executeJavaScript('window.__skhostOffer(' + JSON.stringify({ sid, offer, cfg }) + ')', true).catch(() => {});
@@ -428,13 +438,24 @@ async function remoteCreateSession({ sid, name, offer }) {
 }
 const toClient = o => { try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:toClient', JSON.stringify(o)); } catch {} };
 let frozenCount = 0, frozenTold = false;
-// "Black screen" fix: leave exclusive fullscreen (Alt+Enter) and make the game borderless, which the screen capture can see.
-function remoteFixFs() {
-  if (!helper || !helper.ready) { toClient({ t: 'notice', text: 'The PC cannot do that right now (controller helper not running).' }); return; }
-  helper.fixFullscreen(game && game.hwnd ? game.hwnd : 0); toClient({ t: 'notice', text: 'Trying to fix the black screen\u2026 give it a few seconds.' });
+const recapture = () => (remoteWin && !remoteWin.isDestroyed() ? remoteWin.webContents.executeJavaScript('window.__skhostRecap && window.__skhostRecap()', true).catch(() => false) : Promise.resolve(false));
+// Black or frozen picture while a game runs. Steps: capture the game window instead of the screen, then take the game out of
+// exclusive fullscreen and capture the screen again, then try the window again, then tell the player what to change in the game.
+async function remoteLadder() {
+  if (fixBusy || !game) return; fixBusy = true; badCount = 0;
+  try {
+    if (fixStage === 0) { fixStage = 1; remoteSrc = 'window'; toClient({ t: 'notice', text: 'Fixing the picture (step 1)\u2026' }); await recapture(); }
+    else if (fixStage === 1) { fixStage = 2; remoteSrc = 'screen'; toClient({ t: 'notice', text: 'Fixing the picture (step 2)\u2026 leaving exclusive fullscreen.' }); if (helper && helper.ready) helper.fixFullscreen(game && game.hwnd ? game.hwnd : 0); await sleep(3800); await recapture(); }
+    else if (fixStage === 2) { fixStage = 3; remoteSrc = 'window'; toClient({ t: 'notice', text: 'Fixing the picture (step 3)\u2026' }); await recapture(); }
+    else if (!fixTold) { fixTold = true; toClient({ t: 'notice', text: 'Still black. In the game\u2019s video settings, set Display mode to Borderless or Windowed.' }); }
+  } finally { fixBusy = false; }
+}
+function remoteFixFs() {   // manual: same ladder, from the SKBox menu
+  if (!game) { toClient({ t: 'notice', text: 'No game is running.' }); return; }
+  fixStage = Math.min(fixStage, 1); fixTold = false; remoteLadder();
 }
 function remoteEndSession() {
-  frozenCount = 0; frozenTold = false; stopMapper(); remoteStats = null; hin('IR');
+  frozenCount = 0; frozenTold = false; fixStage = 0; badCount = 0; remoteSrc = 'screen'; stopMapper(); remoteStats = null; hin('IR');
   try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:kick'); } catch {}
 }
 function remoteInit() {
@@ -453,10 +474,12 @@ ipcMain.handle('remote:set', async (_e, on) => {
   } catch (e) { return { ok: false, error: String(e.message || e) }; }
 });
 ipcMain.handle('remote:pin', () => { if (remote && remote.on_) remote.newPin(); return remoteState(); });
+ipcMain.handle('remote:fix', () => { remoteFixFs(); return true; });
 ipcMain.handle('remote:kick', () => { if (remote) remote.endSession('Disconnected from SKBox'); return remoteState(); });
 ipcMain.handle('remote:cfg', (_e, patch) => {
   const s = store.read('settings', {}); patch = patch || {};
-  if (['low', 'balanced', 'high'].includes(patch.quality)) s.remoteQuality = patch.quality;
+  if (['smooth', 'low', 'balanced', 'high'].includes(patch.quality)) s.remoteQuality = patch.quality;
+  if (typeof patch.autoFix === 'boolean') s.remoteAutoFix = patch.autoFix;
   if (typeof patch.allowInput === 'boolean') s.remoteInput = patch.allowInput;
   if (['menus', 'keys', 'off'].includes(patch.padMode)) { s.remotePad = patch.padMode; if (mapper) mapper.setMode(patch.padMode); }
   store.write('settings', s); pushRemote(); return remoteState();
@@ -465,7 +488,10 @@ const fromRemoteWin = e => remoteWin && !remoteWin.isDestroyed() && e.sender ===
 ipcMain.on('remote:answer', (e, sid, d) => { if (fromRemoteWin(e) && answers[sid]) answers[sid].resolve(d); });
 ipcMain.on('remote:ended', (e, sid) => { if (fromRemoteWin(e) && remote) remote.sessionEnded(sid); });
 ipcMain.on('remote:stats', (e, st) => { if (!fromRemoteWin(e) || !st || typeof st !== 'object') return;
-  if (game && (st.fps | 0) <= 1 && (st.kbps | 0) < 150) { if (++frozenCount >= 6 && !frozenTold) { frozenTold = true; toClient({ t: 'notice', text: 'Picture black or frozen? Use \u201CFix black screen\u201D in the top bar.' }); } } else frozenCount = 0;
+  if (game && fixGame !== game.id) { fixGame = game.id; fixStage = 0; fixTold = false; remoteSrc = 'screen'; }
+  const bad = !!game && !fixBusy && (st.black || ((st.fps | 0) <= 1 && (st.kbps | 0) < 150));
+  if (bad) { if (++badCount >= 4) { if (rset().autoFix) remoteLadder(); else if (!frozenTold) { frozenTold = true; toClient({ t: 'notice', text: 'Picture black or frozen? Turn on \u201CFix fullscreen games automatically\u201D in SKBox Remote play settings.' }); } badCount = 0; } } else if (!fixBusy) badCount = 0;
+  if (++modeTick % 3 === 1) toClient({ t: 'mode', game: !!game });
   remoteStats = { fps: st.fps | 0, kbps: st.kbps | 0, rtt: st.rtt | 0, codec: String(st.codec || '').slice(0, 12), w: st.w | 0, h: st.h | 0, limit: String(st.limit || '').slice(0, 12), hw: !!st.hw }; pushRemote(); });
 ipcMain.on('remote:input', (e, raw) => {
   if (!fromRemoteWin(e) || !remote || !remote.session || remote.session.pending || typeof raw !== 'string' || raw.length > 600) return;

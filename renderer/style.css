@@ -194,9 +194,42 @@ body.ovl.opaque .ovdim{display:none}
 
 /* --- players: who is moving --- */
 body.pl2{--ring:#ff9f43}
-.who{position:absolute;left:.4rem;bottom:.4rem;z-index:6;font-size:.7rem;font-weight:900;letter-spacing:.04em;padding:.12rem .45rem;border-radius:999px;color:#05060d;pointer-events:none}
-.who.p1{background:var(--a)}.who.p2{background:#ff9f43}
-.chip.moving,.ibtn.moving{box-shadow:0 0 0 3px var(--ring,var(--a)),0 0 22px var(--ring,var(--a))}
+.who{display:none}
+.chip[data-owner]{position:relative}
+.chip.moving::after{content:'';position:absolute;left:18%;right:18%;bottom:-.45rem;height:.22rem;border-radius:99px;background:var(--a);box-shadow:0 0 12px var(--a)}
+.chip[data-owner="1"].moving::after{background:#ff9f43;box-shadow:0 0 12px #ff9f43}
 .deny{animation:deny .35s}
 @keyframes deny{0%,100%{transform:translateX(0)}25%{transform:translateX(-.5rem)}75%{transform:translateX(.5rem)}}
 .padlist .p1{color:var(--a)}.padlist .p2{color:#ff9f43}
+
+/* ---------- ambient scenes: the "Press A" screen and the idle screen ---------- */
+.amb{overflow:hidden;background:radial-gradient(120% 90% at 50% 120%,hsl(var(--h,230) 55% 16%),#05060d 70%)}
+.amb .ab{position:absolute;border-radius:50%;filter:blur(90px);opacity:.55;will-change:transform}
+.amb .a1{width:46vw;height:46vw;left:-8vw;top:-12vw;background:hsl(var(--h,230) 80% 45%);animation:ambA 38s ease-in-out infinite alternate}
+.amb .a2{width:40vw;height:40vw;right:-10vw;bottom:-14vw;background:hsl(calc(var(--h,230) + 60) 80% 42%);animation:ambB 46s ease-in-out infinite alternate}
+.amb .a3{width:28vw;height:28vw;left:36vw;top:30vh;background:hsl(calc(var(--h,230) - 50) 75% 38%);opacity:.35;animation:ambC 52s ease-in-out infinite alternate}
+@keyframes ambA{to{transform:translate(14vw,10vh) scale(1.2)}}@keyframes ambB{to{transform:translate(-12vw,-8vh) scale(1.15)}}@keyframes ambC{to{transform:translate(-10vw,12vh) scale(.8)}}
+.amb .stars i{position:absolute;width:var(--s);height:var(--s);border-radius:50%;background:#fff;opacity:.15;animation:twk var(--d) ease-in-out var(--l) infinite}
+@keyframes twk{50%{opacity:.85;transform:scale(1.6)}}
+.saver.amb{background:radial-gradient(120% 90% at 50% 120%,hsl(var(--h,230) 55% 16%),#03040a 72%)}
+.ambclock{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;text-align:center;color:#f3f5ff;animation:ambDrift 120s ease-in-out infinite alternate}
+@keyframes ambDrift{from{transform:translate(-52%,-52%)}to{transform:translate(-48%,-48%)}}
+.ambclock .hello{font-size:1.5rem;letter-spacing:.3em;text-transform:uppercase;color:rgba(255,255,255,.55);margin-bottom:2.2vh}
+.ambclock .dial{position:relative;width:min(56vh,40vw);height:min(56vh,40vw);display:flex;align-items:center;justify-content:center}
+.ambclock .dial svg{position:absolute;inset:0;width:100%;height:100%}
+.ambclock .trk{fill:none;stroke:rgba(255,255,255,.1);stroke-width:1.4}
+.ambclock .prg{fill:none;stroke:hsl(var(--h,230) 90% 72%);stroke-width:2.2;stroke-linecap:round;transition:stroke-dashoffset 1s linear;filter:drop-shadow(0 0 6px hsl(var(--h,230) 90% 60%))}
+.ambclock .tm{display:flex;align-items:baseline;gap:.5rem}
+.ambclock .tm b{font-size:min(17vh,12vw);font-weight:200;letter-spacing:.01em;text-shadow:0 0 40px hsl(var(--h,230) 90% 65% / .55)}
+.ambclock .tm em{font-style:normal;font-size:2rem;font-weight:300;color:rgba(255,255,255,.6)}
+.ambclock .dt{margin-top:2.4vh;font-size:1.9rem;font-weight:300;color:rgba(255,255,255,.78)}
+.ambclock .np{margin-top:1.6vh;font-size:1.1rem;color:rgba(255,255,255,.42);min-height:1.4em}
+.startscr{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:1}
+.startscr .stc{position:relative;display:flex;flex-direction:column;align-items:center;gap:2.4vh;text-align:center}
+.startscr .logo{font-size:min(9vh,7vw);letter-spacing:.18em;margin:0}
+.startscr .sclock b{display:block;font-size:min(14vh,10vw);font-weight:200;color:#f3f5ff;text-shadow:0 0 40px hsl(var(--h,230) 90% 65% / .45)}
+.startscr .sclock span{display:block;margin-top:.6vh;font-size:1.4rem;color:rgba(255,255,255,.62)}
+.pressa{margin-top:3vh;padding:.9rem 2.6rem;border-radius:999px;font-size:1.5rem;font-weight:700;color:#05060d;background:linear-gradient(135deg,var(--a),color-mix(in srgb,var(--a) 55%,#fff));border:0;animation:pa 2.2s ease-in-out infinite}
+@keyframes pa{50%{transform:scale(1.05);box-shadow:0 0 36px color-mix(in srgb,var(--a) 70%,transparent)}}
+.pressa.focus{box-shadow:0 0 0 4px color-mix(in srgb,var(--a) 45%,transparent),0 0 40px var(--a)}
+body.calm .amb .ab,body.calm .ambclock,body.calm .pressa{animation:none}

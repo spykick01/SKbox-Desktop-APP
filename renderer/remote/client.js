@@ -1,8 +1,8 @@
 // SKBox Remote client. Runs as a plain web page (served by SKBox itself) and inside the SKBox Remote app for Mac / Windows.
 (() => {
   const $ = s => document.querySelector(s), app = window.skclient || null, isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
-  const v = $('#v'), stage = $('#stage'), msg = $('#msg'), bar = $('#bar');
-  let pc = null, input = null, base = '', token = '', stream = null, locked = false, statsOn = false, statsTimer = null, graceT = null, prevIn = null;
+  const v = $('#v'), stage = $('#stage'), msg = $('#msg');
+  let pc = null, input = null, base = '', token = '', stream = null, locked = false, wantLock = false, graceT = null;
   const say = (t, cls) => { msg.textContent = t || ''; msg.className = cls || ''; };
 
   // ---- KeyboardEvent.code -> PC scancode (set 1). "e" prefix = extended key ----
@@ -43,11 +43,11 @@
       try { const c = (RTCRtpReceiver.getCapabilities('video') || { codecs: [] }).codecs; tv.setCodecPreferences(c.filter(x => /H264/i.test(x.mimeType)).concat(c.filter(x => !/H264|VP9|AV1/i.test(x.mimeType)))); } catch (_) {}
       input = pc.createDataChannel('input', { ordered: true });
       input.onclose = () => { if (pc) lost('The PC closed the connection.'); };
-      input.onmessage = e => { try { const m = JSON.parse(e.data); if (m && m.t === 'notice' && typeof m.text === 'string') notice(m.text.slice(0, 160)); } catch (_) {} };
+      input.onmessage = e => { try { const m = JSON.parse(e.data); if (m && m.t === 'notice' && typeof m.text === 'string') notice(m.text.slice(0, 160)); else if (m && m.t === 'mode') { wantLock = !!m.game; if (!m.game && document.pointerLockElement) document.exitPointerLock(); } } catch (_) {} };
       const ms = new MediaStream(); stream = ms;
       pc.ontrack = e => {
         ms.addTrack(e.track); try { e.receiver.playoutDelayHint = 0; } catch (_) {} try { e.receiver.jitterBufferTarget = 0; } catch (_) {}
-        if (e.track.kind === 'video') { v.srcObject = ms; v.play().catch(() => { $('#tap').hidden = false; }); }
+        if (e.track.kind === 'video') { v.srcObject = ms; startPlay(); }
       };
       pc.onconnectionstatechange = () => { const s = pc && pc.connectionState; clearTimeout(graceT); if (s === 'failed' || s === 'closed') lost('Connection lost.'); else if (s === 'disconnected') graceT = setTimeout(() => lost('Connection lost.'), 6000); };
       await pc.setLocalDescription(await pc.createOffer()); await ice(pc, 2500);
@@ -56,38 +56,40 @@
       const j = await res.json().catch(() => ({})); if (!res.ok) throw new Error(j.error || ('The PC said no (' + res.status + ').'));
       token = j.token; await pc.setRemoteDescription(j.answer);
       $('#connect').hidden = true; stage.hidden = false; $('#pin').value = ''; say('');
-      startStats(); window.addEventListener('keydown', onKey, true); window.addEventListener('keyup', onKey, true); padLoop();
-      flashBar();
+      goFull(); window.addEventListener('keydown', onKey, true); window.addEventListener('keyup', onKey, true); padLoop();
     } catch (e) { cleanup(); say(e.message || String(e), 'err'); }
     $('#go').disabled = false;
   }
 
+  // Start the picture by itself. Browsers only allow sound after you have clicked the page (you did: Connect), but if
+  // that is refused we start muted, show the picture, and switch the sound on at your first click or key press.
+  function startPlay() {
+    v.muted = false;
+    v.play().then(() => { $('#tap').hidden = true; }).catch(() => {
+      v.muted = true;
+      v.play().then(() => { $('#tap').hidden = true; const un = () => { v.muted = false; v.play().catch(() => {}); }; window.addEventListener('pointerdown', un, { once: true }); window.addEventListener('keydown', un, { once: true }); }).catch(() => { $('#tap').hidden = false; });
+    });
+  }
+  v.addEventListener('playing', () => { $('#tap').hidden = true; });
+  function goFull() { try { if (app && app.fullscreen) { app.fullscreen(true); return; } const f = stage.requestFullscreen || stage.webkitRequestFullscreen; if (f && !document.fullscreenElement) f.call(stage).then(() => { try { navigator.keyboard && navigator.keyboard.lock && navigator.keyboard.lock().catch(() => {}); } catch (_) {} }).catch(() => {}); } catch (_) {} }
+
   // ---- leaving ----
   function cleanup() {
-    clearInterval(statsTimer); clearTimeout(graceT); window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKey, true);
-    try { if (document.pointerLockElement) document.exitPointerLock(); } catch (_) {} try { if (document.fullscreenElement) document.exitFullscreen(); } catch (_) {}
-    const p = pc; pc = null; input = null; try { p && p.close(); } catch (_) {} v.srcObject = null; stream = null; locked = false; stage.classList.remove('locked'); $('#bMouse').classList.remove('on'); $('#tap').hidden = true;
+    clearTimeout(graceT); window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKey, true);
+    try { if (document.pointerLockElement) document.exitPointerLock(); } catch (_) {} try { if (document.fullscreenElement) document.exitFullscreen(); } catch (_) {} try { app && app.fullscreen && app.fullscreen(false); } catch (_) {}
+    const p = pc; pc = null; input = null; try { p && p.close(); } catch (_) {} v.srcObject = null; stream = null; locked = false; wantLock = false; stage.classList.remove('locked'); $('#tap').hidden = true;
     stage.hidden = true; $('#connect').hidden = false; padStop = true;
   }
   function lost(t) { if (!pc) return; cleanup(); say(t, 'err'); }
   function bye() { if (token) { try { fetch(base + '/api/bye', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }), keepalive: true }); } catch (_) {} } token = ''; cleanup(); say('Disconnected.', 'ok'); }
-  $('#bBye').onclick = bye; window.addEventListener('beforeunload', () => { if (token) { try { navigator.sendBeacon && navigator.sendBeacon(base + '/api/bye', new Blob([JSON.stringify({ token })], { type: 'text/plain' })); } catch (_) {} } });
-  $('#tap').onclick = () => { v.play().then(() => { $('#tap').hidden = true; }).catch(() => {}); };
+  window.addEventListener('beforeunload', () => { if (token) { try { navigator.sendBeacon && navigator.sendBeacon(base + '/api/bye', new Blob([JSON.stringify({ token })], { type: 'text/plain' })); } catch (_) {} } });
+  $('#tap').onclick = () => { v.muted = false; v.play().then(() => { $('#tap').hidden = true; }).catch(() => { v.muted = true; v.play().then(() => { $('#tap').hidden = true; }).catch(() => {}); }); };
 
   let noticeT = null; function notice(t) { const n = $('#notice'); n.textContent = t; n.hidden = false; clearTimeout(noticeT); noticeT = setTimeout(() => { n.hidden = true; }, 7000); }
-  // ---- toolbar ----
-  let barT = null; const flashBar = () => { bar.classList.add('show'); clearTimeout(barT); barT = setTimeout(() => { if (!bar.matches(':hover')) bar.classList.remove('show'); }, 3500); };
-  stage.addEventListener('mousemove', e => { if (!locked && e.clientY < 10) flashBar(); }); bar.addEventListener('mouseenter', () => { clearTimeout(barT); bar.classList.add('show'); }); bar.addEventListener('mouseleave', () => { barT = setTimeout(() => bar.classList.remove('show'), 1200); });
-  $('#bFull').onclick = async () => {
-    try {
-      if (document.fullscreenElement || document.webkitFullscreenElement) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
-      await (stage.requestFullscreen || stage.webkitRequestFullscreen).call(stage); if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock().catch(() => {});
-    } catch (_) {}
-  };
-  $('#bMouse').onclick = () => { if (document.pointerLockElement) document.exitPointerLock(); else { try { v.requestPointerLock(); } catch (_) {} } };
-  document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === v; stage.classList.toggle('locked', locked); $('#bMouse').classList.toggle('on', locked); if (locked) bar.classList.remove('show'); });
-  $('#bFix').onclick = () => { send({ t: 'fixfs' }); notice('Asked the PC to fix the picture\u2026'); };
-  $('#bStats').onclick = () => { statsOn = !statsOn; $('#stats').hidden = !statsOn; $('#bStats').classList.toggle('on', statsOn); };
+  let noticeT0 = null;
+  // Pointer lock (raw mouse movement) switches itself on at your first click while a game is running on the PC.
+  document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === v; stage.classList.toggle('locked', locked); });
+  v.addEventListener('mousedown', () => { if (wantLock && !locked) { try { v.requestPointerLock(); } catch (_) {} } });
 
   // ---- mouse ----
   let pendAbs = null, pdx = 0, pdy = 0, pwy = 0, pwx = 0, raf = 0;
@@ -131,18 +133,4 @@
     requestAnimationFrame(step);
   }
 
-  // ---- stats ----
-  function startStats() {
-    prevIn = null;
-    statsTimer = setInterval(async () => {
-      if (!pc || !statsOn) return;
-      try {
-        const rep = await pc.getStats(); let inb = null, rtt = 0; const codecs = {};
-        rep.forEach(r => { if (r.type === 'codec') codecs[r.id] = r.mimeType; });
-        rep.forEach(r => { if (r.type === 'inbound-rtp' && r.kind === 'video') inb = r; if (r.type === 'candidate-pair' && r.nominated && r.currentRoundTripTime) rtt = Math.round(r.currentRoundTripTime * 1000); });
-        if (!inb) return; const now = performance.now(); let mbps = 0; if (prevIn) mbps = (inb.bytesReceived - prevIn.b) * 8 / Math.max(1, now - prevIn.t) / 1000; prevIn = { b: inb.bytesReceived, t: now };
-        $('#stats').textContent = (codecs[inb.codecId] || '').replace('video/', '') + ' \u00B7 ' + (inb.frameWidth || v.videoWidth) + 'x' + (inb.frameHeight || v.videoHeight) + ' \u00B7 ' + Math.round(inb.framesPerSecond || 0) + ' fps \u00B7 ' + mbps.toFixed(1) + ' Mbps \u00B7 ' + rtt + ' ms \u00B7 dropped ' + (inb.framesDropped || 0);
-      } catch (_) {}
-    }, 1000);
-  }
 })();
