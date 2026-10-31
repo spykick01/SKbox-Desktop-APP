@@ -12,6 +12,9 @@ const RENDERER = (f) => path.join(__dirname, '..', 'renderer', f);
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+// speed: keep the hidden streaming window at full speed, use the GPU for capture and encoding
+app.commandLine.appendSwitch('disable-renderer-backgrounding'); app.commandLine.appendSwitch('disable-background-timer-throttling'); app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('ignore-gpu-blocklist'); app.commandLine.appendSwitch('enable-zero-copy'); app.commandLine.appendSwitch('enable-gpu-rasterization');
 
 const batteries = {};
 let overlayOpaque = false, padTest = false, fgTarget = null, overlayTarget = null;
@@ -139,15 +142,10 @@ function prepWindowedFs(exe) {
   });
 }
 // Every game starts in windowed fullscreen (borderless) unless the person turned that off, or set this one app to 'Leave it alone'.
-const EMU_RE = /(cemu|yuzu|suyu|ryujinx|citra|lime3ds|azahar|rpcs3|dolphin|pcsx2|duckstation|ppsspp|retroarch|xemu|xenia|melonds|vita3k|shadps4|mgba|snes9x|bsnes|mesen)/i;
-// Emulators draw and resize their own window, so SKBox must not keep forcing its window style (that is what makes them flash).
-// For them it only asks the emulator to go fullscreen itself (Alt+Enter), once, and then leaves it alone.
-function gameMode(m, exe) {
-  m = m || 'auto';
-  if (m !== 'auto') return m;
-  if (store.read('settings', {}).gameWindow === 'off') return 'off';
-  return EMU_RE.test(path.basename(String(exe || ''))) ? 'altenter' : 'auto';
-}
+// Windowing is applied by the helper ONLY while a Remote play player is connected (see helper.remote). Otherwise games are left exactly as they are.
+let remoteLive = false;
+function gameMode(m) { m = m || 'auto'; if (m === 'off') return 'off'; if (store.read('settings', {}).gameWindow === 'off') return 'off'; return 'auto'; }
+function setRemoteLive(on) { remoteLive = !!on; if (helper && helper.ready) helper.remote(on && store.read('settings', {}).gameWindow !== 'off'); if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
 function showBackdrop(a) {
   closeBackdrop(); const d = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   backdrop = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, backgroundColor: '#000000', show: false, skipTaskbar: true, focusable: false, movable: false, resizable: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -188,9 +186,9 @@ ipcMain.handle('app:launch', async (_e, a) => {
   try {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
-    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: gameMode(a.fs, target), noWindow: false, exited: false };
+    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: gameMode(a.fs), noWindow: false, exited: false };
     statsTouch(a.id, 0);
-    if (!isUrl && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
+    if (!isUrl && remoteLive && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
     if (a.compat && !isUrl && /\.exe$/i.test(target)) applyCompat(target);
     showBackdrop(game); send('game:state', gameState());
     let child = null;
@@ -220,7 +218,7 @@ function startHelper() {
     toggleOverlay();
   });
   helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
-  helper.on('ready', () => { helperInfo.error = ''; if (overlayOpen) helper.padIn(true); });
+  helper.on('ready', () => { helperInfo.error = ''; if (remoteLive) helper.remote(store.read('settings', {}).gameWindow !== 'off'); if (overlayOpen) helper.padIn(true); });
   helper.on('padin', (slot, act) => {
     try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (padTest) send('padtest', slot, act); } catch {}
   });
@@ -462,7 +460,7 @@ async function remoteCreateSession({ sid, name, offer }) {
   await ensureRemoteWin(); const cfg = rset();
   const p = new Promise((resolve, reject) => { const t = setTimeout(() => { delete answers[sid]; reject(new Error('The PC took too long to start the stream.')); }, 20000); answers[sid] = { resolve: d => { clearTimeout(t); delete answers[sid]; d && d.error ? reject(new Error(d.error)) : resolve(d); } }; });
   remoteWin.webContents.executeJavaScript('window.__skhostOffer(' + JSON.stringify({ sid, offer, cfg }) + ')', true).catch(() => {});
-  const ans = await p; startMapper(); remoteStats = null;
+  const ans = await p; startMapper(); remoteStats = null; setRemoteLive(true);
   try { new Notification({ title: 'Remote play', body: name + ' connected to SKBox' }).show(); } catch {}
   return ans;
 }
@@ -485,6 +483,7 @@ function remoteFixFs() {   // manual: same ladder, from the SKBox menu
   fixStage = Math.min(fixStage, 1); fixTold = false; remoteLadder();
 }
 function remoteEndSession() {
+  setRemoteLive(false);
   frozenCount = 0; frozenTold = false; fixStage = 0; badCount = 0; remoteSrc = 'screen'; stopMapper(); remoteStats = null; hin('IR');
   try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:kick'); } catch {}
 }
@@ -563,7 +562,7 @@ function setupUpdates() {
   } catch {}
 }
 app.on('second-instance', comeBack);
-app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion');
 app.whenReady().then(() => {
   const st = store.read('settings', {});
   if (st.startup === undefined && (isWin || process.platform === 'darwin')) { app.setLoginItemSettings({ openAtLogin: true }); st.startup = true; store.write('settings', st); }

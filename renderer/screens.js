@@ -426,7 +426,7 @@
     const fName = field('Name', d.name, { placeholder: 'e.g. Minecraft', onChange: v => { d.name = v; redraw(); } });
     const fPath = field('Path or link', d.exe, { placeholder: 'C:\\Games\\game.exe  or  steam://rungameid/...', onChange: v => { d.exe = v.replace(/^"|"$/g, ''); if (!d.name) { d.name = niceName(d.exe); fName.value = d.name; fName.innerHTML = '<span>Name</span><b>' + esc(d.name) + '</b>'; redraw(); } } });
     const fArgs = field('Launch options (optional)', d.args, { placeholder: 'e.g. -fullscreen', onChange: v => { d.args = v; } });
-    const FSM = [['auto', 'Windowed fullscreen (recommended)'], ['stretch', 'Fill the screen'], ['aspect', 'Keep shape, black bars'], ['altenter', 'Press Alt+Enter'], ['f11', 'Press F11'], ['off', 'Leave it alone']];
+    const FSM = [['auto', 'Auto (recommended)'], ['stretch', 'Fill the screen'], ['aspect', 'Keep shape, black bars'], ['altenter', 'Press Alt+Enter'], ['f11', 'Press F11'], ['off', 'Leave it alone']];
     d.fs = d.fs || 'auto'; d.compat = !!d.compat;
     const fFs = nav(el('button', 'fld')), setFs = () => { fFs.innerHTML = '<span>Fullscreen</span><b>' + esc(FSM.find(x => x[0] === d.fs)[1]) + '</b>'; }; setFs();
     fFs.onclick = () => { const i = FSM.findIndex(x => x[0] === d.fs); d.fs = FSM[(i + 1) % FSM.length][0]; setFs(); };
@@ -590,7 +590,7 @@
       pane.appendChild(cyc('Look', 'Midnight is the default. OLED black saves power on OLED TVs.', [['midnight', 'Midnight'], ['oled', 'OLED black'], ['daylight', 'Daylight'], ['sunset', 'Sunset'], ['ocean', 'Ocean'], ['forest', 'Forest'], ['rose', 'Rose'], ['cyber', 'Cyber'], ['graphite', 'Graphite'], ['sakura', 'Sakura']], () => S.settings.theme || 'midnight', v => { sv('theme', v); applyTheme(); }));
       pane.appendChild(cyc('Text and tile size', 'Bigger is easier to read from the couch.', [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large'], ['huge', 'Huge']], () => S.settings.uiSize || 'normal', v => { sv('uiSize', v); applyTheme(); }));
       pane.appendChild(cyc('Clock', '', [['12', '12-hour'], ['24', '24-hour']], () => S.settings.clock24 ? '24' : '12', v => sv('clock24', v === '24')));
-      pane.appendChild(toggle('Games open in windowed fullscreen', 'Every game is made borderless fullscreen so it looks clean and can still be streamed with Remote play. Takes effect the next time a game starts.', S.settings.gameWindow !== 'off', v => sv('gameWindow', v ? 'on' : 'off')));
+      pane.appendChild(toggle('Clean window for Remote play', 'Only while someone is connected with Remote play, games become a borderless window with no title bar, menu or taskbar in the way. Normal fullscreen is never touched when nobody is connected.', S.settings.gameWindow !== 'off', v => sv('gameWindow', v ? 'on' : 'off')));
       pane.appendChild(toggle('Ask who is playing at startup', 'Press A, then pick Player 1\u2019s profile every time SKBox opens', S.settings.askWho !== false, v => sv('askWho', v)));
       pane.appendChild(cyc('Idle screen', 'What shows when SKBox is left alone. Any button wakes it.', [['0', 'Off'], ['1', 'After 1 min'], ['2', 'After 2 min'], ['5', 'After 5 min'], ['10', 'After 10 min'], ['20', 'After 20 min']], () => String(S.settings.saver || 0), v => sv('saver', +v)));
       pane.appendChild(cyc('Idle screen style', 'A fancy clock with a soft glow, or a tiny drifting clock.', [['ambient', 'Fancy clock'], ['minimal', 'Simple clock']], () => S.settings.saverStyle || 'ambient', v => sv('saverStyle', v)));

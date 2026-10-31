@@ -52,7 +52,7 @@
     try {
       const snd = pc.getSenders().find(s => s.track && s.track.kind === 'video'); if (!snd) return;
       const p = snd.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-      p.encodings[0].maxBitrate = P.kbps * 1000; p.encodings[0].maxFramerate = P.fps; p.degradationPreference = 'maintain-framerate';
+      p.encodings[0].maxBitrate = P.kbps * 1000; p.encodings[0].maxFramerate = P.fps; p.degradationPreference = 'maintain-framerate'; p.encodings[0].priority = 'high'; p.encodings[0].networkPriority = 'high';
       await snd.setParameters(p);
     } catch (_) {}
   }
@@ -69,7 +69,7 @@
         if (!out) return; const now = performance.now(); let kbps = 0;
         if (prevStat) kbps = Math.round((out.bytesSent - prevStat.b) * 8 / Math.max(1, now - prevStat.t));
         prevStat = { b: out.bytesSent, t: now };
-        skremote.stats({ fps: Math.round(out.framesPerSecond || 0), kbps, rtt, codec: codec.replace('video/', ''), w: out.frameWidth || 0, h: out.frameHeight || 0, limit: out.qualityLimitationReason || 'none', black: isBlack, hw: !!(out.encoderImplementation && !/openh264|libvpx|software/i.test(out.encoderImplementation)) });
+        skremote.stats({ /* sent every 1.5 s */ fps: Math.round(out.framesPerSecond || 0), kbps, rtt, codec: codec.replace('video/', ''), w: out.frameWidth || 0, h: out.frameHeight || 0, limit: out.qualityLimitationReason || 'none', black: isBlack, hw: !!(out.encoderImplementation && !/openh264|libvpx|software/i.test(out.encoderImplementation)) });
       } catch (_) {}
     }, 1500);
   }
@@ -88,7 +88,9 @@
         const st = pc && pc.connectionState; clearTimeout(grace);
         if (st === 'failed' || st === 'closed') finish(st); else if (st === 'disconnected') grace = setTimeout(() => finish('disconnected'), 8000);
       };
-      await pc.setRemoteDescription(m.offer);
+      // start fast: tell the encoder what bitrate to begin at instead of slowly ramping up (the main cause of blurry / laggy first seconds)
+      const o = { type: m.offer.type, sdp: String(m.offer.sdp || '').replace(/^(a=fmtp:(\d+) [^\r\n]*)/gm, (l, all, pt) => /apt=/.test(all) || /useinbandfec|minptime|stereo/.test(all) ? all : all + ';x-google-start-bitrate=' + Math.round(P.kbps * 0.8) + ';x-google-min-bitrate=' + Math.round(P.kbps * 0.5) + ';x-google-max-bitrate=' + P.kbps) };
+      try { await pc.setRemoteDescription(o); } catch (_) { await pc.setRemoteDescription(m.offer); }
       for (const t of pc.getTransceivers()) {
         const kind = t.receiver.track.kind, track = stream.getTracks().find(x => x.kind === kind);
         if (!track) { t.direction = 'inactive'; continue; }

@@ -19,6 +19,9 @@ public static class SkHelper
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
     delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] static extern IntPtr GetMenu(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetMenu(IntPtr h, IntPtr m);
+    [DllImport("user32.dll")] static extern bool DrawMenuBar(IntPtr h);
     [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
     // 3 = a Direct3D game owns the screen in true exclusive fullscreen (this is what streams black); 2 = borderless / normal fullscreen.
     static bool IsExclusive() { try { int st; return SHQueryUserNotificationState(out st) == 0 && st == 3; } catch (Exception) { return false; } }
@@ -179,9 +182,10 @@ public static class SkHelper
     class Watch
     {
         public int Pid; public string Mode; public int SkPid; public DateTime Start; public IntPtr Hwnd; public uint WinPid; public DateTime HwndSince;
-        public bool Applied; public int Reapply; public DateTime AppliedAt; public bool FallbackUsed; public bool Found; public DateTime LastAlive; public RECT Target; public bool KeyDone; public bool ExclTried;
+        public bool Applied; public int Reapply; public DateTime AppliedAt; public bool FallbackUsed; public bool Found; public DateTime LastAlive; public RECT Target; public bool KeyDone; public bool ExclTried; public bool Saved; public int OStyle, OEx; public IntPtr OMenu; public RECT ORect;
     }
     static Watch watch;
+    static volatile bool remoteOn = false;
 
     static Dictionary<uint, List<uint>> ProcessChildren()
     {
@@ -301,6 +305,67 @@ public static class SkHelper
         return true;
     }
 
+    // Remote play only: make the game a clean borderless window (no title bar, no menu, over the taskbar) that is 1 pixel short of the
+    // whole screen. A window that exactly covers the monitor makes Windows bypass the compositor, which is what breaks screen capture.
+    static void RemoteWin(Watch w)
+    {
+        IntPtr h = w.Hwnd; RECT mon; bool covers = Covers(h, out mon);
+        if (!w.Applied)
+        {
+            double stable = (DateTime.UtcNow - w.HwndSince).TotalSeconds;
+            if (stable < 2.5) return;
+            RECT cr0; GetClientRect(h, out cr0); string title = TextOf(h);
+            if (LooksLikeLauncher(title, cr0.Right - cr0.Left, cr0.Bottom - cr0.Top) && Area(h) < 1200L * 700L) return;   // launcher or splash: wait
+            int st0 = GetWindowLong(h, -16); bool cap0 = (st0 & 0x00C00000) == 0x00C00000;
+            if (IsExclusive() && covers && !cap0)
+            {   // true exclusive fullscreen cannot be captured: leave it first
+                if (!w.ExclTried) { w.ExclTried = true; w.AppliedAt = DateTime.UtcNow; ForceForeground(h); Thread.Sleep(300); Tap(0x0D, true); Emit("FS exclusive leaving"); return; }
+                if ((DateTime.UtcNow - w.AppliedAt).TotalSeconds < 2.5) return;
+            }
+            if (ApplyRemote(w)) { w.Applied = true; w.AppliedAt = DateTime.UtcNow; Emit("FS remote window"); } else Emit("FS fail");
+        }
+        else if (w.Reapply < 6 && (DateTime.UtcNow - w.AppliedAt).TotalSeconds < 90)
+        {   // some games put their title bar / menu / size back: put ours back (a few times at most, so nothing flickers)
+            RECT r; if (GetWindowRect(h, out r) && !IsIconic(h))
+            {
+                int st = GetWindowLong(h, -16); bool cap = (st & 0x00C00000) == 0x00C00000;
+                if (cap || GetMenu(h) != IntPtr.Zero || Math.Abs(r.Left - w.Target.Left) > 3 || Math.Abs(r.Top - w.Target.Top) > 3 || Math.Abs(r.Right - w.Target.Right) > 3 || Math.Abs(r.Bottom - w.Target.Bottom) > 3)
+                { w.Reapply++; ApplyRemote(w); }
+            }
+        }
+    }
+    static bool ApplyRemote(Watch w)
+    {
+        IntPtr h = w.Hwnd; RECT mon; Covers(h, out mon); if (mon.Right == 0 && mon.Bottom == 0) return false;
+        if (!w.Saved)
+        {
+            RECT orr; GetWindowRect(h, out orr);
+            w.OStyle = GetWindowLong(h, -16); w.OEx = GetWindowLong(h, -20); w.OMenu = GetMenu(h); w.ORect = orr; w.Saved = true;
+        }
+        RECT cr; GetClientRect(h, out cr); int cw = cr.Right - cr.Left, ch = cr.Bottom - cr.Top;
+        if (IsZoomed(h)) ShowWindow(h, 9);
+        int style = GetWindowLong(h, -16), ex = GetWindowLong(h, -20);
+        style &= ~(0x00C00000 | 0x00040000 | 0x00020000 | 0x00010000 | 0x00080000);
+        ex &= ~(0x00000001 | 0x00000200 | 0x00020000 | 0x00000100);
+        SetWindowLong(h, -16, style); SetWindowLong(h, -20, ex);
+        if (GetMenu(h) != IntPtr.Zero) { SetMenu(h, IntPtr.Zero); DrawMenuBar(h); }   // e.g. Cemu's menu bar
+        int x, y, ww, hh; Fit(mon.Left, mon.Top, mon.Right - mon.Left, mon.Bottom - mon.Top, cw, ch, "auto", out x, out y, out ww, out hh);
+        hh -= 1;   // never exactly the whole monitor
+        SetWindowPos(h, new IntPtr(-1), x, y, ww, hh, 0x0020 | 0x0040);   // topmost (over the taskbar), frame changed, show
+        w.Target.Left = x; w.Target.Top = y; w.Target.Right = x + ww; w.Target.Bottom = y + hh;
+        return true;
+    }
+    // Remote play ended: give the game its normal window back.
+    static void RestoreWindow(Watch w)
+    {
+        if (w == null || !w.Saved || w.Hwnd == IntPtr.Zero || !IsWindow(w.Hwnd)) return;
+        IntPtr h = w.Hwnd;
+        SetWindowLong(h, -16, w.OStyle); SetWindowLong(h, -20, w.OEx);
+        if (w.OMenu != IntPtr.Zero && GetMenu(h) == IntPtr.Zero) { SetMenu(h, w.OMenu); DrawMenuBar(h); }
+        SetWindowPos(h, new IntPtr(-2), w.ORect.Left, w.ORect.Top, w.ORect.Right - w.ORect.Left, w.ORect.Bottom - w.ORect.Top, 0x0020 | 0x0040);
+        w.Saved = false; w.Applied = false; Emit("FS restored");
+    }
+
     static void StartWatch(string[] p)
     {
         int pid, sk; int.TryParse(p.Length > 1 ? p[1] : "0", out pid); int.TryParse(p.Length > 3 ? p[3] : "0", out sk);
@@ -322,48 +387,7 @@ public static class SkHelper
             RECT r; GetWindowRect(cand, out r);
             Emit("WIN " + cand.ToInt64().ToString(CultureInfo.InvariantCulture) + " " + wp + " " + (r.Right - r.Left) + " " + (r.Bottom - r.Top));
         }
-        if (valid && w.Mode != "off")
-        {
-            double stable = (DateTime.UtcNow - w.HwndSince).TotalSeconds;
-            RECT mon; bool covers = Covers(w.Hwnd, out mon);
-            int style = GetWindowLong(w.Hwnd, -16); bool caption = (style & 0x00C00000) == 0x00C00000;
-            if (!w.Applied)
-            {
-                bool autoish = w.Mode == "auto" || w.Mode == "stretch" || w.Mode == "aspect";
-                bool excl = autoish && covers && !caption && IsExclusive();
-                if (covers && !caption && !excl) { w.Applied = true; w.AppliedAt = DateTime.UtcNow; Emit("FS already"); }
-                else if (excl)
-                {   // true exclusive fullscreen: leave it (Alt+Enter), then make the window borderless so it looks right AND can be streamed
-                    if (!w.ExclTried) { if (stable >= 2.0) { w.ExclTried = true; w.AppliedAt = DateTime.UtcNow; ForceForeground(w.Hwnd); Thread.Sleep(300); Tap(0x0D, true); Emit("FS exclusive leaving"); } }
-                    else if ((DateTime.UtcNow - w.AppliedAt).TotalSeconds > 2.5)
-                    {
-                        RECT t; if (Borderless(w.Hwnd, w.Mode, out t)) { w.Applied = true; w.AppliedAt = DateTime.UtcNow; w.Target = t; Emit("FS borderless exclusive"); } else Emit("FS fail");
-                    }
-                }
-                else if (stable >= 3.0)
-                {
-                    RECT r; GetClientRect(w.Hwnd, out r); string title = TextOf(w.Hwnd);
-                    if (LooksLikeLauncher(title, r.Right - r.Left, r.Bottom - r.Top) && Area(w.Hwnd) < 1200L * 700L) { /* launcher or splash: wait for the real window */ }
-                    else if (w.Mode == "altenter" || w.Mode == "f11")
-                    {
-                        if (!w.KeyDone) { ForceForeground(w.Hwnd); Thread.Sleep(300); if (w.Mode == "altenter") Tap(0x0D, true); else Tap(0x7A, false); w.KeyDone = true; w.AppliedAt = DateTime.UtcNow; Emit("FS " + w.Mode + " sent"); }
-                        else if ((DateTime.UtcNow - w.AppliedAt).TotalSeconds > 6.0)
-                        {   // the key did not work: fall back to making the window borderless
-                            if (!w.FallbackUsed) { w.FallbackUsed = true; w.Mode = "auto"; w.KeyDone = false; Emit("FS fallback"); }
-                        }
-                    }
-                    else
-                    {
-                        RECT t; if (Borderless(w.Hwnd, w.Mode, out t)) { w.Applied = true; w.AppliedAt = DateTime.UtcNow; w.Target = t; Emit("FS borderless " + w.Mode); } else Emit("FS fail");
-                    }
-                }
-            }
-            else if (w.Applied && !w.FallbackUsed && w.Reapply < 3 && (DateTime.UtcNow - w.AppliedAt).TotalSeconds < 90 && (w.Mode == "auto" || w.Mode == "stretch" || w.Mode == "aspect"))
-            {   // some games put their borders back: keep it borderless for the first minute and a half
-                RECT r; if (GetWindowRect(w.Hwnd, out r) && !IsIconic(w.Hwnd) && (caption || Math.Abs(r.Left - w.Target.Left) > 3 || Math.Abs(r.Right - w.Target.Right) > 3 || Math.Abs(r.Top - w.Target.Top) > 3 || Math.Abs(r.Bottom - w.Target.Bottom) > 3))
-                { w.Reapply++; RECT t; if (Borderless(w.Hwnd, w.Mode, out t)) w.Target = t; }
-            }
-        }
+        if (valid && w.Mode != "off" && remoteOn) RemoteWin(w);
         // finished?
         if (!valid && w.Found && (DateTime.UtcNow - w.LastAlive).TotalSeconds > 6.0) { Emit("GONE"); watch = null; return; }
         if (!valid && w.Found && pids.Count == 0 && age > 20) { Emit("GONE"); watch = null; return; }
@@ -499,6 +523,7 @@ public static class SkHelper
                     else if (p[0] == "PING") Emit("PONG");
                     else if (p[0] == "MIN" && p.Length > 1) { long hv3; if (long.TryParse(p[1], out hv3)) MinimizeWin(new IntPtr(hv3)); }
                     else if (p[0] == "RESTORE" && p.Length > 1) { long hv4; if (long.TryParse(p[1], out hv4)) { IntPtr hh4 = new IntPtr(hv4); Thread t4 = new Thread(delegate() { RestoreWin(hh4); }); t4.IsBackground = true; t4.Start(); } }
+                    else if (p[0] == "REMOTE" && p.Length > 1) { bool on = p[1] == "1"; remoteOn = on; Watch ww = watch; if (ww != null) { if (on) { ww.Applied = false; ww.Reapply = 0; ww.ExclTried = false; } else RestoreWindow(ww); } }
                     else if (p[0] == "FIXFS" && p.Length > 1) { long hv5; if (long.TryParse(p[1], out hv5)) { IntPtr hh5 = new IntPtr(hv5); Thread t5 = new Thread(delegate() { FixFs(hh5); }); t5.IsBackground = true; t5.Start(); } }
                     else if (p[0] == "PADIN") padIn = p.Length > 1 && p[1] == "1";
                     else if (p[0] == "QUIT") quit = true;
