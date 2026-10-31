@@ -19,6 +19,22 @@ public static class SkHelper
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
     delegate bool EnumProc(IntPtr h, IntPtr l);
+    [StructLayout(LayoutKind.Sequential)] struct PT { public int X, Y; }
+    [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref PT p);
+    [StructLayout(LayoutKind.Sequential)] struct APPBARDATA { public int cbSize; public IntPtr hWnd; public uint uCallbackMessage; public uint uEdge; public RECT rc; public IntPtr lParam; }
+    [DllImport("shell32.dll")] static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA d);
+    static int tbOrig = -1;
+    // Taskbar: auto-hide while Remote play is on, so it is not in the picture. Put back afterwards.
+    static void Taskbar(bool hide)
+    {
+        try
+        {
+            APPBARDATA d = new APPBARDATA(); d.cbSize = Marshal.SizeOf(typeof(APPBARDATA));
+            if (hide) { if (tbOrig < 0) tbOrig = (int)SHAppBarMessage(0x4, ref d).ToUInt32(); d.lParam = new IntPtr(1 | (tbOrig & 2)); SHAppBarMessage(0xA, ref d); }
+            else if (tbOrig >= 0) { d.lParam = new IntPtr(tbOrig); SHAppBarMessage(0xA, ref d); tbOrig = -1; }
+        }
+        catch (Exception) { }
+    }
     [DllImport("user32.dll")] static extern IntPtr GetMenu(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetMenu(IntPtr h, IntPtr m);
     [DllImport("user32.dll")] static extern bool DrawMenuBar(IntPtr h);
@@ -352,7 +368,15 @@ public static class SkHelper
         int x, y, ww, hh; Fit(mon.Left, mon.Top, mon.Right - mon.Left, mon.Bottom - mon.Top, cw, ch, "auto", out x, out y, out ww, out hh);
         hh -= 1;   // never exactly the whole monitor
         SetWindowPos(h, new IntPtr(-1), x, y, ww, hh, 0x0020 | 0x0040);   // topmost (over the taskbar), frame changed, show
-        w.Target.Left = x; w.Target.Top = y; w.Target.Right = x + ww; w.Target.Bottom = y + hh;
+        // If a title bar / menu / border is still there (the game refused the style change), push it off-screen: make the CLIENT area fill the target.
+        RECT wr; GetWindowRect(h, out wr); RECT cr2; GetClientRect(h, out cr2); PT pt; pt.X = 0; pt.Y = 0; ClientToScreen(h, ref pt);
+        int ncL = pt.X - wr.Left, ncT = pt.Y - wr.Top, ncW = (wr.Right - wr.Left) - (cr2.Right - cr2.Left), ncH = (wr.Bottom - wr.Top) - (cr2.Bottom - cr2.Top);
+        if (ncL > 1 || ncT > 1 || ncW > 2 || ncH > 2)
+        {
+            SetWindowPos(h, new IntPtr(-1), x - ncL, y - ncT, ww + ncW, hh + ncH, 0x0020 | 0x0040);
+            Emit("FS remote offset " + ncL + " " + ncT);
+        }
+        w.Target.Left = x - (ncL > 1 ? ncL : 0); w.Target.Top = y - (ncT > 1 ? ncT : 0); w.Target.Right = w.Target.Left + ww + (ncW > 2 ? ncW : 0); w.Target.Bottom = w.Target.Top + hh + (ncH > 2 ? ncH : 0);
         return true;
     }
     // Remote play ended: give the game its normal window back.
@@ -523,7 +547,13 @@ public static class SkHelper
                     else if (p[0] == "PING") Emit("PONG");
                     else if (p[0] == "MIN" && p.Length > 1) { long hv3; if (long.TryParse(p[1], out hv3)) MinimizeWin(new IntPtr(hv3)); }
                     else if (p[0] == "RESTORE" && p.Length > 1) { long hv4; if (long.TryParse(p[1], out hv4)) { IntPtr hh4 = new IntPtr(hv4); Thread t4 = new Thread(delegate() { RestoreWin(hh4); }); t4.IsBackground = true; t4.Start(); } }
-                    else if (p[0] == "REMOTE" && p.Length > 1) { bool on = p[1] == "1"; remoteOn = on; Watch ww = watch; if (ww != null) { if (on) { ww.Applied = false; ww.Reapply = 0; ww.ExclTried = false; } else RestoreWindow(ww); } }
+                    else if (p[0] == "REMOTE" && p.Length > 1) { bool on = p[1] == "1"; remoteOn = on; Taskbar(on); Watch ww = watch; if (ww != null) { if (on) { ww.Applied = false; ww.Reapply = 0; ww.ExclTried = false; } else RestoreWindow(ww); } }
+                    else if (p[0] == "WINFIT")
+                    {   // manual: fit this window (or the one in front) right now, whatever the watcher thinks
+                        long hv9 = 0; if (p.Length > 1) long.TryParse(p[1], out hv9); IntPtr h9 = hv9 != 0 ? new IntPtr(hv9) : (watch != null && watch.Hwnd != IntPtr.Zero ? watch.Hwnd : GetForegroundWindow());
+                        if (IsWindow(h9)) { Watch t9 = (watch != null && watch.Hwnd == h9) ? watch : new Watch(); t9.Hwnd = h9; if (t9 != watch) { watch = t9; watch.Mode = "auto"; watch.Start = DateTime.UtcNow; watch.LastAlive = DateTime.UtcNow; watch.Found = true; }
+                            t9.Reapply = 0; t9.ExclTried = true; Emit(ApplyRemote(t9) ? "FS remote window" : "FS fail"); t9.Applied = true; t9.AppliedAt = DateTime.UtcNow; remoteOn = true; }
+                    }
                     else if (p[0] == "FIXFS" && p.Length > 1) { long hv5; if (long.TryParse(p[1], out hv5)) { IntPtr hh5 = new IntPtr(hv5); Thread t5 = new Thread(delegate() { FixFs(hh5); }); t5.IsBackground = true; t5.Start(); } }
                     else if (p[0] == "PADIN") padIn = p.Length > 1 && p[1] == "1";
                     else if (p[0] == "QUIT") quit = true;

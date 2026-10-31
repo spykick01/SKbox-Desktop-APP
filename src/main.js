@@ -145,7 +145,7 @@ function prepWindowedFs(exe) {
 // Windowing is applied by the helper ONLY while a Remote play player is connected (see helper.remote). Otherwise games are left exactly as they are.
 let remoteLive = false;
 function gameMode(m) { m = m || 'auto'; if (m === 'off') return 'off'; if (store.read('settings', {}).gameWindow === 'off') return 'off'; return 'auto'; }
-function setRemoteLive(on) { remoteLive = !!on; if (helper && helper.ready) helper.remote(on && store.read('settings', {}).gameWindow !== 'off'); if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
+function setRemoteLive(on) { remoteLive = !!on; if (helper && helper.ready) { helper.remote(on && store.read('settings', {}).gameWindow !== 'off'); if (on && game && game.hwnd) setTimeout(() => helper.winFit(game && game.hwnd), 1500); } if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
 function showBackdrop(a) {
   closeBackdrop(); const d = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   backdrop = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, backgroundColor: '#000000', show: false, skipTaskbar: true, focusable: false, movable: false, resizable: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -228,7 +228,7 @@ function startHelper() {
     if (!game) return; game.hwnd = w.hwnd; game.wpid = w.pid; send('game:state', gameState());
     if (isWin && store.read('settings', {}).boost && w.pid > 0 && game.boosted !== w.pid) { game.boosted = w.pid; execFile('powershell', ['-NoProfile', '-Command', '$p = Get-Process -Id ' + (w.pid | 0) + ' -ErrorAction SilentlyContinue; if ($p) { $p.PriorityClass = "High" }'], { windowsHide: true }, () => {}); }
   });
-  helper.on('fs', t => { backdropFade(); if (game) game.fsOk = /^(already|borderless)/.test(String(t)); send('fs', t); });
+  helper.on('fs', t => { if (remoteLive && /^(remote|fail|exclusive|restored)/.test(String(t))) toClient({ t: 'notice', text: /^remote window/.test(t) ? 'Game window fitted.' : /^remote offset/.test(t) ? 'Game window fitted (bars pushed off-screen).' : /^fail/.test(t) ? 'Could not fit the game window. Press Fix the picture.' : 'Leaving exclusive fullscreen\u2026' }); backdropFade(); if (game) game.fsOk = /^(already|borderless)/.test(String(t)); send('fs', t); });
   helper.on('gone', () => endGame());
   helper.on('nowin', () => { if (game) { game.noWindow = true; if (game.exited || !game.pid) endGame(); } });
   helper.on('error-line', l => { helperInfo.error = String(l).slice(0, 200); try { fs.appendFileSync(path.join(app.getPath('userData'), 'helper.log'), new Date().toISOString() + ' ' + l + '\n'); } catch {} });
@@ -478,8 +478,9 @@ async function remoteLadder(auto) {
     else if (!fixTold) { fixTold = true; toClient({ t: 'notice', text: 'Still black. In the game\u2019s video settings, set Display mode to Borderless or Windowed.' }); }
   } finally { fixBusy = false; }
 }
-function remoteFixFs() {   // manual: same ladder, from the SKBox menu
-  if (!game) { toClient({ t: 'notice', text: 'No game is running.' }); return; }
+function remoteFixFs() {   // manual: fit the window, then the same ladder, from the SKBox menu
+  if (helper && helper.ready) { helper.remote(true); helper.winFit(game && game.hwnd ? game.hwnd : 0); }
+  if (!game) { toClient({ t: 'notice', text: 'Fitted the window in front. (No game started from SKBox.)' }); return; }
   fixStage = Math.min(fixStage, 1); fixTold = false; remoteLadder();
 }
 function remoteEndSession() {
