@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SKBox Remote</title><link rel="stylesheet" href="client.css">
+</head><body>
+<main id="connect">
+  <div class="card">
+    <div class="logo">&#9654;</div>
+    <h1>SKBox Remote</h1>
+    <p class="lead">Play your SKBox PC on this device. You both need to be on the same Wi-Fi, and Remote play must be turned on in SKBox (Settings &gt; Remote play).</p>
+    <div id="hostsBox" hidden><div class="lab">PCs found on your Wi-Fi</div><div id="hosts"></div><button id="scan" class="ghost">Search again</button></div>
+    <label class="lab" for="host">PC address</label>
+    <input id="host" placeholder="192.168.1.23" autocomplete="off" spellcheck="false">
+    <label class="lab" for="pin">PIN shown in SKBox</label>
+    <input id="pin" placeholder="123456" inputmode="numeric" maxlength="6" autocomplete="off">
+    <label class="lab" for="name">This device is called</label>
+    <input id="name" maxlength="32" autocomplete="off">
+    <button id="go" class="primary">Connect</button>
+    <div id="msg" role="status"></div>
+    <p class="tiny">Tip: press Ctrl+Alt+Shift+D to disconnect. Use the cog at the top while playing for fullscreen, game mouse and stats.</p>
+  </div>
+</main>
+<section id="stage" hidden>
+  <video id="v" autoplay playsinline></video>
+  <div id="tap" hidden>Click to start</div>
+  <div id="stats" hidden></div>
+  <div id="notice" hidden></div>
+  <div id="bar">
+    <button id="bFull" title="Fullscreen">&#x26F6; Fullscreen</button>
+    <button id="bMouse" title="Game mouse: hides the cursor and sends raw movement">&#128433; Game mouse</button>
+    <button id="bFix" title="Black or frozen picture in a fullscreen game? This asks the PC to leave exclusive fullscreen">&#129695; Fix black screen</button>
+    <button id="bStats" title="Show connection stats">&#128202; Stats</button>
+    <button id="bBye" class="danger">&#10006; Disconnect</button>
+  </div>
+</section>
+<script src="client.js"></script>
+</body></html>

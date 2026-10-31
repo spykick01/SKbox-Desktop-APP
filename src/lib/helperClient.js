@@ -26,7 +26,7 @@ class HelperClient extends EventEmitter {
     const parts = l.split(' '), cmd = parts[0], r = parts.slice(1);
     switch (cmd) {
       case 'READY': this.ready = true; this.restarts = 0; this.emit('ready'); break;
-      case 'GUIDE': this.emit('guide', r[0] || ''); break;
+      case 'GUIDE': this.emit('guide', r[0] || '', r[1] || '0', parseInt(r[2], 10) || 0, r[3] === '1'); break;
       case 'PADS': this.emit('pads', parseInt(r[0], 10) || 0); break;
       case 'WIN': this.emit('win', { hwnd: r[0], pid: parseInt(r[1], 10) || 0, w: parseInt(r[2], 10) || 0, h: parseInt(r[3], 10) || 0 }); break;
       case 'FS': this.emit('fs', r.join(' ')); break;
@@ -42,6 +42,9 @@ class HelperClient extends EventEmitter {
   send(line) { try { if (this.child && this.child.stdin && this.child.stdin.writable) this.child.stdin.write(line + '\n'); } catch {} }
   watch(pid, mode, skPid) { this.send('WATCH ' + (pid | 0) + ' ' + (/^(auto|stretch|aspect|altenter|f11|off)$/.test(mode) ? mode : 'auto') + ' ' + (skPid | 0)); }
   unwatch() { this.send('UNWATCH'); }
+  minimize(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('MIN ' + hwnd); }
+  restore(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('RESTORE ' + hwnd); }
+  fixFullscreen(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('FIXFS ' + hwnd); }
   padIn(on) { this.send('PADIN ' + (on ? 1 : 0)); }
   closeWindow(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('CLOSE ' + hwnd); }
   focus(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('FOCUS ' + hwnd); }

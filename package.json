@@ -1,7 +1,7 @@
 {
   "name": "skbox",
   "productName": "SKBox",
-  "version": "1.5.0",
+  "version": "1.7.0",
   "description": "SKBox: a console-style media center for PC",
   "main": "src/main.js",
   "author": "SK",

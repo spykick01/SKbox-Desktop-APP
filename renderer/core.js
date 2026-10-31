@@ -34,7 +34,7 @@
   K.focus = e => {
     if (cur && cur !== e) cur.classList.remove('focus');
     cur = e; if (!e) return;
-    e.classList.add('focus');
+    e.classList.add('focus'); whoTag(e);
     try { e.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }); } catch (_) {}
     if (e._onfocus) e._onfocus(e);
   };
@@ -142,10 +142,10 @@
     const top = layers().lastElementChild;
     if ((a === 'left' || a === 'right') && cur && cur._adjust) { cur._adjust(a === 'left' ? -1 : 1); return; }
     if (a === 'up' || a === 'down' || a === 'left' || a === 'right') { move(a); return; }
-    if (a === 'ok') { if (cur) { K.snd && K.snd.play('ok'); cur.click(); } return; }
+    if (a === 'ok') { if (cur) { if (notMine()) { K.denied(cur); return; } K.snd && K.snd.play('ok'); cur.click(); } return; }
     if (a === 'back') { if (top) { if (top._cancel) top._cancel(); } else if (S.backFn) { K.snd && K.snd.play('back'); S.backFn(); } return; }
-    if (a === 'alt') { if (top && top._alt) top._alt(); else if (!top && cur && cur._onalt) cur._onalt(cur); return; }
-    if (a === 'opts') { if (top && top._opts) top._opts(); else if (!top && cur && cur._onopts) cur._onopts(cur); return; }
+    if (a === 'alt') { if (top && top._alt) top._alt(); else if (!top && cur && cur._onalt) { if (notMine()) { K.denied(cur); return; } cur._onalt(cur); } return; }
+    if (a === 'opts') { if (top && top._opts) top._opts(); else if (!top && cur && cur._onopts) { if (notMine()) { K.denied(cur); return; } cur._onopts(cur); } return; }
     if (a === 'prev' || a === 'next') { if (!top && S.bumper) S.bumper(a); return; }
     if (a === 'start') { if (!top && S.startFn) S.startFn(); return; }
   };
@@ -156,7 +156,7 @@
     if (top && top._key && top.querySelector('.osk')) { if (top._key(e)) { e.preventDefault(); return; } }
     const t = e.target && e.target.tagName; if (t === 'INPUT' || t === 'TEXTAREA' || t === 'WEBVIEW') return;
     document.body.classList.remove('padmode');
-    const m = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok', ' ': 'ok', Escape: 'back', Backspace: 'back', Tab: e.shiftKey ? 'prev' : 'next', F2: 'opts', ContextMenu: 'opts', Home: 'start' }[e.key];
+    const m = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok', ' ': 'ok', Escape: 'back', Backspace: 'back', Tab: e.shiftKey ? 'prev' : 'next', F2: 'opts', ContextMenu: 'opts', Home: 'start', Insert: 'alt' }[e.key];
     if (m) { e.preventDefault(); K.act(m); }
   });
   window.addEventListener('mousemove', () => { document.body.classList.add('mouse'); K.touch(); });
@@ -167,6 +167,37 @@
   const ps = {}; let lastN = 0;
   // Two paths feed the controller: the browser (needs window focus) and the native helper (does not). Both go through
   // padEvent(); an event seen on both paths within 140 ms is only used once.
+  // ---- every controller belongs to one player ----
+  K.pads = () => (navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : []);
+  K.twoPlayers = () => !!(S.players && S.players[1]);
+  // gamepad index -> 0 (Player 1) | 1 (Player 2) | null (a third controller)
+  K.owners = () => {
+    const pads = K.pads(), out = {}; if (!K.twoPlayers()) { pads.forEach(p => { out[p.index] = 0; }); return out; }
+    const ids = (S.settings && S.settings.padIds) || [], taken = [false, false];
+    if (ids[0] && ids[1] && ids[0] !== ids[1]) pads.forEach(p => { const o = p.id === ids[0] ? 0 : p.id === ids[1] ? 1 : -1; if (o >= 0 && !taken[o]) { out[p.index] = o; taken[o] = true; } });
+    const rest = pads.filter(p => out[p.index] === undefined); if (S.settings && S.settings.padSwap) rest.reverse();
+    rest.forEach(p => { const o = !taken[0] ? 0 : !taken[1] ? 1 : null; if (o !== null) taken[o] = true; out[p.index] = o; });
+    return out;
+  };
+  K.ownerOf = idx => { const o = K.owners()[idx]; return o === undefined ? 0 : o; };
+  K.padIndexOf = player => {
+    const o = K.owners(); for (const k in o) if (o[k] === player) return +k;
+    if (player === 0) { const id = S.settings && S.settings.padIds && S.settings.padIds[0], p = id && K.pads().find(x => x.id === id); if (p) return p.index; }
+    return player === 0 ? ((K.pads()[0] || {}).index || 0) : -1;
+  };
+  K.padName = idx => { const p = K.pads().find(x => x.index === idx); return p ? String(p.id || 'Controller').replace(/\s*\(.*$/, '').slice(0, 40) : 'Controller'; };
+  const whoTag = e => {
+    document.querySelectorAll('.who').forEach(x => x.remove()); document.body.classList.toggle('pl2', S.active === 1 && K.twoPlayers());
+    if (!e || !K.twoPlayers()) return;
+    try { if (getComputedStyle(e).position === 'static') e.style.position = 'relative'; } catch (_) {}
+    const t = document.createElement('span'); t.className = 'who p' + (S.active + 1); t.textContent = 'P' + (S.active + 1); e.appendChild(t);
+  };
+  K.whoRefresh = () => { if (cur) whoTag(cur); };
+  let movingT = null;
+  const markMoving = p => { if (!K.twoPlayers()) return; document.querySelectorAll('[data-owner]').forEach(c => c.classList.toggle('moving', c.dataset.owner === String(p))); clearTimeout(movingT); movingT = setTimeout(() => document.querySelectorAll('.moving').forEach(c => c.classList.remove('moving')), 1600); };
+  let deniedAt = 0;
+  K.denied = el => { el.classList.remove('deny'); void el.offsetWidth; el.classList.add('deny'); setTimeout(() => el.classList.remove('deny'), 400); if (Date.now() - deniedAt > 1500) { deniedAt = Date.now(); K.toast && K.toast('That belongs to Player ' + (+el.dataset.owner + 1)); } };
+  const notMine = () => K.fromPad && cur && cur.dataset && cur.dataset.owner !== undefined && cur.dataset.owner !== String(S.active);
   const seenAt = {}; K.padLog = []; K.padCount = { api: 0, helper: 0 };
   K.lastInput = Date.now();
   K.touch = () => { K.lastInput = Date.now(); if (K.saverOn && K.saverOff) { K.saverOff(); return true; } return false; };
@@ -179,15 +210,17 @@
     seenAt[src + a] = now;
     if (S.screen === 'web' && !layers().lastElementChild) return;
     if (K.touch()) return;   // woke the screensaver; swallow this press
+    if (src === 'api' && K.twoPlayers() && K.owners()[idx] === null) return;   // a third controller does nothing while two people play
+    if (src === 'api' && K.grab && K.grab(idx, a)) return;                      // "press A on the controller for Player N"
     document.body.classList.remove('mouse');
-    S.active = idx === 1 && S.players[1] ? 1 : 0;
+    S.active = src === 'api' ? K.ownerOf(idx) : (idx === 1 && S.players[1] ? 1 : 0);
     if (src === 'api') { try { const gp = navigator.getGamepads()[idx], t = gp && /054c|dualshock|dualsense|wireless controller|playstation/i.test(gp.id || '') ? 'ps' : 'xbox'; if (t !== K.padType) { K.padType = t; K.hints(lastHints); } } catch (_) {} }
     if (a === 'select') return;
     const st = S.settings || {}; let m = a;
     if (st.swapAB && (a === 'ok' || a === 'back')) m = SWAPS[a]; else if (st.swapXY && (a === 'alt' || a === 'opts')) m = SWAPS[a];
     if (K.onPad) K.onPad(m, idx);
     if (m === 'ok') K.rumble(idx);
-    K.act(m);
+    markMoving(S.active); K.fromPad = true; try { K.act(m); } finally { K.fromPad = false; } K.whoRefresh();
   }
   function fire(a, idx) { padEvent('api', a, idx); }
   function poll(ts) {

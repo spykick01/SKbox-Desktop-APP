@@ -180,9 +180,10 @@
     }
     [0, 1].forEach(i => {
       const p = S.players[i];
-      if (p) { const c = nav(el('button', 'chip', avatar(p) + '<span>' + esc(p.nick || p.u) + '</span><span class="pn">P' + (i + 1) + '</span>')); c.onclick = () => go('settings', { cat: 'players' }); c._onopts = () => pfpPicker(i); left.appendChild(c); }
+      if (p) { const c = nav(el('button', 'chip', avatar(p) + '<span>' + esc(p.nick || p.u) + '</span><span class="pn">P' + (i + 1) + '</span>')); c.dataset.owner = String(i); c.onclick = () => go('settings', { cat: 'players' }); c._onopts = () => menu('Player ' + (i + 1), [{ label: 'Change picture', fn: () => pfpPicker(i) }, { label: 'Use a different controller\u2026', fn: () => assignFlow(i) }].concat(S.players[1] ? [{ label: 'Swap Player 1 and Player 2 controllers', fn: () => { swapPads(); go('home'); } }] : [])); left.appendChild(c); }
       else if (i === 1) { const c = nav(el('button', 'chip', '<div class="av">+</div><span>Add Player 2</span>')); c.onclick = () => go('profiles', { slot: 1 }); left.appendChild(c); }
     });
+    if (S.remote && S.remote.on) { const rc = nav(el('button', 'chip', '<div class="av">\u{1F4E1}</div><span>' + (S.remote.client ? esc(S.remote.client.name) + ' is playing' : 'Remote play on') + '</span>')); rc.onclick = () => go('settings', { cat: 'remote' }); left.appendChild(rc); }
     const npB = nav(el('button', 'chip np', '<div class="av">\u266A</div><span id="npt">SKMusic</span>')); npB.style.display = 'none';
     npB.onclick = () => sk.music.cmd('toggle').then(() => setTimeout(tick, 400)); npB._onopts = () => sk.music.open(activeUser()); left.appendChild(npB);
     const wifiB = nav(el('button', 'ibtn', '<span id="wf">\u{1F4F6}</span><span id="wfn" style="font-size:.85rem;color:var(--dim)"></span>')); wifiB.onclick = () => go('settings', { cat: 'wifi' });
@@ -281,8 +282,33 @@
     } else it.push({ label: 'Built-in app', fn: () => toast('SKchat and SKMusic are built in') });
     menu(a.name, it);
   }
-  K.onPad = (a, idx) => { // Player 2 joins with Start
-    if (S.screen === 'home' && idx === 1 && !S.players[1] && a === 'start') { go('profiles', { slot: 1 }); }
+  // Which controller is Player 1 / Player 2. Saved by controller name; two identical controllers are told apart by a swap flag.
+  K.assignPads = (i1, i2) => {
+    const pads = K.pads(), a = pads.find(p => p.index === i1), b = pads.find(p => p.index === i2), old = S.settings.padIds || [];
+    S.settings.padIds = [a ? a.id : old[0] || '', b ? b.id : old[1] || ''];
+    S.settings.padSwap = !!(a && b && a.id === b.id && i1 > i2); saveSettings();
+  };
+  const swapPads = () => {
+    if (!S.players[1]) { toast('Swap needs two players'); return; } const i1 = K.padIndexOf(0), i2 = K.padIndexOf(1);
+    if (i1 < 0 || i2 < 0 || i1 === i2 || K.pads().length < 2) { toast('Connect both controllers first'); return; }
+    K.assignPads(i2, i1); toast('Player 1 and Player 2 swapped controllers');
+  };
+  function assignFlow(first) {
+    const two = !!S.players[1], order = two ? [first || 0, 1 - (first || 0)] : [0], picked = [];
+    const L = el('div', 'layer'), b = el('div', 'box'), t = el('h3', '', ''), p = el('p', 'sub', ''), cancel = nav(el('button', 'btn', 'Cancel')), row2 = el('div', 'btnrow');
+    let done = false; const close = () => { if (done) return; done = true; K.grab = null; closeLayer(L); };
+    const ask = () => { const pl = order[picked.length]; t.textContent = 'Player ' + (pl + 1) + ': press A'; p.textContent = 'Press A on the controller you want to use as Player ' + (pl + 1) + (picked.length ? '. Use the other controller.' : '.'); };
+    K.grab = (idx, a) => {
+      if (a === 'back') { close(); return true; } if (a !== 'ok') return true;
+      if (picked.includes(idx)) { toast('That controller is already taken'); return true; }
+      picked.push(idx); if (picked.length < order.length) { ask(); return true; }
+      const at = pl => picked[order.indexOf(pl)]; K.assignPads(at(0), two ? at(1) : undefined); close(); toast('Controllers assigned'); S.active = 0;
+      if (S.screen === 'settings') go('settings', { cat: 'controllers' }); else if (S.screen === 'home') go('home'); return true;
+    };
+    cancel.onclick = close; cancel.dataset.first = ''; row2.appendChild(cancel); b.append(t, p, row2); L.appendChild(b); ask(); openLayer(L, close);
+  }
+  K.onPad = (a, idx) => { // Player 2 joins by pressing Start on a second controller
+    if (S.screen === 'home' && !S.players[1] && a === 'start') { const p1 = K.padIndexOf(0); if (idx !== p1 && K.pads().length > 1) { K.assignPads(p1, idx); go('profiles', { slot: 1 }); } }
   };
   const activeUser = () => (S.players[S.active] || S.players[0] || { u: 'guest' }).u;
   async function openApp(a) {
@@ -312,6 +338,12 @@
   sk.on('returned', () => { const e = window.K.current(); });
   sk.on('battery', (slot, type, level) => { (S.bat = S.bat || {})[slot] = { type, level }; if ((type === 2 || type === 3) && level <= 1 && Date.now() - (S.lowBatAt || 0) > 600000) { S.lowBatAt = Date.now(); toast('Controller battery is ' + (level === 0 ? 'empty' : 'low') + '. Plug it in or change the batteries.'); } });
   sk.on('padtest', (slot, a) => { if (!S.padTestOn) return; K.padCount.helper++; K.padLog.push({ src: 'helper', a, t: Date.now() }); if (K.padLog.length > 14) K.padLog.shift(); if (K.onPadLog) K.onPadLog(); });
+  sk.on('remote:state', s => {
+    const sig = (s.on ? 'on' : 'off') + '|' + (s.client ? s.client.name : ''), old = S.remoteSig; S.remote = s; S.remoteSig = sig;
+    if (S.remoteUpd) S.remoteUpd(s);
+    if (old !== undefined && old !== sig) { const was = (old.split('|')[1] || ''), now = s.client ? s.client.name : ''; if (now && now !== was) toast(now + ' connected (Remote play)'); else if (was && !now) toast(was + ' disconnected'); if (S.screen === 'home') go('home'); }
+  });
+  sk.remote.state().then(s => { S.remote = s; S.remoteSig = (s.on ? 'on' : 'off') + '|' + (s.client ? s.client.name : ''); }).catch(() => {});
   sk.on('timer:fired', a => toast(a === 'closegame' ? 'Timer finished: closing your game' : 'Timer finished'));
   sk.on('update-ready', v => confirm('Update ready', 'SKBox ' + v + ' has been downloaded.', 'Restart now', () => sk.installUpdate()));
 
@@ -387,7 +419,7 @@
     wrap.appendChild(wv); root.appendChild(wrap);
     const setText = (t, send) => wv.executeJavaScript('(function(t,s){var e=document.activeElement;if(!e)return;if(e.isContentEditable){e.textContent=t;e.dispatchEvent(new Event("input",{bubbles:true}));}else{var pr=e.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,ds=Object.getOwnPropertyDescriptor(pr,"value");if(ds&&ds.set)ds.set.call(e,t);else e.value=t;e.dispatchEvent(new Event("input",{bubbles:true}));}if(s){e.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true}));}})(' + JSON.stringify(t) + ',' + (send ? 'true' : 'false') + ')').catch(() => {});
     wv.addEventListener('dom-ready', async () => {
-      wv.focus(); wv.send('active-pad', S.active);
+      wv.focus(); wv.send('active-pad', Math.max(0, K.padIndexOf(S.active)));
       if (p.u !== 'guest') { const c = await sk.auth.cred(p.u); if (c) [1200, 3200, 6000].forEach(ms => setTimeout(() => { try { wv.executeJavaScript('(function(u,p){var a=document.getElementById("li-u"),b=document.getElementById("li-p");if(a&&b&&a.offsetParent&&!window._sessOn){a.value=u;b.value=p;["input","change"].forEach(function(t){a.dispatchEvent(new Event(t,{bubbles:true}));b.dispatchEvent(new Event(t,{bubbles:true}));});if(window.doLogin)window.doLogin();}})(' + JSON.stringify(c.u) + ',' + JSON.stringify(c.p) + ')').catch(() => {}); } catch (_) {} }, ms)); }
     });
     wv.addEventListener('ipc-message', e => {
@@ -400,6 +432,10 @@
 
   // ---------- settings ----------
   const NEWS = [
+    ['Player controllers', 'Each controller now belongs to one player: Player 1\u2019s controller cannot use Player 2\u2019s things and the other way round. The highlight turns orange with a P2 tag when Player 2 is moving. Change who is who in Settings > Controllers, or press Y on a player chip on Home.'],
+    ['Xbox button over fullscreen games', 'The menu now steps in front of any fullscreen game (even exclusive fullscreen) by minimizing it, and brings it back when you press Resume.'],
+    ['Remote play: Fix black screen', 'If a fullscreen game looks black when streaming, use Fix black screen in the player\u2019s top bar.'],
+    ['Remote play', 'Settings > Remote play: turn it on, then play your PC from a Mac or another PC on the same Wi-Fi with the SKBox Remote app (or just a web browser). It only runs while you have it turned on.'],
     ['Controller in the SK menu, fixed', 'The menu could look fine but ignore your controller. It now listens through two paths. Settings > Controller test shows what SKBox sees.'],
     ['Collections', 'In the Library press Y on an app > Add to collection. The Show chip at the top filters by All, On Home, Played lately, or a collection.'],
     ['Sleep timer', 'Settings > Power > Sleep timer: sleep, shut down or close your game after 30 min to 2 hours.'],
@@ -416,7 +452,7 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
@@ -438,7 +474,7 @@
   const toggle = (title, sub, on, fn) => { const b = row(title, sub, '<div class="tog' + (on ? ' on' : '') + '"></div>'); b.onclick = () => { on = !on; b.querySelector('.tog').classList.toggle('on', on); fn(on); }; return b; };
   const bars = s => '<span class="bars">' + [25, 50, 75, 100].map(t => '<i class="' + (s >= t - 12 ? 'on' : '') + '" style="height:' + (t / 100 * 16) + 'px"></i>').join('') + '</span>';
   function panel(id, pane) {
-    clearInterval(clockTimer); pane.innerHTML = ''; const h = t => { const x = el('h2', '', t); pane.appendChild(x); }, sub = t => pane.appendChild(el('div', 'sub', t));
+    clearInterval(clockTimer); S.remoteUpd = null; pane.innerHTML = ''; const h = t => { const x = el('h2', '', t); pane.appendChild(x); }, sub = t => pane.appendChild(el('div', 'sub', t));
     if (id === 'wifi') {
       h('Wi-Fi'); const st = el('div', 'sub', 'Checking\u2026'); pane.appendChild(st); const list = el('div');
       const refresh = async () => { const s = await sk.wifi.status(); st.textContent = s.connected ? 'Connected to ' + s.ssid + ' (' + s.signal + '%)' : 'Not connected'; };
@@ -454,19 +490,21 @@
       const top = el('div', 'btnrow'), sb = nav(el('button', 'btn p', 'Scan again')), db = nav(el('button', 'btn', 'Disconnect'));
       sb.onclick = scan; db.onclick = async () => { await sk.wifi.disconnect(); toast('Disconnected'); refresh(); }; top.append(sb, db); pane.append(top, el('div', '', '<div style="height:1rem"></div>'), list); refresh(); scan();
     } else if (id === 'controllers') {
-      h('Controllers'); sub('Press any button on a controller to wake it. Controller 1 is Player 1, controller 2 is Player 2.');
-      const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
-      if (!pads.length) pane.appendChild(el('div', 'sub', 'No controllers detected yet.'));
-      pads.forEach(p => { pane.appendChild(row('Controller ' + (p.index + 1) + ' \u00B7 Player ' + (p.index < 2 ? p.index + 1 : '-'), (p.id || '').slice(0, 70), 'Test rumble', () => { try { const a = p.vibrationActuator; a && a.playEffect('dual-rumble', { duration: 500, strongMagnitude: 1, weakMagnitude: .6 }); toast('Rumble sent'); } catch (_) { toast('This controller has no rumble.'); } })); });
+      h('Controllers'); sub('Each controller belongs to one player. Player 1\u2019s controller can only act for Player 1, and Player 2\u2019s only for Player 2. Moving a controller highlights who is doing it.');
+      const pads = K.pads(), own = K.owners();
+      if (!pads.length) pane.appendChild(el('div', 'sub', 'No controllers detected yet. Press a button on one to wake it.'));
+      pads.forEach(p => { const o = own[p.index]; const who = o === 0 ? 'Player 1' : o === 1 ? 'Player 2' : 'not used'; pane.appendChild(row(K.padName(p.index), (p.id || '').slice(0, 70), who, () => { try { const ac = p.vibrationActuator; ac && ac.playEffect('dual-rumble', { duration: 500, strongMagnitude: 1, weakMagnitude: .6 }); toast('Rumble sent to ' + who); } catch (_) {} })); });
+      pane.appendChild(row('Choose which controller is Player ' + (S.players[1] ? '1 and 2' : '1'), 'Press A on the controller you want, one player at a time', '\u2192', () => assignFlow(0)));
+      if (S.players[1]) pane.appendChild(row('Swap Player 1 and Player 2 controllers', 'One press, no need to pick again', '\u21C4', () => { swapPads(); go('settings', { cat: 'controllers' }); }));
       pane.appendChild(el('div', '', '<div style="height:1rem"></div>'));
       pane.appendChild(row('Pair a Bluetooth controller', 'Pair it right here in SKBox. Hold the controller\u2019s pairing button until its light flashes.', '\u2192', () => go('settings', { cat: 'bluetooth' })));
       pane.appendChild(row('Xbox / PlayStation controller by cable', 'USB controllers work instantly.', ''));
     } else if (id === 'players') {
-      h('Players'); sub('Player 1 uses controller 1. Player 2 uses controller 2 and presses Start to join.');
-      [0, 1].forEach(i => { const p = S.players[i];
-        pane.appendChild(row('Player ' + (i + 1), p ? '@' + p.u + (p.stats ? ' \u00B7 ' + p.stats.playlists + ' playlists \u00B7 ' + p.stats.loved + ' liked songs' : '') : 'Empty', p ? esc(p.nick || p.u) : 'Add', () => go('profiles', { slot: i })));
-        if (p) pane.appendChild(row('Change picture for Player ' + (i + 1), 'Wild West, Blocky World, Neon City and Cozy icons, or your own image', '\u{1F5BC}', () => pfpPicker(i)));
-        if (p && i === 1) pane.appendChild(row('Remove Player 2', '', '', () => { S.players[1] = null; S.active = 0; saveSettings(); go('settings', { cat: 'players' }); })); });
+      h('Players'); sub('Player 2 joins by pressing Start on a second controller. Each player\u2019s controller can only change that player\u2019s own things.');
+      [0, 1].forEach(i => { const p = S.players[i], own = r => { r.dataset.owner = String(i); return r; };
+        pane.appendChild(own(row('Player ' + (i + 1), p ? '@' + p.u + (p.stats ? ' \u00B7 ' + p.stats.playlists + ' playlists \u00B7 ' + p.stats.loved + ' liked songs' : '') : 'Empty', p ? esc(p.nick || p.u) : 'Add', () => go('profiles', { slot: i }))));
+        if (p) pane.appendChild(own(row('Change picture for Player ' + (i + 1), 'Wild West, Blocky World, Neon City and Cozy icons, or your own image', '\u{1F5BC}', () => pfpPicker(i))));
+        if (p && i === 1) pane.appendChild(own(row('Remove Player 2', '', '', () => { S.players[1] = null; S.active = 0; saveSettings(); go('settings', { cat: 'players' }); }))); });
       pane.appendChild(row('Add a profile', 'Sign in with another SKchat account', '+', () => signInFlow(S.players[0] ? 1 : 0)));
       S.profiles.forEach(p => pane.appendChild(row('Remove @' + p.u, 'Signs this profile out of SKBox', '', () => confirm('Remove @' + p.u + '?', 'You can add it again any time.', 'Remove', async () => { await sk.auth.remove(p.u); S.profiles = S.profiles.filter(x => x.u !== p.u); S.players = S.players.map(x => x && x.u === p.u ? null : x); rememberPlayers(); go(S.players[0] ? 'settings' : 'profiles', { cat: 'players', slot: 0 }); }, true))));
     } else if (id === 'apps') {
@@ -536,6 +574,31 @@
       const draw = () => { if (!live.isConnected) return; live.innerHTML = '<b>Browser:</b> ' + K.padCount.api + ' presses &nbsp;&nbsp; <b>Helper:</b> ' + K.padCount.helper + ' presses<br>' + (K.padLog.length ? K.padLog.slice().reverse().slice(0, 8).map(e => esc((LBL[e.a] || e.a) + '  (' + (e.src === 'helper' ? 'helper' : 'browser') + ')')).join('<br>') : 'Waiting for a button\u2026'); };
       K.onPadLog = draw; draw(); if (!S.padTestOn) { S.padTestOn = true; sk.helper.padTest(true); }
       pane.appendChild(row('Reset counters', '', '\u21BA', () => { K.padCount.api = 0; K.padCount.helper = 0; K.padLog.length = 0; draw(); }));
+    } else if (id === 'remote') {
+      h('Remote play'); sub('Play this PC from a Mac or another PC on the same Wi-Fi. It only runs while you turn it on here, and it turns itself off when SKBox closes.');
+      const box = el('div'); pane.appendChild(box); let st = null;
+      const fmtSt = s => s ? [s.w && s.h ? s.w + 'x' + s.h : '', s.fps ? s.fps + ' fps' : '', s.kbps ? (s.kbps / 1000).toFixed(1) + ' Mbps' : '', s.rtt ? s.rtt + ' ms' : '', s.codec || '', s.hw === false && s.codec ? 'software encode' : ''].filter(Boolean).join(' \u00B7 ') : '';
+      const QO = [['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']], PO = [['menus', 'Menus (arrows, Enter)'], ['keys', 'Keyboard and mouse preset'], ['off', 'Off']];
+      const render = s => {
+        st = s; const fk = K.current && K.current() && K.current().dataset ? K.current().dataset.rk : ''; box.innerHTML = '';
+        if (!s.supported) { box.appendChild(row('Remote play host needs Windows', 'Use SKBox on your Windows PC as the host. This device can still be the player.', '', null)); return; }
+        const t = toggle('Remote play', s.on ? 'ON. Other devices on your Wi-Fi can see this PC.' : 'OFF. Nothing is listening.', !!s.on, async v => { const r = await sk.remote.set(v); if (!r.ok) { toast(r.error || 'Could not change Remote play'); sk.remote.state().then(render); } else if (v) toast('Remote play is on'); });
+        t.dataset.rk = 'tog'; t.dataset.first = ''; box.appendChild(t);
+        if (s.on) {
+          const addr = (s.ips[0] || 'this-pc') + ':' + s.port;
+          box.appendChild(row('Connect from your Mac or PC', 'Open SKBox Remote and pick this PC, or type this address in any browser: http://' + addr, addr, null));
+          const pr = row('PIN', 'Type this on the other device. Press A for a new PIN.', (s.pin || '').replace(/^(\d{3})(\d{3})$/, '$1 $2'), () => sk.remote.newPin()); pr.dataset.rk = 'pin'; pr.querySelector('.r').style.cssText = 'font-size:1.6rem;font-weight:800;letter-spacing:.12em'; box.appendChild(pr);
+          const cr = s.client ? row(s.client.name + ' is playing', (fmtSt(s.stats) || 'Starting stream\u2026') + '. Press A to disconnect.', 'Disconnect', () => sk.remote.kick()) : row('Waiting for a player', 'Nobody is connected.', '', null); cr.dataset.rk = 'client'; box.appendChild(cr);
+          if (!s.helper) box.appendChild(row('Keyboard and mouse control is not available', 'The controller helper is not running (see Xbox / PS button). You can still watch and hear the game.', '\u26A0', null));
+        }
+        const q = cyc('Quality', 'Lower is smoother on weak Wi-Fi. 1080p 60 needs 5 GHz Wi-Fi or a cable on the PC.', QO, () => s.cfg.quality, v => { s.cfg.quality = v; sk.remote.cfg({ quality: v }); }); q.dataset.rk = 'q'; box.appendChild(q);
+        const ai = toggle('Let the other device use keyboard and mouse', 'Off = view only', !!s.cfg.allowInput, v => { s.cfg.allowInput = v; sk.remote.cfg({ allowInput: v }); }); ai.dataset.rk = 'ai'; box.appendChild(ai);
+        const pm = cyc('Controller on the other device', 'It becomes keyboard and mouse input here. Real controller pass-through needs a virtual controller driver.', PO, () => s.cfg.padMode, v => { s.cfg.padMode = v; sk.remote.cfg({ padMode: v }); }); pm.dataset.rk = 'pm'; box.appendChild(pm);
+        box.appendChild(row('First time?', 'Windows may ask to let SKBox use private networks. Choose Allow. Both devices must be on the same Wi-Fi.', '', null));
+        box.appendChild(row('Get the SKBox Remote app', 'Mac and Windows downloads are on the SKBox GitHub releases page (look for \u201Cremote-v\u201D). Or open the address above in a browser.', '', null));
+        if (fk) { const n = box.querySelector('[data-rk="' + fk + '"]'); if (n) focus(n); }
+      };
+      S.remoteUpd = render; sk.remote.state().then(s => { if (box.isConnected) render(s); });
     } else if (id === 'bluetooth') {
       h('Bluetooth'); sub('Pair controllers, headphones, speakers and keyboards without leaving SKBox. Put the device in pairing mode first (hold its pairing button until the light flashes).');
       const mine = el('div'), near = el('div'), msg = el('div', 'sub', ''); let busyNow = false;

@@ -35,6 +35,10 @@ public static class SkHelper
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
     [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern void SwitchToThisWindow(IntPtr h, bool alt);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
@@ -89,8 +93,83 @@ public static class SkHelper
     static volatile bool quit = false;
     static void ReaderLoop()
     {
-        try { string line; while ((line = Console.In.ReadLine()) != null) { lock (cmds) { cmds.Enqueue(line.Trim()); } } } catch (Exception) { }
+        try
+        {
+            string line;
+            while ((line = Console.In.ReadLine()) != null)
+            {
+                line = line.Trim();
+                // remote-play input is injected right here (not in the 25 ms main loop) to keep latency low
+                if (line.Length > 1 && line[0] == 'I' && TryInput(line)) continue;
+                lock (cmds) { cmds.Enqueue(line); }
+            }
+        }
+        catch (Exception) { }
         quit = true;
+    }
+
+    // ---------------- injected input (Remote play) ----------------
+    [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort wVk, wScan; public uint dwFlags, time; public IntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Explicit)] struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+    [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public INPUTUNION u; }
+    [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+    static readonly object inLock = new object();
+    static readonly HashSet<int> heldKeys = new HashSet<int>();
+    static readonly bool[] heldBtn = new bool[5];
+    static void SendMouse(int dx, int dy, uint data, uint flags)
+    {
+        INPUT[] a = new INPUT[1]; a[0].type = 0; a[0].u.mi.dx = dx; a[0].u.mi.dy = dy; a[0].u.mi.mouseData = data; a[0].u.mi.dwFlags = flags;
+        SendInput(1, a, Marshal.SizeOf(typeof(INPUT)));
+    }
+    static void SendKey(int sc, int ext, bool down)
+    {
+        INPUT[] a = new INPUT[1]; a[0].type = 1; a[0].u.ki.wScan = (ushort)sc; a[0].u.ki.dwFlags = 0x0008 | (ext != 0 ? 0x0001u : 0u) | (down ? 0u : 0x0002u);
+        SendInput(1, a, Marshal.SizeOf(typeof(INPUT)));
+        int id = sc | (ext != 0 ? 0x100 : 0); if (down) heldKeys.Add(id); else heldKeys.Remove(id);
+    }
+    static bool TryInput(string line)
+    {
+        string[] p = line.Split(' '); int a, b, c;
+        try
+        {
+            lock (inLock)
+            {
+                switch (p[0])
+                {
+                    case "IM": // relative mouse move
+                        if (p.Length > 2 && int.TryParse(p[1], out a) && int.TryParse(p[2], out b)) { SendMouse(Math.Max(-3000, Math.Min(3000, a)), Math.Max(-3000, Math.Min(3000, b)), 0, 0x0001); return true; }
+                        return false;
+                    case "IA": // absolute mouse move, 0..65535 over the primary screen
+                        if (p.Length > 2 && int.TryParse(p[1], out a) && int.TryParse(p[2], out b)) { SendMouse(Math.Max(0, Math.Min(65535, a)), Math.Max(0, Math.Min(65535, b)), 0, 0x8001); return true; }
+                        return false;
+                    case "IB": // button: 0 left 1 middle 2 right 3 back 4 forward, then 1 = down 0 = up
+                        if (p.Length > 2 && int.TryParse(p[1], out a) && int.TryParse(p[2], out b) && a >= 0 && a <= 4)
+                        {
+                            bool dn = b != 0; heldBtn[a] = dn; uint f = 0, d = 0;
+                            if (a == 0) f = dn ? 0x0002u : 0x0004u; else if (a == 2) f = dn ? 0x0008u : 0x0010u; else if (a == 1) f = dn ? 0x0020u : 0x0040u;
+                            else { f = dn ? 0x0080u : 0x0100u; d = a == 3 ? 1u : 2u; }
+                            SendMouse(0, 0, d, f); return true;
+                        }
+                        return false;
+                    case "IW": // vertical wheel (positive = away from you / scroll up)
+                        if (p.Length > 1 && int.TryParse(p[1], out a)) { SendMouse(0, 0, unchecked((uint)Math.Max(-2400, Math.Min(2400, a))), 0x0800); return true; }
+                        return false;
+                    case "IH": // horizontal wheel
+                        if (p.Length > 1 && int.TryParse(p[1], out a)) { SendMouse(0, 0, unchecked((uint)Math.Max(-2400, Math.Min(2400, a))), 0x1000); return true; }
+                        return false;
+                    case "IK": // key by scancode: sc ext down
+                        if (p.Length > 3 && int.TryParse(p[1], out a) && int.TryParse(p[2], out b) && int.TryParse(p[3], out c) && a > 0 && a < 0x80) { SendKey(a, b, c != 0); return true; }
+                        return false;
+                    case "IR": // release everything that is held
+                        foreach (int id in new List<int>(heldKeys)) SendKey(id & 0xFF, (id & 0x100) != 0 ? 1 : 0, false);
+                        for (int i = 0; i < 5; i++) if (heldBtn[i]) { heldBtn[i] = false; uint f2 = i == 0 ? 0x0004u : i == 2 ? 0x0010u : i == 1 ? 0x0040u : 0x0100u; SendMouse(0, 0, i == 3 ? 1u : i == 4 ? 2u : 0u, f2); }
+                        return true;
+                }
+            }
+        }
+        catch (Exception) { }
+        return false;
     }
 
     // ---------------- window watching ----------------
@@ -158,7 +237,36 @@ public static class SkHelper
     {
         if (IsIconic(h)) ShowWindow(h, 9);
         keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero);   // tap ALT so Windows allows the focus change
-        SetForegroundWindow(h);
+        IntPtr fg = GetForegroundWindow(); uint fpid; uint ft = fg == IntPtr.Zero ? 0 : GetWindowThreadProcessId(fg, out fpid), me = GetCurrentThreadId();
+        bool att = false; if (ft != 0 && ft != me) att = AttachThreadInput(me, ft, true);
+        BringWindowToTop(h); SetForegroundWindow(h);
+        if (att) AttachThreadInput(me, ft, false);
+        if (GetForegroundWindow() != h) SwitchToThisWindow(h, true);
+    }
+    // What is in front right now (sent with every Xbox / PS button press so the menu knows which game to step in front of).
+    static string FgInfo()
+    {
+        try
+        {
+            IntPtr fg = GetForegroundWindow(); if (fg == IntPtr.Zero) return " 0 0 0";
+            uint pid; GetWindowThreadProcessId(fg, out pid); string cls = ClassOf(fg); RECT m;
+            bool fs = !(cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd") && Covers(fg, out m);
+            return " " + fg.ToInt64().ToString(CultureInfo.InvariantCulture) + " " + pid + " " + (fs ? 1 : 0);
+        }
+        catch (Exception) { return " 0 0 0"; }
+    }
+    // Minimizing the game makes an exclusive-fullscreen game give the screen back, so the menu can be seen.
+    static void MinimizeWin(IntPtr h) { if (!IsWindow(h)) return; ShowWindow(h, 11); if (!IsIconic(h)) PostMessage(h, 0x0112, new IntPtr(0xF020), IntPtr.Zero); }
+    static void RestoreWin(IntPtr h) { if (!IsWindow(h)) return; ShowWindow(h, 9); ForceForeground(h); Thread.Sleep(150); if (GetForegroundWindow() != h) ForceForeground(h); }
+    // Black screen while streaming? Leave exclusive fullscreen (Alt+Enter), then make the window borderless.
+    static void FixFs(IntPtr h)
+    {
+        if (h == IntPtr.Zero) h = GetForegroundWindow();   // 0 = whatever is in front
+        if (!IsWindow(h)) { Emit("FS fix fail"); return; }
+        ForceForeground(h); Thread.Sleep(350);
+        RECT mon; bool covers = Covers(h, out mon); int style = GetWindowLong(h, -16); bool caption = (style & 0x00C00000) == 0x00C00000;
+        if (covers && !caption) { Tap(0x0D, true); Emit("FS fix altenter"); Thread.Sleep(1500); }
+        RECT t; if (Borderless(h, "auto", out t)) Emit("FS fix borderless"); else Emit("FS fix fail");
     }
     static void Tap(byte vk, bool alt)
     {
@@ -259,10 +367,10 @@ public static class SkHelper
     static void Press(string key, bool guide, bool chord)
     {
         PadMem m = Mem(key);
-        if (guide && !m.GuideDown) Emit("GUIDE " + key);
+        if (guide && !m.GuideDown) Emit("GUIDE " + key + FgInfo());
         if (guide != m.GuideDown) Emit("DIAG guide " + key + " " + (guide ? "down" : "up"));
         m.GuideDown = guide;
-        if (chord) { if (m.Chord == DateTime.MinValue) m.Chord = DateTime.UtcNow; else if (!m.Fired && (DateTime.UtcNow - m.Chord).TotalMilliseconds > 1200) { m.Fired = true; Emit("GUIDE " + key + "chord"); } }
+        if (chord) { if (m.Chord == DateTime.MinValue) m.Chord = DateTime.UtcNow; else if (!m.Fired && (DateTime.UtcNow - m.Chord).TotalMilliseconds > 1200) { m.Fired = true; Emit("GUIDE " + key + "chord" + FgInfo()); } }
         else { m.Chord = DateTime.MinValue; m.Fired = false; }
     }
     static int xmode = 0;   // 0 = Ex via 1_4, 1 = Ex via 1_3, 2 = plain
@@ -376,6 +484,9 @@ public static class SkHelper
                     else if (p[0] == "FOCUS" && p.Length > 1) { long hv; if (long.TryParse(p[1], out hv) && IsWindow(new IntPtr(hv))) ForceForeground(new IntPtr(hv)); }
                     else if (p[0] == "CLOSE" && p.Length > 1) { long hv2; if (long.TryParse(p[1], out hv2) && IsWindow(new IntPtr(hv2))) PostMessage(new IntPtr(hv2), 0x0010, IntPtr.Zero, IntPtr.Zero); }
                     else if (p[0] == "PING") Emit("PONG");
+                    else if (p[0] == "MIN" && p.Length > 1) { long hv3; if (long.TryParse(p[1], out hv3)) MinimizeWin(new IntPtr(hv3)); }
+                    else if (p[0] == "RESTORE" && p.Length > 1) { long hv4; if (long.TryParse(p[1], out hv4)) { IntPtr hh4 = new IntPtr(hv4); Thread t4 = new Thread(delegate() { RestoreWin(hh4); }); t4.IsBackground = true; t4.Start(); } }
+                    else if (p[0] == "FIXFS" && p.Length > 1) { long hv5; if (long.TryParse(p[1], out hv5)) { IntPtr hh5 = new IntPtr(hv5); Thread t5 = new Thread(delegate() { FixFs(hh5); }); t5.IsBackground = true; t5.Start(); } }
                     else if (p[0] == "PADIN") padIn = p.Length > 1 && p[1] == "1";
                     else if (p[0] == "QUIT") quit = true;
                 }

@@ -1,7 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, safeStorage, Tray, Menu, Notification, nativeImage, screen, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, safeStorage, Tray, Menu, Notification, nativeImage, screen, desktopCapturer, session } = require('electron');
 const { spawn, execFile } = require('child_process');
 const path = require('path'), fs = require('fs'), crypto = require('crypto'), os = require('os');
-const bt = require('./lib/bluetooth'), wifi = require('./lib/wifi'), covers = require('./lib/covers'), { HelperClient } = require('./lib/helperClient');
+const { RemoteHost } = require('./lib/remote'), { PadMapper } = require('./lib/padmap'), bt = require('./lib/bluetooth'), wifi = require('./lib/wifi'), covers = require('./lib/covers'), { HelperClient } = require('./lib/helperClient');
 const store = require('./lib/store').make(app.getPath('userData'));
 
 const API_KEY = 'AIzaSyAm2A3omt2z1dnK2Z_TdwPk1GTYuYQYdUQ', PROJECT = 'sksmpmc-e4682';
@@ -14,7 +14,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const batteries = {};
-let overlayOpaque = false, padTest = false;
+let overlayOpaque = false, padTest = false, fgTarget = null, overlayTarget = null;
 const helperInfo = { error: '', lastGuide: 0, guides: 0, lastKey: '', diag: [] };
 let win = null, tray = null, kiosk = true, helper = null, game = null, backdrop = null, overlayWin = null, overlayOpen = false, musicWin = null, musicUser = '', musicVisible = false, padCount = 0;
 const send = (ch, ...a) => { try { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); } catch {} try { if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send(ch, ...a); } catch {} };
@@ -149,7 +149,7 @@ function endGame() {
 }
 ipcMain.handle('game:state', () => gameState());
 ipcMain.handle('stats:touch', (_e, id) => { statsTouch(String(id || '').slice(0, 60), 0); return true; });
-ipcMain.handle('game:resume', () => { if (!game) return false; hideMusic(false); closeOverlay(false); stepAside(); if (helper && game.hwnd) helper.focus(game.hwnd); return true; });
+ipcMain.handle('game:resume', () => { if (!game) return false; hideMusic(false); closeOverlay(false); stepAside(); if (helper && game.hwnd) helper.restore(game.hwnd); return true; });
 ipcMain.handle('game:close', async () => { if (!game) return { ok: false }; const name = game.name, found = await killGame(); endGame(); return { ok: true, found, name }; });
 ipcMain.handle('app:launch', async (_e, a) => {
   const target = String(a.exe || '').trim().replace(/^"|"$/g, '');
@@ -184,7 +184,11 @@ const helperScript = () => path.join(__dirname, 'native', 'helper.ps1').replace(
 function startHelper() {
   if (!isWin) return;
   helper = new HelperClient({ script: helperScript() });
-  helper.on('guide', k => { helperInfo.lastGuide = Date.now(); helperInfo.guides++; helperInfo.lastKey = k; toggleOverlay(); });
+  helper.on('guide', (k, hwnd, pid, fsFlag) => {
+    helperInfo.lastGuide = Date.now(); helperInfo.guides++; helperInfo.lastKey = k;
+    fgTarget = hwnd && hwnd !== '0' && pid && pid !== process.pid ? { hwnd, pid, fs: !!fsFlag, at: Date.now() } : null;
+    toggleOverlay();
+  });
   helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
   helper.on('ready', () => { helperInfo.error = ''; if (overlayOpen) helper.padIn(true); });
   helper.on('padin', (slot, act) => {
@@ -225,15 +229,21 @@ function overlayStateObj(opts) {
 function openOverlay(opts) {
   const w = ensureOverlay(), d = displayNow(); try { w.setBounds(d.bounds); } catch {}
   overlayOpen = true; if (helper) helper.padIn(true);
+  // Whatever fullscreen thing is in front (a game SKBox started, or any other): minimize it so even exclusive fullscreen lets go of the screen.
+  overlayTarget = fgTarget && Date.now() - fgTarget.at < 1500 ? fgTarget : (game && game.hwnd ? { hwnd: String(game.hwnd), fs: true } : null); fgTarget = null;
+  const moveAside = !!(overlayTarget && overlayTarget.fs && overlayOpaque && helper && helper.ready);
+  if (moveAside) helper.minimize(overlayTarget.hwnd);
   const show = () => { try { w.setAlwaysOnTop(true, 'screen-saver'); w.show(); w.moveTop(); w.focus(); if (helper) helper.focus(nativeHwnd(w)); w.webContents.send('overlay:open', overlayStateObj(opts)); } catch {} };
-  if (w.webContents.isLoading()) w.webContents.once('did-finish-load', show); else show();
+  const go = () => { if (w.webContents.isLoading()) w.webContents.once('did-finish-load', show); else show(); };
+  if (moveAside) setTimeout(go, 220); else go();
 }
 function closeOverlay(refocus) {
   if (helper) helper.padIn(padTest);
   if (!overlayWin || overlayWin.isDestroyed()) { overlayOpen = false; return; }
   if (!overlayOpen && !overlayWin.isVisible()) return;
   overlayOpen = false; try { overlayWin.webContents.send('overlay:close'); overlayWin.hide(); } catch {}
-  if (refocus) { if (musicVisible && musicWin && !musicWin.isDestroyed()) { musicWin.focus(); if (helper) helper.focus(nativeHwnd(musicWin)); } else if (game && game.hwnd && helper) helper.focus(game.hwnd); }
+  const tgt = overlayTarget; overlayTarget = null;
+  if (refocus) { if (musicVisible && musicWin && !musicWin.isDestroyed()) { musicWin.focus(); if (helper) helper.focus(nativeHwnd(musicWin)); } else if (tgt && helper && helper.ready) helper.restore(tgt.hwnd); else if (game && game.hwnd && helper) helper.focus(game.hwnd); }
 }
 let overlayStamp = 0;
 // Both the native helper and the browser can see the same Xbox / PS press; ignore the second one.
@@ -308,7 +318,7 @@ ipcMain.handle('overlay:osk-result', (_e, r) => {
 // ================= Xbox button: take it back from Game Bar =================
 // Windows opens Xbox Game Bar when you press the controller's Xbox button, and then SKBox never sees it.
 // This turns off just that one shortcut (Windows Settings > Gaming > Xbox Game Bar) for the current user.
-function takeGuide(on) { if (!isWin) return; execFile('reg', ['add', 'HKCU\\Software\\Microsoft\\GameBar', '/v', 'UseNexusForGameBarEnabled', '/t', 'REG_DWORD', '/d', on ? '0' : '1', '/f'], { windowsHide: true }, () => {}); }
+function takeGuide(on) { if (!isWin) return; for (const v of ['UseNexusForGameBarEnabled', 'GamepadNexusChordEnabled']) execFile('reg', ['add', 'HKCU\\Software\\Microsoft\\GameBar', '/v', v, '/t', 'REG_DWORD', '/d', on ? '0' : '1', '/f'], { windowsHide: true }, () => {}); }
 ipcMain.handle('helper:status', () => ({ ready: !!(helper && helper.ready), error: helperInfo.error, lastGuide: helperInfo.lastGuide, guides: helperInfo.guides, lastKey: helperInfo.lastKey, diag: helperInfo.diag.slice(), pads: padCount, batteries, ovMode: store.read('settings', {}).ovMode || 'auto', takeGuide: store.read('settings', {}).takeGuide !== false }));
 ipcMain.handle('helper:padTest', (_e, on) => { padTest = !!on; if (helper) helper.padIn(padTest || overlayOpen); return padTest; });
 ipcMain.handle('helper:testMenu', () => { if (!overlayOpen) toggleOverlay(); return true; });
@@ -381,6 +391,102 @@ ipcMain.handle('sys:volume', (_e, dir) => { if (!isWin) return false; const k = 
 ipcMain.handle('sys:startup', (_e, on) => { if (isWin || process.platform === 'darwin') app.setLoginItemSettings({ openAtLogin: !!on }); const s = store.read('settings', {}); s.startup = !!on; store.write('settings', s); return !!on; });
 ipcMain.handle('sys:kiosk', (_e, on) => { kiosk = !!on; const s = store.read('settings', {}); s.windowed = !on; store.write('settings', s); try { win.setKiosk(kiosk); win.setFullScreen(kiosk); } catch {} return kiosk; });
 
+// ================= Remote play (host) =================
+// Off until the user turns it on in Settings > Remote play. While off there is no server, no open port and no broadcast reply.
+let remote = null, remoteWin = null, remoteLoaded = null, remoteStats = null, mapper = null, mapperT = null, inCount = 0, inWindow = 0;
+const answers = {};
+const REMOTE_DIR = () => path.join(__dirname, '..', 'renderer', 'remote');
+const rset = () => { const s = store.read('settings', {}); return { quality: ['low', 'balanced', 'high'].includes(s.remoteQuality) ? s.remoteQuality : 'balanced', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
+const remoteState = () => Object.assign(remote ? remote.state() : { on: false, port: 0, pin: '', ips: [], client: null }, { stats: remoteStats, cfg: rset(), helper: !!(helper && helper.ready), supported: isWin });
+const pushRemote = () => send('remote:state', remoteState());
+const hin = line => { if (helper && helper.ready) helper.send(line); };
+function ensureRemoteWin() {
+  if (remoteWin && !remoteWin.isDestroyed()) return remoteLoaded;
+  const ses = session.fromPartition('skremote');
+  ses.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'media' || perm === 'display-capture'));
+  ses.setDisplayMediaRequestHandler(async (_req, cb) => {
+    try { const d = displayNow(), srcs = await desktopCapturer.getSources({ types: ['screen'] }); const s0 = srcs.find(x => String(x.display_id) === String(d.id)) || srcs[0]; cb(s0 ? { video: s0, audio: 'loopback' } : {}); } catch { cb({}); }
+  });
+  remoteWin = new BrowserWindow({ show: false, width: 320, height: 240, webPreferences: { preload: path.join(__dirname, 'remotePreload.js'), partition: 'skremote', contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
+  remoteWin.on('closed', () => { remoteWin = null; remoteLoaded = null; });
+  remoteLoaded = new Promise(res => remoteWin.webContents.once('did-finish-load', res)); remoteWin.loadFile(path.join(REMOTE_DIR(), 'host.html'));
+  return remoteLoaded;
+}
+function startMapper() {
+  stopMapper();
+  mapper = new PadMapper({ key: (sc, ext, d) => hin('IK ' + sc + ' ' + ext + ' ' + d), mouse: (dx, dy) => hin('IM ' + dx + ' ' + dy), button: (b, d) => hin('IB ' + b + ' ' + d) });
+  mapper.setMode(rset().padMode); mapperT = setInterval(() => { try { mapper && mapper.tick(Date.now()); } catch {} }, 16);
+}
+function stopMapper() { clearInterval(mapperT); mapperT = null; if (mapper) { try { mapper.reset(); } catch {} mapper = null; } }
+async function remoteCreateSession({ sid, name, offer }) {
+  await ensureRemoteWin(); const cfg = rset();
+  const p = new Promise((resolve, reject) => { const t = setTimeout(() => { delete answers[sid]; reject(new Error('The PC took too long to start the stream.')); }, 20000); answers[sid] = { resolve: d => { clearTimeout(t); delete answers[sid]; d && d.error ? reject(new Error(d.error)) : resolve(d); } }; });
+  remoteWin.webContents.executeJavaScript('window.__skhostOffer(' + JSON.stringify({ sid, offer, cfg }) + ')', true).catch(() => {});
+  const ans = await p; startMapper(); remoteStats = null;
+  try { new Notification({ title: 'Remote play', body: name + ' connected to SKBox' }).show(); } catch {}
+  return ans;
+}
+const toClient = o => { try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:toClient', JSON.stringify(o)); } catch {} };
+let frozenCount = 0, frozenTold = false;
+// "Black screen" fix: leave exclusive fullscreen (Alt+Enter) and make the game borderless, which the screen capture can see.
+function remoteFixFs() {
+  if (!helper || !helper.ready) { toClient({ t: 'notice', text: 'The PC cannot do that right now (controller helper not running).' }); return; }
+  helper.fixFullscreen(game && game.hwnd ? game.hwnd : 0); toClient({ t: 'notice', text: 'Trying to fix the black screen\u2026 give it a few seconds.' });
+}
+function remoteEndSession() {
+  frozenCount = 0; frozenTold = false; stopMapper(); remoteStats = null; hin('IR');
+  try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:kick'); } catch {}
+}
+function remoteInit() {
+  if (remote) return remote;
+  remote = new RemoteHost({ name: os.hostname(), version: app.getVersion(), webDir: REMOTE_DIR(), createSession: remoteCreateSession, endSession: () => remoteEndSession() });
+  remote.on('state', pushRemote);
+  remote.on('ended', (c, why) => { try { new Notification({ title: 'Remote play', body: (c && c.name ? c.name + ' disconnected' : 'Disconnected') }).show(); } catch {} });
+  return remote;
+}
+ipcMain.handle('remote:state', () => remoteState());
+ipcMain.handle('remote:set', async (_e, on) => {
+  if (!isWin) return { ok: false, error: 'Remote play host needs Windows.' };
+  try {
+    if (on) await remoteInit().start(); else { if (remote) remote.stop(); if (remoteWin && !remoteWin.isDestroyed()) { try { remoteWin.destroy(); } catch {} } remoteWin = null; remoteLoaded = null; }
+    pushRemote(); return { ok: true, state: remoteState() };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+ipcMain.handle('remote:pin', () => { if (remote && remote.on_) remote.newPin(); return remoteState(); });
+ipcMain.handle('remote:kick', () => { if (remote) remote.endSession('Disconnected from SKBox'); return remoteState(); });
+ipcMain.handle('remote:cfg', (_e, patch) => {
+  const s = store.read('settings', {}); patch = patch || {};
+  if (['low', 'balanced', 'high'].includes(patch.quality)) s.remoteQuality = patch.quality;
+  if (typeof patch.allowInput === 'boolean') s.remoteInput = patch.allowInput;
+  if (['menus', 'keys', 'off'].includes(patch.padMode)) { s.remotePad = patch.padMode; if (mapper) mapper.setMode(patch.padMode); }
+  store.write('settings', s); pushRemote(); return remoteState();
+});
+const fromRemoteWin = e => remoteWin && !remoteWin.isDestroyed() && e.sender === remoteWin.webContents;
+ipcMain.on('remote:answer', (e, sid, d) => { if (fromRemoteWin(e) && answers[sid]) answers[sid].resolve(d); });
+ipcMain.on('remote:ended', (e, sid) => { if (fromRemoteWin(e) && remote) remote.sessionEnded(sid); });
+ipcMain.on('remote:stats', (e, st) => { if (!fromRemoteWin(e) || !st || typeof st !== 'object') return;
+  if (game && (st.fps | 0) <= 1 && (st.kbps | 0) < 150) { if (++frozenCount >= 6 && !frozenTold) { frozenTold = true; toClient({ t: 'notice', text: 'Picture black or frozen? Use \u201CFix black screen\u201D in the top bar.' }); } } else frozenCount = 0;
+  remoteStats = { fps: st.fps | 0, kbps: st.kbps | 0, rtt: st.rtt | 0, codec: String(st.codec || '').slice(0, 12), w: st.w | 0, h: st.h | 0, limit: String(st.limit || '').slice(0, 12), hw: !!st.hw }; pushRemote(); });
+ipcMain.on('remote:input', (e, raw) => {
+  if (!fromRemoteWin(e) || !remote || !remote.session || remote.session.pending || typeof raw !== 'string' || raw.length > 600) return;
+  const cfg = rset(); if (!cfg.allowInput || !helper || !helper.ready) return;
+  const now = Date.now(); if (now - inWindow > 1000) { inWindow = now; inCount = 0; } if (++inCount > 3000) return;   // flood guard
+  let m; try { m = JSON.parse(raw); } catch { return; } if (!m || typeof m.t !== 'string') return;
+  const I = v => Math.round(+v) || 0, cl = (v, a, b) => Math.max(a, Math.min(b, I(v)));
+  switch (m.t) {
+    case 'ma': hin('IA ' + cl(+m.x * 65535, 0, 65535) + ' ' + cl(+m.y * 65535, 0, 65535)); break;
+    case 'mm': hin('IM ' + cl(m.dx, -2000, 2000) + ' ' + cl(m.dy, -2000, 2000)); break;
+    case 'mb': hin('IB ' + cl(m.b, 0, 4) + ' ' + (m.d ? 1 : 0)); break;
+    case 'mw': hin('IW ' + cl(m.dy, -2400, 2400)); break;
+    case 'mh': hin('IH ' + cl(m.dx, -2400, 2400)); break;
+    case 'k': { const sc = I(m.sc); if (sc > 0 && sc < 0x80) hin('IK ' + sc + ' ' + (m.ext ? 1 : 0) + ' ' + (m.d ? 1 : 0)); break; }
+    case 'ra': hin('IR'); if (mapper) mapper.reset(); break;
+    case 'fixfs': remoteFixFs(); break;
+    case 'p': if (mapper && cfg.padMode !== 'off') mapper.frame(m); break;
+  }
+});
+app.on('before-quit', () => { try { remote && remote.stop(); } catch {} });
+
 // ================= tray, shortcuts, updates =================
 function setupTray() {
   try {
@@ -401,6 +507,7 @@ function setupUpdates() {
   } catch {}
 }
 app.on('second-instance', comeBack);
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 app.whenReady().then(() => {
   const st = store.read('settings', {});
   if (st.startup === undefined && (isWin || process.platform === 'darwin')) { app.setLoginItemSettings({ openAtLogin: true }); st.startup = true; store.write('settings', st); }

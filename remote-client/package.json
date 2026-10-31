@@ -1,0 +1,81 @@
+{
+  "name": "skbox-remote",
+  "productName": "SKBox Remote",
+  "version": "1.1.0",
+  "description": "Play your SKBox PC from a Mac or another PC on the same Wi-Fi",
+  "main": "main.js",
+  "author": "SK",
+  "license": "UNLICENSED",
+  "scripts": {
+    "prep": "node prep.js",
+    "start": "node prep.js && electron .",
+    "dist": "node prep.js && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "28.3.3",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "net.skbox.remote",
+    "productName": "SKBox Remote",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "web/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.games",
+      "icon": "build/icon.png",
+      "identity": null,
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "SKBox-Remote-${version}-mac-intel.${ext}"
+    },
+    "dmg": {
+      "sign": false
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "SKBox-Remote-${version}-win.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "SKBox Remote",
+      "artifactName": "SKBox-Remote-Setup-${version}.${ext}"
+    }
+  }
+}
