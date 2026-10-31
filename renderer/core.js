@@ -149,7 +149,9 @@
     if (a === 'prev' || a === 'next') { if (!top && S.bumper) S.bumper(a); return; }
     if (a === 'start') { if (!top && S.startFn) S.startFn(); return; }
   };
+  K.fmtTime = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: (S.settings && S.settings.clock24) ? false : undefined });
   window.addEventListener('keydown', e => {
+    if (K.touch()) { e.preventDefault(); return; }
     const top = layers().lastElementChild;
     if (top && top._key && top.querySelector('.osk')) { if (top._key(e)) { e.preventDefault(); return; } }
     const t = e.target && e.target.tagName; if (t === 'INPUT' || t === 'TEXTAREA' || t === 'WEBVIEW') return;
@@ -157,23 +159,41 @@
     const m = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok', ' ': 'ok', Escape: 'back', Backspace: 'back', Tab: e.shiftKey ? 'prev' : 'next', F2: 'opts', ContextMenu: 'opts', Home: 'start' }[e.key];
     if (m) { e.preventDefault(); K.act(m); }
   });
-  window.addEventListener('mousemove', () => document.body.classList.add('mouse'));
+  window.addEventListener('mousemove', () => { document.body.classList.add('mouse'); K.touch(); });
+  window.addEventListener('mousedown', () => { K.touch(); });
   window.addEventListener('keydown', () => document.body.classList.remove('mouse'));
 
   // ---------- gamepads ----------
   const ps = {}; let lastN = 0;
-  function fire(a, idx) {
+  // Two paths feed the controller: the browser (needs window focus) and the native helper (does not). Both go through
+  // padEvent(); an event seen on both paths within 140 ms is only used once.
+  const seenAt = {}; K.padLog = []; K.padCount = { api: 0, helper: 0 };
+  K.lastInput = Date.now();
+  K.touch = () => { K.lastInput = Date.now(); if (K.saverOn && K.saverOff) { K.saverOff(); return true; } return false; };
+  const SWAPS = { ok: 'back', back: 'ok', alt: 'opts', opts: 'alt' };
+  K.rumble = idx => { try { if (S.settings && S.settings.rumble === false) return; const gp = navigator.getGamepads()[idx]; if (gp && gp.vibrationActuator && gp.vibrationActuator.playEffect) gp.vibrationActuator.playEffect('dual-rumble', { duration: 35, strongMagnitude: 0, weakMagnitude: 0.35 }).catch(() => {}); } catch (_) {} };
+  function padEvent(src, a, idx) {
+    const now = performance.now(), other = src === 'api' ? 'helper' : 'api';
+    K.padCount[src]++; K.padLog.push({ src, a, t: Date.now() }); if (K.padLog.length > 14) K.padLog.shift(); if (K.onPadLog) K.onPadLog();
+    if (seenAt[other + a] && now - seenAt[other + a] < 140) return;
+    seenAt[src + a] = now;
+    if (S.screen === 'web' && !layers().lastElementChild) return;
+    if (K.touch()) return;   // woke the screensaver; swallow this press
     document.body.classList.remove('mouse');
-    if (idx <= 1 && S.players[1]) S.active = idx; else S.active = 0;
-    try { const gp = navigator.getGamepads()[idx], t = gp && /054c|dualshock|dualsense|wireless controller|playstation/i.test(gp.id || '') ? 'ps' : 'xbox'; if (t !== K.padType) { K.padType = t; K.hints(lastHints); } } catch (_) {}
-    if (K.onPad) K.onPad(a, idx);
-    K.act(a);
+    S.active = idx === 1 && S.players[1] ? 1 : 0;
+    if (src === 'api') { try { const gp = navigator.getGamepads()[idx], t = gp && /054c|dualshock|dualsense|wireless controller|playstation/i.test(gp.id || '') ? 'ps' : 'xbox'; if (t !== K.padType) { K.padType = t; K.hints(lastHints); } } catch (_) {} }
+    if (a === 'select') return;
+    const st = S.settings || {}; let m = a;
+    if (st.swapAB && (a === 'ok' || a === 'back')) m = SWAPS[a]; else if (st.swapXY && (a === 'alt' || a === 'opts')) m = SWAPS[a];
+    if (K.onPad) K.onPad(m, idx);
+    if (m === 'ok') K.rumble(idx);
+    K.act(m);
   }
+  function fire(a, idx) { padEvent('api', a, idx); }
   function poll(ts) {
     requestAnimationFrame(poll);
     if (S.screen === 'web' && !layers().lastElementChild) return;
     const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
-    if (K.padFromHelper && S.screen === 'overlay') return;   // the helper feeds the menu instead
     S.pads = pads.map(p => p.index);
     if (pads.length !== lastN) { lastN = pads.length; if (K.onPadCount) K.onPadCount(lastN); }
     for (const p of pads) {
@@ -188,14 +208,9 @@
       st.b = b;
     }
   }
-  // Controller input that arrives from the native helper (used by the SK menu: no window focus needed)
+  // Controller input that arrives from the native helper (works without window focus, e.g. over a fullscreen game)
   K.padFromHelper = false;
-  K.padIn = (slot, a) => {
-    if (S.screen === 'web' && !layers().lastElementChild) return;
-    document.body.classList.remove('mouse'); S.active = slot === 1 && S.players[1] ? 1 : 0;
-    if (a === 'select') return;
-    if (K.onPad) K.onPad(a, slot); K.act(a);
-  };
+  K.padIn = (slot, a) => padEvent('helper', a, slot);
   window.addEventListener('gamepadconnected', e => K.toast('Controller connected: ' + (e.gamepad.id || '').split('(')[0].trim().slice(0, 40)));
   window.addEventListener('gamepaddisconnected', () => K.toast('Controller disconnected'));
   K.startPads = () => requestAnimationFrame(poll);

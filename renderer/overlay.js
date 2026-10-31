@@ -36,9 +36,10 @@
     hints([['A', 'Select'], ['B', 'Close'], ['S', 'SKBox home']]);
     S.backFn = () => sk.overlay.close(); S.startFn = () => sk.overlay.home();
     const m = el('div', 'ovmenu'), head = el('div', 'ovhead'), chips = el('div', 'ovplayers'); panel = el('div', 'ovpanel');
-    head.innerHTML = '<div class="g">' + (st.game ? esc(st.game.name) : 'SKBox') + '</div><div class="t">' + (st.game ? 'Playing for ' + minutes() + ' min' : 'No game running') + ' \u00B7 ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '</div>';
+    head.innerHTML = '<div class="g">' + (st.game ? esc(st.game.name) : 'SKBox') + '</div><div class="t">' + (st.game ? 'Playing for ' + minutes() + ' min' : 'No game running') + ' \u00B7 ' + K.fmtTime(new Date()) + '</div>';
     [0, 1].forEach(i => { const p = S.players[i]; if (p) chips.insertAdjacentHTML('beforeend', '<div class="chip">' + avatar(p) + '<span>' + esc(p.nick || p.u) + '</span><span class="pn">P' + (i + 1) + '</span></div>'); });
     head.appendChild(chips); m.appendChild(head);
+    if (S.settings.hud) { const hud = el('div', 'hud', 'CPU \u2026'); head.appendChild(hud); const upd = async () => { try { const p = await sk.perf.get(); hud.textContent = 'CPU ' + p.cpu + '%  \u00B7  RAM ' + (p.ramUsed / 1073741824).toFixed(1) + ' / ' + (p.ramTotal / 1073741824).toFixed(0) + ' GB'; } catch (_) {} }; upd(); timers.push(setInterval(upd, 3000)); }
     const items = [
       ['resume', '\u25B6', st.game ? 'Resume game' : 'Close menu', () => sk.overlay.close(), 'Back to what you were doing.'],
       ['home', '\u2302', 'SKBox home', () => sk.overlay.home(), st.game ? 'Go to the home screen. Your game keeps running; pick Resume to come back.' : 'Go to the home screen.'],
@@ -61,7 +62,7 @@
       m.appendChild(b);
     });
     root.append(m, panel); ensureFocus(root);
-    timers.push(setInterval(() => { const t = head.querySelector('.t'); if (t && st.game) t.textContent = 'Playing for ' + minutes() + ' min \u00B7 ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }, 30000));
+    timers.push(setInterval(() => { const t = head.querySelector('.t'); if (t && st.game) t.textContent = 'Playing for ' + minutes() + ' min \u00B7 ' + K.fmtTime(new Date()); }, 30000));
   }
   function preview(id, label, desc) { panel.innerHTML = '<h2>' + esc(label) + '</h2><p class="sub">' + esc(desc) + '</p>'; }
   function toMenu(id) { clearTimers(); if (mode === 'menu') return; const keep = menuItems[id]; build(); if (keep) { const b = $('#screen').querySelectorAll('.mi'); b.forEach(x => { if (x.textContent.trim().endsWith(keep.textContent.trim())) focus(x); }); } }

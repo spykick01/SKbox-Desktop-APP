@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, safeStorage, Tray, Menu, Notification, nativeImage, screen, desktopCapturer } = require('electron');
 const { spawn, execFile } = require('child_process');
-const path = require('path'), fs = require('fs'), crypto = require('crypto');
+const path = require('path'), fs = require('fs'), crypto = require('crypto'), os = require('os');
 const bt = require('./lib/bluetooth'), wifi = require('./lib/wifi'), covers = require('./lib/covers'), { HelperClient } = require('./lib/helperClient');
 const store = require('./lib/store').make(app.getPath('userData'));
 
@@ -14,7 +14,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const batteries = {};
-let overlayOpaque = false;
+let overlayOpaque = false, padTest = false;
 const helperInfo = { error: '', lastGuide: 0, guides: 0, lastKey: '', diag: [] };
 let win = null, tray = null, kiosk = true, helper = null, game = null, backdrop = null, overlayWin = null, overlayOpen = false, musicWin = null, musicUser = '', musicVisible = false, padCount = 0;
 const send = (ch, ...a) => { try { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); } catch {} try { if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send(ch, ...a); } catch {} };
@@ -142,7 +142,7 @@ async function killGame() {
   await Promise.all(pids.map(taskkill));
   return found;
 }
-function statsTouch(id, ms) { if (!id) return; const st = store.read('stats', {}), x = st[id] || (st[id] = { last: 0, ms: 0, n: 0 }); x.last = Date.now(); if (ms) x.ms += ms; else x.n++; store.write('stats', st); }
+function statsTouch(id, ms) { if (!id) return; const st = store.read('stats', {}), x = st[id] || (st[id] = { last: 0, ms: 0, n: 0 }); x.last = Date.now(); if (ms) { x.ms += ms; x.best = Math.max(x.best || 0, ms); } else x.n++; store.write('stats', st); }
 function endGame() {
   if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
   send('game:state', null); comeBack();
@@ -187,10 +187,15 @@ function startHelper() {
   helper.on('guide', k => { helperInfo.lastGuide = Date.now(); helperInfo.guides++; helperInfo.lastKey = k; toggleOverlay(); });
   helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
   helper.on('ready', () => { helperInfo.error = ''; if (overlayOpen) helper.padIn(true); });
-  helper.on('padin', (slot, act) => { try { if (overlayOpen && overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send('padin', slot, act); } catch {} });
+  helper.on('padin', (slot, act) => {
+    try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (padTest) send('padtest', slot, act); } catch {}
+  });
   helper.on('battery', (slot, type, level) => { batteries[slot] = { type, level }; send('battery', slot, type, level); });
   helper.on('pads', n => { padCount = n; send('pads', n); const pl = playersMeta(); if (n >= 2 && !pl[1] && game && !overlayOpen) openOverlay({ p2: true }); });
-  helper.on('win', w => { if (game) { game.hwnd = w.hwnd; game.wpid = w.pid; send('game:state', gameState()); } });
+  helper.on('win', w => {
+    if (!game) return; game.hwnd = w.hwnd; game.wpid = w.pid; send('game:state', gameState());
+    if (isWin && store.read('settings', {}).boost && w.pid > 0 && game.boosted !== w.pid) { game.boosted = w.pid; execFile('powershell', ['-NoProfile', '-Command', '$p = Get-Process -Id ' + (w.pid | 0) + ' -ErrorAction SilentlyContinue; if ($p) { $p.PriorityClass = "High" }'], { windowsHide: true }, () => {}); }
+  });
   helper.on('fs', t => { backdropFade(); if (game) game.fsOk = /^(already|borderless)/.test(String(t)); send('fs', t); });
   helper.on('gone', () => endGame());
   helper.on('nowin', () => { if (game) { game.noWindow = true; if (game.exited || !game.pid) endGame(); } });
@@ -204,13 +209,14 @@ function startHelper() {
 function wantOpaque() { const m = store.read('settings', {}).ovMode || 'auto'; if (m === 'over') return false; if (m === 'full') return true; return !!game; }
 function ensureOverlay() {
   const opaque = wantOpaque();
-  if (overlayWin && !overlayWin.isDestroyed()) { if (opaque === overlayOpaque) return overlayWin; try { overlayWin.destroy(); } catch {} overlayWin = null; }
+  if (overlayWin && !overlayWin.isDestroyed()) { if (opaque === overlayOpaque) return overlayWin; const old = overlayWin; overlayWin = null; try { old.destroy(); } catch {} }
   overlayOpaque = opaque;
   const d = displayNow();
   overlayWin = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, transparent: !opaque, frame: false, show: false, skipTaskbar: true, hasShadow: false, resizable: false, movable: false, alwaysOnTop: true, backgroundColor: opaque ? '#05060d' : '#00000000', webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: true, backgroundThrottling: false } });
   overlayWin.setAlwaysOnTop(true, 'screen-saver');
   overlayWin.loadFile(RENDERER('overlay.html'), { query: { opaque: opaque ? '1' : '' } });
-  overlayWin.on('closed', () => { overlayWin = null; overlayOpen = false; });
+  const mine = overlayWin;
+  mine.on('closed', () => { if (overlayWin === mine) { overlayWin = null; overlayOpen = false; } });
   return overlayWin;
 }
 function overlayStateObj(opts) {
@@ -223,8 +229,9 @@ function openOverlay(opts) {
   if (w.webContents.isLoading()) w.webContents.once('did-finish-load', show); else show();
 }
 function closeOverlay(refocus) {
-  if (helper) helper.padIn(false);
-  if (!overlayWin || overlayWin.isDestroyed() || !overlayOpen) { overlayOpen = false; return; }
+  if (helper) helper.padIn(padTest);
+  if (!overlayWin || overlayWin.isDestroyed()) { overlayOpen = false; return; }
+  if (!overlayOpen && !overlayWin.isVisible()) return;
   overlayOpen = false; try { overlayWin.webContents.send('overlay:close'); overlayWin.hide(); } catch {}
   if (refocus) { if (musicVisible && musicWin && !musicWin.isDestroyed()) { musicWin.focus(); if (helper) helper.focus(nativeHwnd(musicWin)); } else if (game && game.hwnd && helper) helper.focus(game.hwnd); }
 }
@@ -237,7 +244,7 @@ ipcMain.handle('overlay:home', () => { closeOverlay(false); hideMusic(false); co
 ipcMain.handle('overlay:setPlayer', (_e, slot, u) => {
   const st = store.read('settings', {}); st.players = st.players || [null, null]; st.players[slot === 1 ? 1 : 0] = u || null; store.write('settings', st); send('players-changed'); return true;
 });
-ipcMain.handle('overlay:screenshot', async () => {
+async function takeShot(notify) {
   try {
     const wasOpen = overlayOpen, giveBack = wasOpen && overlayOpaque && !!game;
     if (giveBack) { closeOverlay(true); await new Promise(r => setTimeout(r, 1600)); } else { if (wasOpen && overlayWin) overlayWin.hide(); await new Promise(r => setTimeout(r, 350)); }
@@ -246,11 +253,12 @@ ipcMain.handle('overlay:screenshot', async () => {
     const dir = path.join(app.getPath('pictures'), 'SKBox'); fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, (game ? game.name.replace(/[^\w\- ]+/g, '') + ' ' : 'SKBox ') + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.png');
     fs.writeFileSync(file, s.thumbnail.toPNG());
-    if (giveBack) { try { new Notification({ title: 'Screenshot saved', body: 'Pictures\\SKBox', silent: true }).show(); } catch {} }
+    if (giveBack || notify) { try { new Notification({ title: 'Screenshot saved', body: 'Pictures\\SKBox', silent: true }).show(); } catch {} }
     else if (wasOpen && overlayWin) { overlayWin.show(); overlayWin.focus(); }
     return { ok: true, file };
   } catch (e) { return { ok: false, error: String(e.message || e) }; }
-});
+}
+ipcMain.handle('overlay:screenshot', () => takeShot(false));
 
 // ================= music host (SKMusic keeps playing while you game) =================
 function ensureMusic(u) {
@@ -302,8 +310,49 @@ ipcMain.handle('overlay:osk-result', (_e, r) => {
 // This turns off just that one shortcut (Windows Settings > Gaming > Xbox Game Bar) for the current user.
 function takeGuide(on) { if (!isWin) return; execFile('reg', ['add', 'HKCU\\Software\\Microsoft\\GameBar', '/v', 'UseNexusForGameBarEnabled', '/t', 'REG_DWORD', '/d', on ? '0' : '1', '/f'], { windowsHide: true }, () => {}); }
 ipcMain.handle('helper:status', () => ({ ready: !!(helper && helper.ready), error: helperInfo.error, lastGuide: helperInfo.lastGuide, guides: helperInfo.guides, lastKey: helperInfo.lastKey, diag: helperInfo.diag.slice(), pads: padCount, batteries, ovMode: store.read('settings', {}).ovMode || 'auto', takeGuide: store.read('settings', {}).takeGuide !== false }));
+ipcMain.handle('helper:padTest', (_e, on) => { padTest = !!on; if (helper) helper.padIn(padTest || overlayOpen); return padTest; });
 ipcMain.handle('helper:testMenu', () => { if (!overlayOpen) toggleOverlay(); return true; });
 ipcMain.handle('sys:takeGuide', (_e, on) => { const s = store.read('settings', {}); s.takeGuide = !!on; store.write('settings', s); takeGuide(!!on); return !!on; });
+
+// ================= performance stats, sleep timer, backup =================
+let lastCpu = null;
+function cpuPct() { let idle = 0, tot = 0; os.cpus().forEach(c => { for (const k in c.times) tot += c.times[k]; idle += c.times.idle; }); const r = lastCpu ? 1 - (idle - lastCpu.idle) / Math.max(1, tot - lastCpu.tot) : 0; lastCpu = { idle, tot }; return Math.round(Math.max(0, Math.min(1, r)) * 100); }
+ipcMain.handle('sys:stats', () => ({ cpu: cpuPct(), ramUsed: os.totalmem() - os.freemem(), ramTotal: os.totalmem() }));
+let sleepT = null;
+async function fireTimer() {
+  const a = sleepT && sleepT.action; sleepT = null; send('timer:fired', a);
+  try { new Notification({ title: 'SKBox timer', body: a === 'closegame' ? 'Closing your game.' : a === 'shutdown' ? 'Shutting down.' : 'Going to sleep.' }).show(); } catch {}
+  if (a === 'closegame') { if (game) { await killGame(); endGame(); } } else if (POWER[a] && isWin) setTimeout(() => execFile(POWER[a][0], POWER[a][1], { windowsHide: true }, () => {}), 4000);
+}
+const timerInfo = () => sleepT ? { at: sleepT.at, action: sleepT.action } : null;
+ipcMain.handle('timer:get', () => timerInfo());
+ipcMain.handle('timer:set', (_e, min, action) => {
+  if (sleepT) { clearTimeout(sleepT.h); sleepT = null; }
+  min = Math.round(Number(min) || 0); if (min < 1 || min > 600 || !['sleep', 'shutdown', 'closegame'].includes(action)) return null;
+  sleepT = { at: Date.now() + min * 60000, action, h: setTimeout(fireTimer, min * 60000) }; return timerInfo();
+});
+ipcMain.handle('backup:export', async () => {
+  try {
+    const r = await dialog.showSaveDialog(win, { title: 'Save SKBox backup', defaultPath: path.join(app.getPath('documents'), 'SKBox-backup-' + new Date().toISOString().slice(0, 10) + '.json'), filters: [{ name: 'SKBox backup', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    fs.writeFileSync(r.filePath, JSON.stringify({ skbox: 1, version: app.getVersion(), settings: store.read('settings', {}), apps: store.read('apps', []), stats: store.read('stats', {}) }, null, 2));
+    return { ok: true, file: r.filePath };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+ipcMain.handle('backup:import', async () => {
+  try {
+    const r = await dialog.showOpenDialog(win, { title: 'Open SKBox backup', properties: ['openFile'], filters: [{ name: 'SKBox backup', extensions: ['json'] }] });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
+    const raw = fs.readFileSync(r.filePaths[0], 'utf8'); if (raw.length > 5e6) return { ok: false, error: 'That file is too big to be an SKBox backup.' };
+    const d = JSON.parse(raw);
+    if (!d || d.skbox !== 1 || !d.settings || typeof d.settings !== 'object' || Array.isArray(d.settings) || !Array.isArray(d.apps)) return { ok: false, error: 'That file is not an SKBox backup.' };
+    const apps = d.apps.filter(a => a && typeof a === 'object' && typeof a.id === 'string' && typeof a.name === 'string' && typeof a.exe === 'string').slice(0, 500);
+    const stats = d.stats && typeof d.stats === 'object' && !Array.isArray(d.stats) ? d.stats : {};
+    store.write('settings', d.settings); store.write('apps', apps); store.write('stats', stats);
+    setTimeout(() => { try { win.webContents.reload(); } catch {} }, 400);
+    return { ok: true, apps: apps.length };
+  } catch (e) { return { ok: false, error: 'Could not read that file.' }; }
+});
 
 // ================= screenshots =================
 const shotDir = () => path.join(app.getPath('pictures'), 'SKBox');
@@ -359,6 +408,7 @@ app.whenReady().then(() => {
   createWindow(); setupTray(); setupUpdates(); startHelper();
   globalShortcut.register('Control+Shift+B', comeBack);
   globalShortcut.register('Control+Shift+O', toggleOverlay);
+  globalShortcut.register('Control+Shift+S', () => { takeShot(true); });
 });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); try { helper && helper.stop(); } catch {} });
 app.on('window-all-closed', () => app.quit());

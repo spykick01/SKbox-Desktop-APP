@@ -1,7 +1,7 @@
 // SKBox screens
 (function () {
   'use strict';
-  const { sk, S, $, el, esc, nav, fileUrl, toast, hints, focus, ensureFocus, openLayer, closeLayer, confirm, menu, busy, osk, field, setBg } = window.K;
+  const K = window.K, { sk, S, $, el, esc, nav, fileUrl, toast, hints, focus, ensureFocus, openLayer, closeLayer, confirm, menu, busy, osk, field, setBg } = window.K;
   const BUILTIN = [
     { id: 'skchat', name: 'SKchat', kind: 'web', url: 'https://sksmpchat.netlify.app/chat', art: 'assets/skchat.png', grad: 'linear-gradient(160deg,#0e4a5c,#0b1020)', tag: 'Chat, calls and friends' },
     { id: 'skmusic', name: 'SKMusic', kind: 'music', url: 'https://sksmpchat.netlify.app/skmusic', art: 'assets/skmusic.png', grad: 'linear-gradient(160deg,#6b1fa0,#14081f)', tag: 'Keeps playing while you game' }
@@ -23,13 +23,23 @@
   const avatarUrl = p => { if (!p) return ''; const v = (S.settings.pfp || {})[p.u]; if (v && v.startsWith('builtin:')) return 'assets/pfp/' + v.slice(8) + '.png'; if (v && v.startsWith('file:')) return fileUrl(v.slice(5)); return p.av && /^(data:image|https?:)/.test(p.av) ? p.av : ''; };
   const avatar = (p, big) => { const u = avatarUrl(p); return '<div class="av' + (big ? ' big' : '') + '"' + (u ? ' style="background-image:url(\'' + esc(u) + '\')"></div>' : '>' + (p ? initial(p) : '+') + '</div>'); };
   let clockTimer = null, wifiTimer = null;
-  const clearTimers = () => { clearInterval(clockTimer); clearInterval(wifiTimer); };
+  const clearTimers = () => { clearInterval(clockTimer); clearInterval(wifiTimer); if (S.padTestOn) { S.padTestOn = false; sk.helper.padTest(false); K.onPadLog = null; } };
   function go(name, data) {
     clearTimers(); S.screen = name; if (window.K.audio) window.K.audio.setSuspended(name === 'web'); S.backFn = null; S.startFn = null; S.bumper = null;
     const root = $('#screen'); root.innerHTML = ''; root.className = 'fade';
     ({ boot, welcome, profiles, home, library, settings, addApp, web }[name])(root, data || {});
   }
   window.K.go = go;
+
+  // ---------- screensaver (a slow clock so a TV does not burn in) ----------
+  let saverEl = null, saverAnim = null;
+  K.saverOff = () => { if (saverEl) { saverEl.remove(); saverEl = null; } clearInterval(saverAnim); K.saverOn = false; K.lastInput = Date.now(); };
+  function saverShow() {
+    K.saverOn = true; saverEl = el('div', 'saver', '<div class="sv"><b></b><span></span></div>'); document.body.appendChild(saverEl);
+    const sv = saverEl.firstChild, upd = () => { const n = new Date(); sv.querySelector('b').textContent = K.fmtTime(n); sv.querySelector('span').textContent = n.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); sv.style.left = (5 + Math.random() * 50) + '%'; sv.style.top = (8 + Math.random() * 60) + '%'; };
+    upd(); saverAnim = setInterval(upd, 20000);
+  }
+  setInterval(() => { const m = +S.settings.saver || 0; if (!m || K.saverOn || S.game || !['home', 'library', 'settings'].includes(S.screen)) return; if (Date.now() - K.lastInput > m * 60000) saverShow(); }, 5000);
 
   // ---------- boot ----------
   function boot(root) {
@@ -50,6 +60,10 @@
   function applyTheme() {
     const a = S.settings.accent || ACCENTS[0]; document.documentElement.style.setProperty('--a', a);
     document.body.classList.toggle('calm', !!S.settings.calm);
+    const TH = { midnight: {}, oled: { '--bg': '#000', '--panel': 'rgba(10,10,14,.9)', '--panel2': 'rgba(22,22,28,.95)' }, daylight: { '--bg': '#e9edf7', '--panel': 'rgba(255,255,255,.86)', '--panel2': 'rgba(240,243,252,.96)', '--line': 'rgba(10,15,40,.14)', '--text': '#101428', '--dim': '#4a5170' } };
+    ['--bg', '--panel', '--panel2', '--line', '--text', '--dim'].forEach(k => document.documentElement.style.removeProperty(k));
+    Object.entries(TH[S.settings.theme] || {}).forEach(([k, v]) => document.documentElement.style.setProperty(k, v));
+    document.documentElement.style.fontSize = 'calc(clamp(13px, 2vh, 26px) * ' + ({ small: .9, normal: 1, large: 1.15, huge: 1.3 }[S.settings.uiSize] || 1) + ')';
     buildFx(); applyWall();
   }
   function buildFx() {
@@ -175,7 +189,7 @@
     const btB = nav(el('button', 'ibtn', '<span style="font-size:.85rem">\u16D2 Bluetooth</span>')); btB.onclick = () => go('settings', { cat: 'bluetooth' });
     const pad = el('div', 'ibtn', '\u{1F3AE} <span id="padn">0</span><span id="bat" style="font-size:.8rem;color:var(--dim);margin-left:.4rem"></span>'); pad.style.cursor = 'default';
     const clk = el('div', 'clock'); const setB = nav(el('button', 'ibtn', '\u2699')); setB.onclick = () => go('settings'); const pw = nav(el('button', 'ibtn', '\u23FB')); pw.onclick = () => go('settings', { cat: 'power' });
-    right.append(wifiB, btB, pad, clk, setB, pw); top.append(left, right);
+    const hud = el('div', 'ibtn', ''); hud.style.display = 'none'; hud.style.cursor = 'default'; right.append(hud, wifiB, btB, pad, clk, setB, pw); top.append(left, right);
     const wrap = el('div', 'home'), row = el('div', 'row'), info = el('div', 'info');
     wrap.append(row, info); root.append(top, wrap);
     const list = tiles(), els = [];
@@ -190,14 +204,16 @@
       if (!a.lib) t._onopts = () => appMenu(a, 'home'); else t._onopts = () => toast('Press A to open your Library');
       row.appendChild(t);
     });
+    if (!S.autoDone) { S.autoDone = true; const au = S.settings.autoApp && allApps().find(x => x.id === S.settings.autoApp); if (au && !S.game) setTimeout(() => { if (S.screen === 'home') openApp(au); }, 1200); }
     if (S.migratedPins) { S.migratedPins = false; setTimeout(() => toast('Your apps are now in the Library. Pin or unpin them from there.'), 600); }
     if (!S.newsChecked) { S.newsChecked = true; sk.info().then(i => { if (i && i.version && S.settings.seenVersion !== i.version) { S.settings.seenVersion = i.version; saveSettings(); setTimeout(() => { if (S.screen === 'home') showNews(); }, 900); } }); }
     if (list.length === 1) setTimeout(() => toast('Nothing pinned yet. Open the Library and press X on an app to pin it.'), 700);
     const tick = async () => {
-      clk.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); const n = (navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean).length : 0); const e = $('#padn'); if (e) e.textContent = n; const be = $('#bat'); if (be) be.textContent = n ? batText() : '';
+      clk.textContent = K.fmtTime(new Date()); const n = (navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean).length : 0); const e = $('#padn'); if (e) e.textContent = n; const be = $('#bat'); if (be) be.textContent = n ? batText() : '';
       try { const m = await sk.music.status(); if (S.screen !== 'home') return; if (m && m.ready && m.track) { npB.style.display = ''; $('#npt').textContent = (m.playing ? '\u23F8 ' : '\u25B6 ') + String(m.track.title || 'SKMusic').slice(0, 28); } else npB.style.display = 'none'; } catch (_) {}
     };
-    tick(); clockTimer = setInterval(tick, 4000);
+    const perf = async () => { if (!S.settings.hud) { hud.style.display = 'none'; return; } try { const p = await sk.perf.get(); hud.style.display = ''; hud.textContent = 'CPU ' + p.cpu + '%  \u00B7  RAM ' + (p.ramUsed / 1073741824).toFixed(1) + '/' + (p.ramTotal / 1073741824).toFixed(0) + ' GB'; } catch (_) {} };
+    tick(); perf(); clockTimer = setInterval(() => { tick(); perf(); }, 4000);
     const wf = async () => { const s = await sk.wifi.status(); const w = $('#wf'), n = $('#wfn'); if (!w) return; w.style.opacity = s.connected ? 1 : .4; n.textContent = s.connected ? s.ssid : 'Offline'; };
     wf(); wifiTimer = setInterval(wf, 25000);
     const want = els.find(e => e._id === S.lastTileId) || els[Math.min(S.lastTile || 0, els.length - 1)];
@@ -205,25 +221,31 @@
   }
 
   // ---------- Library: every app lives here; pin the ones you want on Home ----------
-  let libSort = 'az', libQuery = '';
+  let libSort = 'az', libQuery = '', libFilter = 'all';
   const SORTS = [['az', 'A\u2013Z'], ['recent', 'Recently played'], ['most', 'Most played']];
   function libList() {
-    let l = allApps().filter(a => !libQuery || a.name.toLowerCase().includes(libQuery.toLowerCase())); const st = S.stats || {}, g = a => st[a.id] || { last: 0, ms: 0 };
+    const cols = S.settings.collections || {}; let l = allApps().filter(a => !libQuery || a.name.toLowerCase().includes(libQuery.toLowerCase())); const st = S.stats || {}, g = a => st[a.id] || { last: 0, ms: 0 };
+    if (libFilter === 'pinned') l = l.filter(isPinned); else if (libFilter === 'recent') l = l.filter(a => g(a).last > Date.now() - 14 * 864e5); else if (cols[libFilter]) l = l.filter(a => cols[libFilter].includes(a.id));
     if (libSort === 'az') l.sort((x, y) => x.name.localeCompare(y.name)); else if (libSort === 'recent') l.sort((x, y) => g(y).last - g(x).last || x.name.localeCompare(y.name)); else l.sort((x, y) => g(y).ms - g(x).ms || x.name.localeCompare(y.name));
     return l;
   }
   function library(root, d) {
     hints([['A', 'Open'], ['X', 'Pin / Unpin'], ['Y', 'Options'], ['L', 'Sort'], ['B', 'Home']]);
-    S.backFn = () => go('home'); S.startFn = () => go('settings');
+    S.backFn = () => go('home'); S.startFn = () => go('settings'); if (!S.libInit) { S.libInit = true; libSort = S.settings.libSort || libSort; libFilter = S.settings.libFilter || libFilter; }
+    if (libFilter !== 'all' && libFilter !== 'pinned' && libFilter !== 'recent' && !(S.settings.collections || {})[libFilter]) libFilter = 'all';
     root.innerHTML = '<div class="page lib"><h1>Library</h1></div>';
     const page = root.querySelector('.page'), bar = el('div', 'libbar');
     const sortB = nav(el('button', 'chip', '<span>Sort: ' + esc(SORTS.find(x => x[0] === libSort)[1]) + '</span>')), findB = nav(el('button', 'chip', '<span>\u{1F50D} ' + (libQuery ? esc(libQuery) : 'Search') + '</span>')), addB = nav(el('button', 'chip', '<div class="av">+</div><span>Add an app</span>'));
-    const cycle = dir => { const i = SORTS.findIndex(x => x[0] === libSort); libSort = SORTS[(i + (dir || 1) + SORTS.length) % SORTS.length][0]; go('library', { focus: S.lastLibId }); };
+    const cycle = dir => { const i = SORTS.findIndex(x => x[0] === libSort); libSort = SORTS[(i + (dir || 1) + SORTS.length) % SORTS.length][0]; S.settings.libSort = libSort; saveSettings(); go('library', { focus: S.lastLibId }); };
+    const FILTERS = ['all', 'pinned', 'recent'].concat(Object.keys(S.settings.collections || {})), fname = f => ({ all: 'All', pinned: 'On Home', recent: 'Played lately' }[f] || f);
+    const filtB = nav(el('button', 'chip', '<span>Show: ' + esc(fname(libFilter)) + '</span>'));
+    filtB.onclick = () => { libFilter = FILTERS[(FILTERS.indexOf(libFilter) + 1) % FILTERS.length]; S.settings.libFilter = libFilter; saveSettings(); go('library'); };
+    if (!['all', 'pinned', 'recent'].includes(libFilter)) filtB._onopts = () => confirm('Delete the collection \u201C' + libFilter + '\u201D?', 'Your apps stay in the Library. Only the group is removed.', 'Delete', () => { delete S.settings.collections[libFilter]; libFilter = 'all'; S.settings.libFilter = 'all'; saveSettings(); go('library'); }, true);
     sortB.onclick = () => cycle(1); S.bumper = a => cycle(a === 'prev' ? -1 : 1);
     findB.onclick = () => osk({ title: 'Search your library', value: libQuery, submitLabel: 'Search', onDone: v => { libQuery = (v || '').trim(); go('library'); } });
     if (libQuery) findB._onopts = () => { libQuery = ''; go('library'); };
     addB.onclick = () => go('addApp');
-    bar.append(sortB, findB, addB); page.appendChild(bar);
+    bar.append(filtB, sortB, findB, addB); page.appendChild(bar);
     const grid = el('div', 'libgrid'), info = el('div', 'libinfo'), list = libList(), els = [];
     if (!list.length) grid.appendChild(el('div', 'sub', libQuery ? 'Nothing matches \u201C' + esc(libQuery) + '\u201D.' : 'Nothing here yet. Press \u201CAdd an app\u201D.'));
     list.forEach((a, i) => {
@@ -245,6 +267,13 @@
     if (run) it.push({ label: 'Close game', fn: closeRunning });
     if (isPinned(a)) { it.push({ label: 'Unpin from Home', fn: () => { setPinned(a, false); back(); } }); if (ctx === 'home') { it.push({ label: 'Move left', fn: () => { movePin(a, -1); S.lastTileId = a.id; go('home'); } }); it.push({ label: 'Move right', fn: () => { movePin(a, 1); S.lastTileId = a.id; go('home'); } }); } }
     else it.push({ label: 'Pin to Home', fn: () => { setPinned(a, true); toast(a.name + ' pinned to Home'); back(); } });
+    const cols = S.settings.collections || {}, inCols = Object.keys(cols).filter(c => cols[c].includes(a.id));
+    it.push({ label: 'Add to collection\u2026', fn: () => {
+      const opts = Object.keys(cols).filter(c => !cols[c].includes(a.id)).map(c => ({ label: c, fn: () => { cols[c].push(a.id); S.settings.collections = cols; saveSettings(); toast(a.name + ' added to ' + c); back(); } }));
+      opts.push({ label: 'New collection\u2026', fn: () => osk({ title: 'Name your collection', value: '', submitLabel: 'Create', onDone: v => { v = (v || '').trim().slice(0, 24); if (!v) return; S.settings.collections = Object.assign({}, cols, { [v]: (cols[v] || []).concat(cols[v] && cols[v].includes(a.id) ? [] : [a.id]) }); saveSettings(); toast(a.name + ' added to ' + v); back(); } }) });
+      menu('Add ' + a.name + ' to', opts);
+    } });
+    inCols.forEach(c => it.push({ label: 'Remove from ' + c, fn: () => { cols[c] = cols[c].filter(x => x !== a.id); S.settings.collections = cols; saveSettings(); back(); } }));
     if (!a.kind) {
       it.push({ label: 'Change cover art', fn: () => findCover(a, () => { saveApps(); back(); }) });
       it.push({ label: 'Edit name and path', fn: () => go('addApp', { app: a }) });
@@ -281,7 +310,9 @@
   sk.on('music:visible', v => { window.K.audio && window.K.audio.setExternal(!!v); });
   setInterval(async () => { try { const m = await sk.music.status(); window.K.audio && window.K.audio.setExternal(!!(m && m.ready && m.playing)); } catch (_) {} }, 6000);
   sk.on('returned', () => { const e = window.K.current(); });
-  sk.on('battery', (slot, type, level) => { (S.bat = S.bat || {})[slot] = { type, level }; });
+  sk.on('battery', (slot, type, level) => { (S.bat = S.bat || {})[slot] = { type, level }; if ((type === 2 || type === 3) && level <= 1 && Date.now() - (S.lowBatAt || 0) > 600000) { S.lowBatAt = Date.now(); toast('Controller battery is ' + (level === 0 ? 'empty' : 'low') + '. Plug it in or change the batteries.'); } });
+  sk.on('padtest', (slot, a) => { if (!S.padTestOn) return; K.padCount.helper++; K.padLog.push({ src: 'helper', a, t: Date.now() }); if (K.padLog.length > 14) K.padLog.shift(); if (K.onPadLog) K.onPadLog(); });
+  sk.on('timer:fired', a => toast(a === 'closegame' ? 'Timer finished: closing your game' : 'Timer finished'));
   sk.on('update-ready', v => confirm('Update ready', 'SKBox ' + v + ' has been downloaded.', 'Restart now', () => sk.installUpdate()));
 
   // ---------- add / edit app ----------
@@ -369,13 +400,14 @@
 
   // ---------- settings ----------
   const NEWS = [
-    ['SK menu over any fullscreen game', 'Press the Xbox / PS button in a game and the menu now opens as a full page, so it works with every kind of fullscreen. The controller works in it too. Want to see the game behind it? Settings > Xbox / PS button > Menu style.'],
-    ['Library', 'On Home, open the Library tile. Press X on any app to pin or unpin it from Home. LB / RB changes the sort. Y has more options.'],
-    ['Close a game', 'A red Close game button shows on Home while a game runs. It also lives in the SK menu and on Y.'],
-    ['Bluetooth', 'Settings > Bluetooth (or the Bluetooth button on Home): scan, pair and forget devices without leaving SKBox.'],
-    ['Screenshots', 'Take one from the SK menu, then look at them in Settings > Screenshots.'],
-    ['Controller battery', 'Shown next to the controller icon on Home (Xbox controllers).'],
-    ['Xbox / PS button help', 'Settings > Xbox / PS button shows if the button is being seen, and can take it back from Game Bar.']
+    ['Controller in the SK menu, fixed', 'The menu could look fine but ignore your controller. It now listens through two paths. Settings > Controller test shows what SKBox sees.'],
+    ['Collections', 'In the Library press Y on an app > Add to collection. The Show chip at the top filters by All, On Home, Played lately, or a collection.'],
+    ['Sleep timer', 'Settings > Power > Sleep timer: sleep, shut down or close your game after 30 min to 2 hours.'],
+    ['Play stats', 'Settings > Play stats: total time, most played, longest session and launches.'],
+    ['Preferences', 'Settings > Preferences: look (OLED black, Daylight), text size, 24-hour clock, screensaver, vibration, swap A/B, boost game priority, CPU and memory display, open an app at start.'],
+    ['Back up and restore', 'Settings > About: save your apps, pins, settings and play time to a file, and restore them later.'],
+    ['Screenshot shortcut', 'Press Ctrl+Shift+S any time to save a screenshot to Pictures\\SKBox.'],
+    ['Earlier: Library, Close game, Bluetooth, screenshots, battery', 'Library tile on Home. Red Close game button. Settings > Bluetooth and > Screenshots. Controller battery next to the controller icon.']
   ];
   const BATLV = ['Empty', 'Low', 'Medium', 'Full'];
   const batText = () => { const b = (S.bat || {})[0]; if (!b || b.type === 0) return ''; if (b.type === 1) return 'Wired'; if (b.type === 255) return ''; return BATLV[b.level] || ''; };
@@ -384,7 +416,7 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
@@ -401,6 +433,8 @@
     firstEl.dataset.first = ''; panel(sel, pane); ensureFocus(root, firstEl);
   }
   const row = (title, sub, right, fn) => { const b = nav(el('button', 'item', '<div>' + esc(title) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div><div class="r">' + (right || '') + '</div>')); if (fn) b.onclick = fn; return b; };
+  // a row that cycles through choices when you press A
+  const cyc = (title, sub, opts, get, set) => { const b = row(title, sub, ''); const draw = () => { const o = opts.find(x => x[0] === get()) || opts[0]; b.querySelector('.r').textContent = o[1]; }; b.onclick = () => { const i = opts.findIndex(x => x[0] === get()); set(opts[(i + 1) % opts.length][0]); draw(); }; draw(); return b; };
   const toggle = (title, sub, on, fn) => { const b = row(title, sub, '<div class="tog' + (on ? ' on' : '') + '"></div>'); b.onclick = () => { on = !on; b.querySelector('.tog').classList.toggle('on', on); fn(on); }; return b; };
   const bars = s => '<span class="bars">' + [25, 50, 75, 100].map(t => '<i class="' + (s >= t - 12 ? 'on' : '') + '" style="height:' + (t / 100 * 16) + 'px"></i>').join('') + '</span>';
   function panel(id, pane) {
@@ -469,6 +503,39 @@
       sk.info().then(i => { pane.appendChild(toggle('Start SKBox when Windows starts', 'Boots straight into SKBox like a console', i.startup !== false && S.settings.startup !== false, v => { sk.sys.startup(v); S.settings.startup = v; })); });
       pane.appendChild(toggle('Fullscreen console mode', 'Turn off to use SKBox in a window', !S.settings.windowed, v => { S.settings.windowed = !v; sk.sys.kiosk(v); }));
       pane.appendChild(toggle('Reduce motion', 'Turns off animations', !!S.settings.calm, v => { S.settings.calm = v; saveSettings(); applyTheme(); }));
+    } else if (id === 'prefs') {
+      h('Preferences'); sub('Press A on a row to change it.');
+      const sv = (k, v) => { S.settings[k] = v; saveSettings(); };
+      pane.appendChild(cyc('Look', 'Midnight is the default. OLED black saves power on OLED TVs.', [['midnight', 'Midnight'], ['oled', 'OLED black'], ['daylight', 'Daylight']], () => S.settings.theme || 'midnight', v => { sv('theme', v); applyTheme(); }));
+      pane.appendChild(cyc('Text and tile size', 'Bigger is easier to read from the couch.', [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large'], ['huge', 'Huge']], () => S.settings.uiSize || 'normal', v => { sv('uiSize', v); applyTheme(); }));
+      pane.appendChild(cyc('Clock', '', [['12', '12-hour'], ['24', '24-hour']], () => S.settings.clock24 ? '24' : '12', v => sv('clock24', v === '24')));
+      pane.appendChild(cyc('Screensaver', 'A slow clock after you have been idle on Home. Any button wakes it.', [['0', 'Off'], ['2', '2 min'], ['5', '5 min'], ['10', '10 min'], ['20', '20 min']], () => String(S.settings.saver || 0), v => sv('saver', +v)));
+      pane.appendChild(toggle('Controller vibration', 'A tiny buzz when you press A', S.settings.rumble !== false, v => sv('rumble', v)));
+      pane.appendChild(toggle('Swap A and B', 'For Nintendo-style layout: B selects, A goes back', !!S.settings.swapAB, v => sv('swapAB', v)));
+      pane.appendChild(toggle('Swap X and Y', 'X opens options, Y pins', !!S.settings.swapXY, v => sv('swapXY', v)));
+      pane.appendChild(toggle('Boost game priority', 'Gives the game more CPU time while it runs (Windows, High priority)', !!S.settings.boost, v => sv('boost', v)));
+      pane.appendChild(toggle('Show CPU and memory', 'On Home and in the SK menu', !!S.settings.hud, v => sv('hud', v)));
+      const autoOpts = [['', 'Nothing']].concat(allApps().map(a => [a.id, a.name]));
+      pane.appendChild(cyc('Open an app when SKBox starts', 'For example SKMusic', autoOpts, () => S.settings.autoApp || '', v => sv('autoApp', v)));
+    } else if (id === 'stats') {
+      h('Play stats'); const st = S.stats || {}, rows = allApps().map(a => ({ a, x: st[a.id] || { ms: 0, n: 0, last: 0, best: 0 } })).filter(o => o.x.ms || o.x.n);
+      const total = rows.reduce((t, o) => t + (o.x.ms || 0), 0), opens = rows.reduce((t, o) => t + (o.x.n || 0), 0), fh = ms => { const m = Math.round(ms / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
+      if (!rows.length) { sub('Nothing yet. Play something and it shows up here.'); }
+      else {
+        sub('Games track time while they run. Apps like SKchat count how often you open them.');
+        pane.appendChild(row('Total play time', 'Across all games', fh(total), null)); pane.appendChild(row('Times you launched something', '', String(opens), null));
+        const top = rows.filter(o => o.x.ms).sort((p, q) => q.x.ms - p.x.ms)[0]; if (top) pane.appendChild(row('Most played', top.a.name, fh(top.x.ms), null));
+        const longest = rows.filter(o => o.x.best).sort((p, q) => q.x.best - p.x.best)[0]; if (longest) pane.appendChild(row('Longest session', longest.a.name, fh(longest.x.best), null));
+        pane.appendChild(el('h2', '', 'By game'));
+        rows.sort((p, q) => (q.x.ms || 0) - (p.x.ms || 0)).slice(0, 12).forEach(o => pane.appendChild(row(o.a.name, (o.x.n || 0) + ' launches \u00B7 last ' + (o.x.last ? fmtAgo(o.x.last) : 'never'), o.x.ms ? fh(o.x.ms) : '', null)));
+      }
+    } else if (id === 'padtest') {
+      h('Controller test'); sub('Press buttons and move the D-pad. \u201CBrowser\u201D works while SKBox is in front. \u201CHelper\u201D also works over a game. If Helper counts up, the SK menu will see your controller.');
+      const LBL = { up: 'D-pad up', down: 'D-pad down', left: 'D-pad left', right: 'D-pad right', ok: 'A / Cross', back: 'B / Circle', alt: 'X / Square', opts: 'Y / Triangle', prev: 'LB / L1', next: 'RB / R1', start: 'Start / Options', select: 'View / Share' };
+      const live = el('div', 'sub'); live.style.lineHeight = '1.9'; pane.appendChild(live);
+      const draw = () => { if (!live.isConnected) return; live.innerHTML = '<b>Browser:</b> ' + K.padCount.api + ' presses &nbsp;&nbsp; <b>Helper:</b> ' + K.padCount.helper + ' presses<br>' + (K.padLog.length ? K.padLog.slice().reverse().slice(0, 8).map(e => esc((LBL[e.a] || e.a) + '  (' + (e.src === 'helper' ? 'helper' : 'browser') + ')')).join('<br>') : 'Waiting for a button\u2026'); };
+      K.onPadLog = draw; draw(); if (!S.padTestOn) { S.padTestOn = true; sk.helper.padTest(true); }
+      pane.appendChild(row('Reset counters', '', '\u21BA', () => { K.padCount.api = 0; K.padCount.helper = 0; K.padLog.length = 0; draw(); }));
     } else if (id === 'bluetooth') {
       h('Bluetooth'); sub('Pair controllers, headphones, speakers and keyboards without leaving SKBox. Put the device in pairing mode first (hold its pairing button until the light flashes).');
       const mine = el('div'), near = el('div'), msg = el('div', 'sub', ''); let busyNow = false;
@@ -532,6 +599,12 @@
       pane.appendChild(row('Bluetooth headphones & speakers', 'Pair them in SKBox, then pick them in Windows sound settings', '\u2192', () => go('settings', { cat: 'bluetooth' })));
     } else if (id === 'power') {
       h('Power'); const P = [['Sleep', 'sleep'], ['Restart', 'restart'], ['Shut down', 'shutdown'], ['Sign out of Windows', 'logoff'], ['Exit SKBox to desktop', 'quit']];
+      const trow = row('Sleep timer', 'Sleep, shut down or close your game after a while', '', null); pane.appendChild(trow);
+      const tdraw = async () => { const t = await sk.timer.get(); if (!trow.isConnected) return; trow.querySelector('.r').textContent = t ? ({ sleep: 'Sleep', shutdown: 'Shut down', closegame: 'Close game' }[t.action]) + ' in ' + Math.max(1, Math.round((t.at - Date.now()) / 60000)) + ' min' : 'Off'; }; tdraw();
+      trow.onclick = () => {
+        const set = (m, a, label) => ({ label, fn: async () => { await sk.timer.set(m, a); toast('Timer set: ' + label); tdraw(); } });
+        menu('Sleep timer', [set(30, 'sleep', 'Sleep in 30 min'), set(60, 'sleep', 'Sleep in 1 hour'), set(120, 'sleep', 'Sleep in 2 hours'), set(60, 'shutdown', 'Shut down in 1 hour'), set(30, 'closegame', 'Close game in 30 min'), set(60, 'closegame', 'Close game in 1 hour'), { label: 'Turn timer off', fn: async () => { await sk.timer.set(0, 'sleep'); toast('Timer off'); tdraw(); } }]);
+      };
       P.forEach(([n, k]) => pane.appendChild(row(n, '', '', () => confirm(n + '?', k === 'quit' ? 'Press Ctrl+Shift+B or use the tray icon to bring SKBox back.' : 'Anything unsaved will be lost.', n, () => sk.sys.power(k), k !== 'sleep'))));
     } else {
       h('About SKBox'); sk.info().then(i => { sub('Version ' + i.version + ' \u00B7 SKBox by SK. If this is older than the version you expect, your update has not been published or installed yet.'); });
@@ -539,6 +612,8 @@
       pane.appendChild(row('SK menu in a game', 'Press the Xbox button or PlayStation button (or Ctrl+Shift+O)', '', null));
       pane.appendChild(row('Return to SKBox from an app', 'Press Ctrl+Shift+B, or click the SKBox tray icon', '', null));
       pane.appendChild(row('Updates', 'SKBox updates itself when you are online', '', null));
+      pane.appendChild(row('Back up my SKBox', 'Saves your apps, pins, settings and play time to a file', '\u2192', async () => { const r = await sk.backup.save(); if (r.ok) toast('Backup saved'); else if (!r.canceled) toast(r.error || 'Could not save the backup'); }));
+      pane.appendChild(row('Restore from a backup', 'Replaces your apps, pins and settings with the ones in the file', '\u2192', () => confirm('Restore a backup?', 'This replaces your current apps, pins and settings. Cover art files stay where they are.', 'Choose file', async () => { const r = await sk.backup.load(); if (r.ok) toast('Restored ' + r.apps + ' apps. Reloading\u2026'); else if (!r.canceled) toast(r.error || 'Could not restore'); }, true)));
     }
   }
 

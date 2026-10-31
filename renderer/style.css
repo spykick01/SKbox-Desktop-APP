@@ -182,3 +182,12 @@ body.ovl.opaque .ovdim{display:none}
 .bigshot{width:min(80vw,120vh);aspect-ratio:16/9;background:#000 center/contain no-repeat;border-radius:.8rem}
 .newlist{margin:.4rem 0 1rem;padding-left:1.1rem;line-height:1.7;color:var(--dim)}
 .newlist b{color:var(--text)}
+
+/* --- v1.5 --- */
+.saver{position:fixed;inset:0;background:#000;z-index:9999;cursor:none}
+.saver .sv{position:absolute;transition:left 3s ease,top 3s ease;color:#cfd3ea;text-align:left}
+.saver .sv b{display:block;font-size:6rem;font-weight:200;letter-spacing:.02em}
+.saver .sv span{color:#777c99;font-size:1.3rem}
+.hud{margin-left:auto;color:var(--dim);font-size:.9rem;align-self:center}
+.split>.menu,.split>.pane{overflow-y:auto;min-height:0;scrollbar-width:none}
+.split>.menu::-webkit-scrollbar,.split>.pane::-webkit-scrollbar{display:none}
