@@ -115,10 +115,31 @@ ipcMain.handle('cover:remove', (_e, f) => { try { if (f && path.dirname(f) === C
 
 // ================= running a game =================
 const splitArgs = s => (String(s || '').match(/"[^"]*"|\S+/g) || []).map(x => x.replace(/^"|"$/g, ''));
-function applyCompat(exe) { // old-game fixes: Windows compatibility flags for this one program (current user only)
+function applyCompat(exe) { // old-game fixes: Windows compatibility flags for this one program (current user only). Fullscreen optimizations stay ON so games can be streamed.
   if (!isWin) return;
-  execFile('reg', ['add', 'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers', '/v', exe, '/t', 'REG_SZ', '/d', '~ WIN7RTM HIGHDPIAWARE DISABLEDXMAXIMIZEDWINDOWEDMODE', '/f'], { windowsHide: true }, () => {});
+  execFile('reg', ['add', 'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers', '/v', exe, '/t', 'REG_SZ', '/d', '~ WIN7RTM HIGHDPIAWARE', '/f'], { windowsHide: true }, () => {});
 }
+// Windowed fullscreen for every game: (1) remove the "disable fullscreen optimizations" flag so Windows turns exclusive fullscreen into a capturable
+// borderless-style mode, and (2) switch on Windows' "optimizations for windowed games". Both are current-user settings only.
+function prepWindowedFs(exe) {
+  if (!isWin) return;
+  const LAY = 'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers';
+  if (/\.exe$/i.test(exe)) execFile('reg', ['query', LAY, '/v', exe], { windowsHide: true }, (err, out) => {
+    if (err || !/DISABLEDXMAXIMIZEDWINDOWEDMODE/.test(out || '')) return;
+    const m = /REG_SZ\s+(.*)$/m.exec(out); if (!m) return;
+    const flags = m[1].replace(/\s*DISABLEDXMAXIMIZEDWINDOWEDMODE/g, '').trim();
+    execFile('reg', flags && flags !== '~' ? ['add', LAY, '/v', exe, '/t', 'REG_SZ', '/d', flags, '/f'] : ['delete', LAY, '/v', exe, '/f'], { windowsHide: true }, () => {});
+  });
+  const DX = 'HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences';
+  execFile('reg', ['query', DX, '/v', 'DirectXUserGlobalSettings'], { windowsHide: true }, (err, out) => {
+    const m = !err && /REG_SZ\s+(.*)$/m.exec(out || ''), cur = m ? m[1].trim() : '';
+    if (/SwapEffectUpgradeEnable=1/.test(cur)) return;
+    const val = (cur.replace(/SwapEffectUpgradeEnable=\d;?/g, '').replace(/;?\s*$/, '') + (cur ? ';' : '') + 'SwapEffectUpgradeEnable=1;').replace(/^;/, '');
+    execFile('reg', ['add', DX, '/v', 'DirectXUserGlobalSettings', '/t', 'REG_SZ', '/d', val, '/f'], { windowsHide: true }, () => {});
+  });
+}
+// Every game starts in windowed fullscreen (borderless) unless the person turned that off, or set this one app to 'Leave it alone'.
+function gameMode(m) { m = m || 'auto'; if (m === 'auto' && store.read('settings', {}).gameWindow === 'off') return 'off'; return m; }
 function showBackdrop(a) {
   closeBackdrop(); const d = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   backdrop = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, backgroundColor: '#000000', show: false, skipTaskbar: true, focusable: false, movable: false, resizable: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -159,8 +180,9 @@ ipcMain.handle('app:launch', async (_e, a) => {
   try {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
-    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: a.fs || 'auto', noWindow: false, exited: false };
+    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: gameMode(a.fs), noWindow: false, exited: false };
     statsTouch(a.id, 0);
+    if (!isUrl && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
     if (a.compat && !isUrl && /\.exe$/i.test(target)) applyCompat(target);
     showBackdrop(game); send('game:state', gameState());
     let child = null;

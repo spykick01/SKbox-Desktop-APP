@@ -19,6 +19,9 @@ public static class SkHelper
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
     delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("shell32.dll")] static extern int SHQueryUserNotificationState(out int state);
+    // 3 = a Direct3D game owns the screen in true exclusive fullscreen (this is what streams black); 2 = borderless / normal fullscreen.
+    static bool IsExclusive() { try { int st; return SHQueryUserNotificationState(out st) == 0 && st == 3; } catch (Exception) { return false; } }
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -176,7 +179,7 @@ public static class SkHelper
     class Watch
     {
         public int Pid; public string Mode; public int SkPid; public DateTime Start; public IntPtr Hwnd; public uint WinPid; public DateTime HwndSince;
-        public bool Applied; public int Reapply; public DateTime AppliedAt; public bool FallbackUsed; public bool Found; public DateTime LastAlive; public RECT Target; public bool KeyDone;
+        public bool Applied; public int Reapply; public DateTime AppliedAt; public bool FallbackUsed; public bool Found; public DateTime LastAlive; public RECT Target; public bool KeyDone; public bool ExclTried;
     }
     static Watch watch;
 
@@ -314,7 +317,7 @@ public static class SkHelper
         IntPtr cand = FindWindow(pids, w.SkPid, age > 3.0 && (w.Pid <= 0 || pids.Count == 0 || age > 12.0));
         if (cand != IntPtr.Zero && (!valid || (cand != w.Hwnd && Area(cand) > Area(w.Hwnd) * 1.1)))
         {
-            w.Hwnd = cand; w.HwndSince = DateTime.UtcNow; w.Applied = false; w.Reapply = 0; w.KeyDone = false; valid = true;
+            w.Hwnd = cand; w.HwndSince = DateTime.UtcNow; w.Applied = false; w.Reapply = 0; w.KeyDone = false; w.ExclTried = false; valid = true;
             uint wp; GetWindowThreadProcessId(cand, out wp); w.WinPid = wp; w.Found = true;
             RECT r; GetWindowRect(cand, out r);
             Emit("WIN " + cand.ToInt64().ToString(CultureInfo.InvariantCulture) + " " + wp + " " + (r.Right - r.Left) + " " + (r.Bottom - r.Top));
@@ -326,7 +329,17 @@ public static class SkHelper
             int style = GetWindowLong(w.Hwnd, -16); bool caption = (style & 0x00C00000) == 0x00C00000;
             if (!w.Applied)
             {
-                if (covers && !caption) { w.Applied = true; w.AppliedAt = DateTime.UtcNow; Emit("FS already"); }
+                bool autoish = w.Mode == "auto" || w.Mode == "stretch" || w.Mode == "aspect";
+                bool excl = autoish && covers && !caption && IsExclusive();
+                if (covers && !caption && !excl) { w.Applied = true; w.AppliedAt = DateTime.UtcNow; Emit("FS already"); }
+                else if (excl)
+                {   // true exclusive fullscreen: leave it (Alt+Enter), then make the window borderless so it looks right AND can be streamed
+                    if (!w.ExclTried) { if (stable >= 2.0) { w.ExclTried = true; w.AppliedAt = DateTime.UtcNow; ForceForeground(w.Hwnd); Thread.Sleep(300); Tap(0x0D, true); Emit("FS exclusive leaving"); } }
+                    else if ((DateTime.UtcNow - w.AppliedAt).TotalSeconds > 2.5)
+                    {
+                        RECT t; if (Borderless(w.Hwnd, w.Mode, out t)) { w.Applied = true; w.AppliedAt = DateTime.UtcNow; w.Target = t; Emit("FS borderless exclusive"); } else Emit("FS fail");
+                    }
+                }
                 else if (stable >= 3.0)
                 {
                     RECT r; GetClientRect(w.Hwnd, out r); string title = TextOf(w.Hwnd);
