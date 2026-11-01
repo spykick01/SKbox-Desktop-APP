@@ -141,7 +141,7 @@ const extras = require('./lib/extras').create({
 });
 ipcMain.handle('extras:do', (_e, n, a) => extras.run(String(n || ''), a));
 // SKBrowse: built-in browser + browser apps (src/lib/browse.js)
-const browse = require('./lib/browse').create({ store, notify, isDrm: u => browseDrm(u), appsChanged: () => send('apps:changed'), display: displayNow, comeBack: () => comeBack(), afterClose: () => { if (!game && !overlayOpen) comeBack(); }, openOsk: v => openOverlay({ osk: { value: v || '', target: 'browse' } }) });
+const browse = require('./lib/browse').create({ store, notify, lock: () => lockUI(), edge: () => EDGE(), openEdge: u => openInEdge(u), isDrm: u => browseDrm(u), appsChanged: () => send('apps:changed'), display: displayNow, comeBack: () => comeBack(), afterClose: () => { if (!game && !overlayOpen) comeBack(); }, openOsk: v => openOverlay({ osk: { value: v || '', target: 'browse' } }) });
 app.whenReady().then(() => { try { browse.loadAllExt(); } catch {} setTimeout(() => { try { browse.autoList(); } catch {} }, 20000); });
 const browseDrm = u => { try { return require('./lib/browse').DRM_HOSTS.some(d => { const h = new URL(u).hostname; return h === d || h.endsWith('.' + d); }); } catch { return false; } };
 const EDGE = () => ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'].find(f => { try { return fs.existsSync(f); } catch { return false; } }) || '';
@@ -155,7 +155,21 @@ ipcMain.handle('browse:launchApp', async (_e, a) => {
   const prof = path.join(app.getPath('userData'), 'edge-' + String(a.id).replace(/[^\w-]/g, ''));
   return launchApp({ id: a.id, name: a.name, exe: useEdge, args: '--app="' + a.url + '" --start-fullscreen --user-data-dir="' + prof + '" --no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required', cover: a.cover, fs: 'off' });
 });
-ipcMain.handle('browse:openSK', (_e, o) => { closeOverlay(false); stepAside(); return browse.open(Object.assign({}, o || {})); });
+// The main SKBox window must not react to the controller while the SK menu or SKBrowse is in front.
+function lockUI() { try { const on = overlayOpen || Array.from(browse.wins).some(w => { try { return w.isVisible() && !w.isMinimized(); } catch { return false; } }); if (win && !win.isDestroyed()) win.webContents.send('input-lock', !!on); browse.setPaused(overlayOpen); } catch {} }
+function openInEdge(u) {
+  const e = EDGE(); if (!e) return false; let h = 'site'; try { h = new URL(u).hostname.replace(/^www\./, ''); } catch {}
+  const prof = path.join(app.getPath('userData'), 'edge-' + h.replace(/[^\w-]/g, ''));
+  try { for (const w of Array.from(browse.wins)) { if (!w._appId) w.hide(); } } catch {}
+  launchApp({ id: 'edge_' + h, name: h, exe: e, args: '--app="' + u + '" --start-fullscreen --user-data-dir="' + prof + '" --no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required', cover: '', fs: 'off' }); return true;
+}
+let lastBrowseOpen = 0;
+ipcMain.handle('browse:openSK', async (_e, o) => {
+  if (Date.now() - lastBrowseOpen < 1200) return { ok: true }; lastBrowseOpen = Date.now();
+  closeOverlay(false); const r = browse.open(Object.assign({}, o || {}));
+  setTimeout(() => { try { if (Array.from(browse.wins).some(w => w.isVisible())) stepAside(); else if (win && !win.isDestroyed()) comeBack(); } catch {} }, 500);
+  return r;
+});
 const splitArgs = s => (String(s || '').match(/"[^"]*"|\S+/g) || []).map(x => x.replace(/^"|"$/g, ''));
 function applyCompat(exe) { // old-game fixes: Windows compatibility flags for this one program (current user only). Fullscreen optimizations stay ON so games can be streamed.
   if (!isWin) return;
@@ -287,7 +301,7 @@ async function launchApp(a) {
   try {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
-    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: emuMode(target, a) || gameMode(a.fs), noWindow: false, exited: false };
+    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: emuMode(target, a) || (store.read('settings', {}).emuMax === false && gameMode(a.fs) !== 'off' ? 'autox' : gameMode(a.fs)), noWindow: false, exited: false };
     try { extras.onGameStart(); } catch {}
     statsTouch(a.id, 0);
     if (!isUrl && remoteLive && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
@@ -358,6 +372,7 @@ function overlayStateObj(opts) {
   return { game: gameState(), players: playersMeta(), apps: store.read('apps', []), settings: store.read('settings', {}), pads: padCount, music: !!(musicWin && !musicWin.isDestroyed()), opts: opts || {}, helper: !!(helper && helper.ready), covers: COVER_DIR(), stats: store.read('stats', {}), batteries, opaque: overlayOpaque, remote: remoteState() };
 }
 function openOverlay(opts) {
+  setTimeout(() => lockUI(), 0);
   const w = ensureOverlay(), d = displayNow(); try { w.setBounds(d.bounds); } catch {}
   overlayOpen = true; if (helper) helper.padIn(true);
   // Whatever fullscreen thing is in front (a game SKBox started, or any other): minimize it so even exclusive fullscreen lets go of the screen.
@@ -369,6 +384,7 @@ function openOverlay(opts) {
   if (moveAside) setTimeout(go, 220); else go();
 }
 function closeOverlay(refocus) {
+  setTimeout(() => lockUI(), 50);
   if (helper) helper.padIn(padTest);
   if (!overlayWin || overlayWin.isDestroyed()) { overlayOpen = false; return; }
   if (!overlayOpen && !overlayWin.isVisible()) return;

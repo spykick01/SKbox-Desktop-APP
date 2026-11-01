@@ -78,23 +78,29 @@
 
   // ---------- windows: switch / fit / hide / close any window, no trip into Windows needed ----------
   async function windows() {
-    subView('windows', 'Windows', 'Switch to, fit, hide or close any open window.');
-    const wb = (label, fn) => { const b = nav(el('button', 'btn', esc(label))); b.onclick = fn; return b; }, X = (n, a) => sk.extras.do(n, a), bar = el('div', 'cbar'), box = el('div'); box.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:10px;max-height:62vh;overflow:auto;padding:2px';
+    subView('windows', 'Windows', 'Tap windows to select them, then close the selected ones. Or switch, fit and hide.');
+    const wb = (label, fn) => { const b = nav(el('button', 'btn', esc(label))); b.onclick = fn; return b; }, X = (n, a) => sk.extras.do(n, a), bar = el('div', 'cbar'), box = el('div'), sel = new Map(); let last = [];
+    box.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:10px;max-height:58vh;overflow:auto;padding:2px';
+    const closeSel = async force => { if (!sel.size) { toast('Select some windows first'); return; } const items = Array.from(sel.values()); toast((force ? 'Ending ' : 'Closing ') + items.length + '\u2026'); for (const w of items) await X('winClose', { h: w.h, pid: w.pid, force }); sel.clear(); setTimeout(draw, 900); };
     const draw = async () => {
-      const r = await X('winList'); if (mode !== 'windows') return; box.innerHTML = '';
+      const r = await X('winList'); if (mode !== 'windows') return; box.innerHTML = ''; last = (r && r.wins) || []; Array.from(sel.keys()).forEach(k => { if (!last.some(w => w.h === k)) sel.delete(k); }); cb.textContent = 'Close selected (' + sel.size + ')';
       if (!r || !r.ok) { box.appendChild(el('p', 'sub', (r && r.error) || 'Could not read the windows.')); return; }
-      if (!r.wins.length) box.appendChild(el('p', 'sub', 'No other windows are open.'));
-      r.wins.forEach((w, i) => {
+      if (!last.length) box.appendChild(el('p', 'sub', 'No other windows are open.'));
+      last.forEach(w => {
         const row = el('div', 'cbar'); row.style.cssText = 'align-items:center;justify-content:space-between';
-        const lab = el('div', 'sub', (w.game ? '\u2605 ' : '') + esc(w.n || w.t).slice(0, 34) + ' \u2014 ' + esc(w.t).slice(0, 40) + (w.min ? ' (minimized)' : '')); lab.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0';
-        const sw =  wb('Switch', async () => { await X('winSwitch', { h: w.h }); sk.overlay.close(false); }), ft =  wb('Fit', async () => { await X('winFit', { h: w.h }); sk.overlay.close(false); toast('Fitted to the screen'); }), hd =  wb(w.min ? 'Show' : 'Hide', async () => { await X(w.min ? 'winSwitch' : 'winMin', { h: w.h }); if (w.min) sk.overlay.close(false); else setTimeout(draw, 500); });
-        const cl =  wb('Close', async () => { toast('Closing\u2026'); await X('winClose', { h: w.h, pid: w.pid, force: false }); setTimeout(draw, 900); });
-        row.append(lab, sw, ft, hd); if (!w.prot) row.appendChild(cl); box.appendChild(row); if (i === 0) sw.dataset.first = '';
+        const lab = el('div', 'sub', (sel.has(w.h) ? '\u2611 ' : '\u2610 ') + (w.game ? '\u2605 ' : '') + esc(w.n || w.t).slice(0, 30) + ' \u2014 ' + esc(w.t).slice(0, 36) + (w.min ? ' (minimized)' : '')); lab.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0';
+        row.appendChild(lab);
+        if (!w.prot) row.appendChild(wb(sel.has(w.h) ? 'Selected \u2713' : 'Select', () => { if (sel.has(w.h)) sel.delete(w.h); else sel.set(w.h, w); draw(); }));
+        row.append(wb('Switch', async () => { await X('winSwitch', { h: w.h }); sk.overlay.close(false); }), wb('Fit', async () => { await X('winFit', { h: w.h }); sk.overlay.close(false); toast('Fitted to the screen'); }), wb(w.min ? 'Show' : 'Hide', async () => { await X(w.min ? 'winSwitch' : 'winMin', { h: w.h }); if (w.min) sk.overlay.close(false); else setTimeout(draw, 500); }));
+        box.appendChild(row);
       });
       ensureFocus($('#screen'));
     };
-    bar.append(wb('Show desktop', () => X('minAll')), wb('Task Manager', () => X('taskmgr')), wb('Refresh', draw)); panel.append(bar, box); draw();
+    const cb = wb('Close selected (0)', () => closeSel(false));
+    bar.append(cb, wb('Force close selected', () => closeSel(true)), wb('Select all others', () => { last.forEach(w => { if (!w.game && !w.prot) sel.set(w.h, w); }); draw(); }), wb('Select none', () => { sel.clear(); draw(); }), wb('Show desktop', () => X('minAll')), wb('Task Manager', () => X('taskmgr')));
+    panel.append(bar, box); draw();
   }
+
   // ---------- messages ----------
   function messages() {
     const u = user(); mode = 'msg'; S.screen = 'web'; S.backFn = () => toMenu('msg'); S.startFn = () => toMenu('msg');

@@ -739,17 +739,24 @@
       const X = (n, a) => sk.extras.do(n, a), sv = (k, v) => { S.settings[k] = v; saveSettings(); };
       const say = (r, ok) => toast(r && r.ok ? (ok || 'Done') : ((r && r.error) || 'That did not work'));
       const info = el('div', 'sub', 'Loading\u2026'); pane.appendChild(info);
-      const box = el('div');
+      const box = el('div'), sel = new Map(); let last = [];
+      const bar = el('div', 'btnrow'), mkb = (label, fn) => { const b = nav(el('button', 'btn', label)); b.onclick = fn; bar.appendChild(b); return b; };
+      const upd = () => { cs.textContent = 'Close selected (' + sel.size + ')'; fs2.textContent = 'Force close selected'; };
+      const closeSel = force => { if (!sel.size) { toast('Tap windows in the list to select them first'); return; } const run = async () => { const items = Array.from(sel.values()); toast((force ? 'Ending ' : 'Closing ') + items.length + '\u2026'); for (const w of items) await X('winClose', { h: w.h, pid: w.pid, force }); sel.clear(); setTimeout(draw, 900); }; if (S.settings.winConfirm === false) run(); else confirm((force ? 'Force close ' : 'Close ') + sel.size + ' selected?', Array.from(sel.values()).map(w => w.n || w.t).slice(0, 6).join(', ') + (sel.size > 6 ? '\u2026' : ''), force ? 'Force close' : 'Close them', run, true); };
+      const cs = mkb('Close selected (0)', () => closeSel(false)), fs2 = mkb('Force close selected', () => closeSel(true));
+      mkb('Select all others', () => { last.forEach(w => { if (!w.game && !w.prot) sel.set(w.h, w); }); draw(); }); mkb('Select none', () => { sel.clear(); draw(); });
+      pane.appendChild(bar);
       const draw = async () => {
-        const r = await X('winList'); if (!pane.isConnected) return; box.innerHTML = '';
+        const r = await X('winList'); if (!pane.isConnected) return; box.innerHTML = ''; last = (r && r.wins) || []; Array.from(sel.keys()).forEach(k => { if (!last.some(w => w.h === k)) sel.delete(k); }); upd();
         if (!r || !r.ok) { info.textContent = (r && r.error) || 'Could not read the windows.'; return; }
         info.textContent = r.wins.length + ' open' + (r.game ? ' \u00B7 \u2605 is ' + r.game : '');
         r.wins.forEach(w => {
-          const it = el('div', 'item'); it.innerHTML = '<div>' + (w.game ? '\u2605 ' : '') + esc(w.t) + '<small>' + esc(w.n || 'unknown program') + ' \u00B7 ' + w.m + ' MB' + (w.min ? ' \u00B7 minimized' : '') + '</small></div>';
+          const it = el('div', 'item'); it.innerHTML = '<div>' + (sel.has(w.h) ? '\u2611 ' : '\u2610 ') + (w.game ? '\u2605 ' : '') + esc(w.t) + '<small>' + esc(w.n || 'unknown program') + ' \u00B7 ' + w.m + ' MB' + (w.min ? ' \u00B7 minimized' : '') + '</small></div>';
           const act = el('div', 'btnrow'); act.style.margin = '0';
           const mk = (label, fn) => { const b = nav(el('button', 'btn', label)); b.onclick = fn; act.appendChild(b); };
           const doClose = force => { const go2 = async () => { toast(force ? 'Ending it\u2026' : 'Closing\u2026'); const rr = await X('winClose', { h: w.h, pid: w.pid, force }); say(rr, rr && rr.state === 'forced' ? 'Ended' : 'Closed'); draw(); };
             if (S.settings.winConfirm === false) go2(); else confirm((force ? 'Force close ' : 'Close ') + (w.n || w.t) + '?', force ? 'It ends at once and may lose unsaved work. All windows of this app close.' : 'If it does not close in a few seconds, SKBox ends it.', force ? 'Force close' : 'Close', go2, true); };
+          if (!w.prot) mk(sel.has(w.h) ? 'Selected \u2713' : 'Select', () => { if (sel.has(w.h)) sel.delete(w.h); else sel.set(w.h, w); draw(); });
           mk('Switch', async () => { await X('winSwitch', { h: w.h }); }); mk('Fit', async () => { await X('winFit', { h: w.h }); toast('Fitted to the screen'); });
           mk('Close', () => doClose(false)); if (!w.prot) mk('Force', () => doClose(true));
           mk(w.min ? 'Show' : 'Hide', async () => { await X(w.min ? 'winFront' : 'winMin', { h: w.h }); setTimeout(draw, 500); });
@@ -767,7 +774,7 @@
       pane.appendChild(toggle('Ask before closing', 'A confirmation for Close and Force', S.settings.winConfirm !== false, v => sv('winConfirm', v)));
       pane.appendChild(cyc('Sort by', '', [['name', 'Name'], ['mem', 'Memory used']], () => S.settings.winSort || 'name', v => { sv('winSort', v); draw(); }));
       pane.appendChild(box); draw();
-      const tm = setInterval(() => { if (!pane.isConnected) return clearInterval(tm); if (S.settings.winAuto !== false) draw(); }, 4000);
+      const tm = setInterval(() => { if (!pane.isConnected) return clearInterval(tm); if (S.settings.winAuto !== false && !document.querySelector('.layer')) draw(); }, 4000);
     } else if (id === 'bright') {
       h('Display & brightness'); sub('Brightness works on laptop and built-in screens. The dimmer and night filter work on any monitor.');
       const X = (n, a) => sk.extras.do(n, a), sv = (k, v) => { S.settings[k] = v; saveSettings(); };

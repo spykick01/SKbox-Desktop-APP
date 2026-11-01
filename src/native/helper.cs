@@ -225,7 +225,7 @@ public static class SkHelper
 
     // ---------------- window watching ----------------
     class Watch
-    {
+    { public bool IsEmu;
         public int Pid; public string Mode; public int SkPid; public DateTime Start; public IntPtr Hwnd; public uint WinPid; public DateTime HwndSince;
         public bool Applied; public int Reapply; public DateTime AppliedAt; public bool FallbackUsed; public bool Found; public DateTime LastAlive; public RECT Target; public bool KeyDone; public bool ExclTried; public DateTime LastReapply; public bool Saved; public int OStyle, OEx; public IntPtr OMenu; public RECT ORect;
     }
@@ -440,10 +440,11 @@ public static class SkHelper
         {
             w.Hwnd = cand; w.HwndSince = DateTime.UtcNow; w.Applied = false; w.Reapply = 0; w.KeyDone = false; w.ExclTried = false; valid = true;
             uint wp; GetWindowThreadProcessId(cand, out wp); w.WinPid = wp; w.Found = true;
+            try { string pn = System.Diagnostics.Process.GetProcessById((int)wp).ProcessName; w.IsEmu = System.Text.RegularExpressions.Regex.IsMatch(pn, "^(cemu|yuzu|suyu|sudachi|ryujinx|citra|lime3ds|azahar|rpcs3|dolphin|pcsx2|duckstation|ppsspp|xemu|xenia|melonds|mgba|vita3k|shadps4|redream|flycast|bsnes|snes9x)", System.Text.RegularExpressions.RegexOptions.IgnoreCase); } catch { w.IsEmu = false; }
             RECT r; GetWindowRect(cand, out r);
             Emit("WIN " + cand.ToInt64().ToString(CultureInfo.InvariantCulture) + " " + wp + " " + (r.Right - r.Left) + " " + (r.Bottom - r.Top));
         }
-        bool emu = w.Mode == "emu" || w.Mode == "emuw";
+        bool emu = w.Mode == "emu" || w.Mode == "emuw" || (w.IsEmu && w.Mode != "off" && w.Mode != "autox");   // recognised by the running program too, however SKBox launched it
         if (valid && emu)
         {   // emulators (Cemu and friends): clean full-screen window whether or not Remote play is on. "emuw" waits until a game is actually running (title shows it).
             string et = TextOf(w.Hwnd); bool want = w.Mode == "emu" || et.IndexOf('[') >= 0 || et.IndexOf('|') >= 0 || et.IndexOf(" - ", StringComparison.Ordinal) > 0;

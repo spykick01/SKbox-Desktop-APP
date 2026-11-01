@@ -227,6 +227,8 @@
     if (S.screen === 'web' && !layers().lastElementChild) return;
     const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
     S.pads = pads.map(p => p.index);
+    // Another SKBox window (SK menu, SKBrowse) is in front: do not react, but keep the button state so nothing fires when we come back.
+    if (K.inputLock || (K.isMainWindow && !document.hasFocus())) { for (const p of pads) { const st = ps[p.index] || (ps[p.index] = { b: [], rep: {} }); st.b = p.buttons.map(x => x.pressed); st.rep = {}; } return; }
     if (pads.length !== lastN) { lastN = pads.length; if (K.onPadCount) K.onPadCount(lastN); }
     for (const p of pads) {
       const st = ps[p.index] || (ps[p.index] = { b: [], rep: {} });
@@ -246,4 +248,5 @@
   window.addEventListener('gamepadconnected', e => K.toast('Controller connected: ' + (e.gamepad.id || '').split('(')[0].trim().slice(0, 40)));
   window.addEventListener('gamepaddisconnected', () => K.toast('Controller disconnected'));
   K.startPads = () => requestAnimationFrame(poll);
+  try { K.isMainWindow = !/overlay|backdrop/.test(location.pathname); if (window.sk && window.sk.on) window.sk.on('input-lock', v => { K.inputLock = !!v; }); } catch (_) {}
 })();

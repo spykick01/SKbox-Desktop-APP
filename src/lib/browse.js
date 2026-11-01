@@ -118,7 +118,7 @@ function create(ctx) {
     const cfg = { adblock: isApp ? a.app.adblock !== false : opt('sbAdblock', true), allow: new Set(ST().allow || []), count: null, lock: isApp };
     if (isApp && a.app.adblock === false) cfg.allow = new Set();
     const ses = hook(part, cfg);
-    const win = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, fullscreen: isApp ? !a.app.windowed : opt('sbFullscreen', true), backgroundColor: '#0b0f1a', show: false, skipTaskbar: false, title: isApp ? a.app.name : 'SKBrowse', webPreferences: { preload: path.join(__dirname, '..', 'browsePreload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
+    const win = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, fullscreen: isApp ? !a.app.windowed : opt('sbFullscreen', true), backgroundColor: '#0b0f1a', show: true, skipTaskbar: false, title: isApp ? a.app.name : 'SKBrowse', webPreferences: { preload: path.join(__dirname, '..', 'browsePreload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false } });
     win._appId = isApp ? a.app.id : ''; win._priv = priv; wins.add(win); win.removeMenu && win.removeMenu();
     const home = isApp ? a.app.url : (opt('sbHome', '') || ''); const lockHost = isApp ? hostOf(a.app.url) : '';
     const tabs = []; let speed = 1, activeId = 0, nextId = 1, panel = '', htmlFs = false, barHidden = isApp && !!a.app.barHidden, zoomPct = isApp && a.app.zoom ? a.app.zoom : 100, ua2 = ''; const closed = [];
@@ -144,12 +144,14 @@ function create(ctx) {
       if (/^localhost(:\d+)?(\/.*)?$/i.test(s)) return 'http://' + s;
       return (SEARCH[opt('sbSearch', 'google')] || SEARCH.google) + encodeURIComponent(s);
     };
+    function drm(u) { try { if (!/^https?:/.test(u) || !ctx.isDrm(u)) return false; if (!ctx.edge || !ctx.edge()) { ctx.notify('SKBrowse', 'Protected shows need Microsoft Edge or Chrome installed'); return false; } ctx.openEdge(u); return true; } catch { return false; } }
     function allowNav(u) {
       if (!isApp) return true; const h = hostOf(u); if (!h) return /^(about|blob|data):/i.test(u);
       if (sameSite(h, lockHost)) return true; if (a.app.auth !== false && AUTH_HOSTS.some(x => h === x || h.endsWith('.' + x))) return true; return false;
     }
     function newTab(url, bg) {
       if (isApp && tabs.length >= 1) { const t = tabs[0]; if (url && allowNav(url)) t.wc.loadURL(url); else if (url) ctx.notify(a.app.name, 'This app only works for ' + lockHost); return t.id; }
+      if (url && drm(fixUrl(url))) return 0;
       if (tabs.length >= 30) { ctx.notify('SKBrowse', 'Too many tabs open'); return 0; }
       const view = new WebContentsView({ webPreferences: { partition: part, preload: path.join(__dirname, '..', 'guestPreload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required', spellcheck: false } });
       const wc = view.webContents, tab = { id: nextId++, view, wc, title: '', url: '', icon: '', loading: false, audible: false, muted: false, pinned: false }; view._tab = tab; tabs.push(tab);
@@ -157,10 +159,10 @@ function create(ctx) {
       const upd = () => { tab.url = wc.getURL(); tab.title = wc.getTitle(); send(); };
       wc.on('page-title-updated', upd); wc.on('did-navigate', (_e, u) => { upd(); history(tab); injectAll(tab); if (isApp && a.app.resume !== false && /^https?:/.test(u) && sameSite(hostOf(u), lockHost)) { const o = ST(); o.last = o.last || {}; if (o.last[a.app.id] !== u) { o.last[a.app.id] = u; SAVE(o); } } }); wc.on('did-navigate-in-page', upd);
       wc.on('page-favicon-updated', (_e, f) => { tab.icon = (f && f[0]) || ''; send(); });
-      wc.on('did-start-loading', () => { tab.loading = true; send(); }); wc.on('did-stop-loading', () => { tab.loading = false; upd(); injectAll(tab); });
+      wc.on('did-start-loading', () => { tab.loading = true; send(); }); wc.on('did-stop-loading', () => { tab.loading = false; upd(); injectAll(tab); if (tab.id === activeId && !panel) { try { wc.focus(); } catch {} } });
       wc.on('audio-state-changed', e => { tab.audible = !!e.audible; send(); });
       wc.on('dom-ready', () => { injectAll(tab); try { wc.send('active-pad', a.pad | 0); } catch {} try { const z = (ST().zoom || {})[hostOf(wc.getURL())]; if (z) wc.setZoomFactor(z / 100); else if (isApp && a.app.zoom) wc.setZoomFactor(a.app.zoom / 100); else if (opt('sbZoom', 100) !== 100) wc.setZoomFactor(opt('sbZoom', 100) / 100); } catch {} });
-      wc.on('will-navigate', (e, u) => { if (!allowNav(u)) { e.preventDefault(); ctx.notify(isApp ? a.app.name : 'SKBrowse', 'Blocked: ' + hostOf(u) + (isApp ? ' (this app only works for ' + lockHost + ')' : '')); } });
+      wc.on('will-navigate', (e, u) => { if (drm(u)) { e.preventDefault(); return; } if (!allowNav(u)) { e.preventDefault(); ctx.notify(isApp ? a.app.name : 'SKBrowse', 'Blocked: ' + hostOf(u) + (isApp ? ' (this app only works for ' + lockHost + ')' : '')); } });
       wc.on('will-redirect', (e, u) => { if (!allowNav(u)) e.preventDefault(); });
       wc.setWindowOpenHandler(({ url }) => { if (isApp) { if (allowNav(url)) wc.loadURL(url); return { action: 'deny' }; } if (opt('sbPopups', true) === false && !/^https?:/.test(url)) return { action: 'deny' }; newTab(url); return { action: 'deny' }; });
       wc.on('enter-html-full-screen', () => { htmlFs = true; try { win.setFullScreen(true); } catch {} layout(); send(); }); wc.on('leave-html-full-screen', () => { htmlFs = false; if (!opt('sbFullscreen', true)) try { win.setFullScreen(false); } catch {} layout(); send(); });
@@ -168,7 +170,7 @@ function create(ctx) {
       wc.on('context-menu', (_e, p) => { const { Menu } = require('electron'); const m = []; if (p.linkURL) { if (!isApp) m.push({ label: 'Open link in new tab', click: () => newTab(p.linkURL) }); m.push({ label: 'Copy link', click: () => clipboard.writeText(p.linkURL) }); } if (p.selectionText) { m.push({ label: 'Copy', role: 'copy' }); if (!isApp) m.push({ label: 'Search for \u201C' + p.selectionText.slice(0, 24) + '\u201D', click: () => newTab(p.selectionText) }); } if (p.isEditable) m.push({ label: 'Paste', role: 'paste' }); if (p.mediaType === 'image') { m.push({ label: 'Save image', click: () => { try { wc.downloadURL(p.srcURL); } catch {} } }, { label: 'Copy image address', click: () => clipboard.writeText(p.srcURL) }); } m.push({ label: 'Back', enabled: wc.canGoBack(), click: () => wc.goBack() }, { label: 'Reload', click: () => wc.reload() }); Menu.buildFromTemplate(m).popup(); });
       wc.on('render-process-gone', () => { try { wc.reload(); } catch {} });
       activeId = bg ? activeId : tab.id; const u = fixUrl(url); if (!allowNav(u)) { wc.loadURL(home); } else if (u !== 'about:blank') wc.loadURL(u); else wc.loadFile(path.join(__dirname, '..', '..', 'renderer', 'browse', 'newtab.html'));
-      layout(); send(); return tab.id;
+      layout(); send(); setTimeout(focusActive, 60); return tab.id;
     }
     function injectAll(tab) {
       const wc = tab.wc, u = wc.getURL(); if (!/^https?:/.test(u)) return; const h = hostOf(u), off = cfg.allow.has(h) || cfg.allow.has(THIRD(h));
@@ -186,14 +188,15 @@ function create(ctx) {
     }
     const back = () => { const t = act(); if (t) { if (t.wc.canGoBack()) t.wc.goBack(); else if (!isApp && tabs.length > 1 && opt('sbBackClose', false)) closeTab(t.id); } };
     const fwd = () => { const t = act(); if (t && t.wc.canGoForward()) t.wc.goForward(); };
-    function setPanel(p) { panel = p || ''; layout(); send(); }
+    function focusActive() { try { if (panel) chromeView.webContents.focus(); else { const t = act(); if (t) t.wc.focus(); else chromeView.webContents.focus(); } } catch {} }
+    function setPanel(p) { panel = p || ''; layout(); send(); setTimeout(focusActive, 30); }
     function close() { try { for (const t of tabs) { try { t.wc.close(); } catch {} } win.destroy(); } catch {} }
     function zoom(d) { const t = act(); if (!t) return; zoomPct = d === 0 ? 100 : Math.max(30, Math.min(300, zoomPct + d)); t.wc.setZoomFactor(zoomPct / 100); const o = ST(); o.zoom = o.zoom || {}; const h = hostOf(t.url); if (h) { if (zoomPct === 100) delete o.zoom[h]; else o.zoom[h] = zoomPct; SAVE(o); } send(); }
     win._api = { newTab, act, close };
     cfg.count = () => { if (Date.now() - (cfg.lastSend || 0) > 1500) { cfg.lastSend = Date.now(); send(); } };
     const cmds = {
-      newtab: x => { newTab(x.url || ''); return true; }, close: x => { closeTab(x.id); return true; }, activate: x => { if (tabs.some(t => t.id === x.id)) { activeId = x.id; panel = ''; layout(); send(); } return true; },
-      go: x => { const t = act(); if (!t) return newTab(x.text); const u = fixUrl(x.text); if (!allowNav(u)) return false; panel = ''; t.wc.loadURL(u); layout(); try { t.wc.focus(); } catch {} return true; },
+      newtab: x => { newTab(x.url || ''); return true; }, close: x => { closeTab(x.id); return true; }, activate: x => { if (tabs.some(t => t.id === x.id)) { activeId = x.id; panel = ''; layout(); send(); setTimeout(focusActive, 30); } return true; },
+      go: x => { const t = act(); if (!t) return newTab(x.text); const u = fixUrl(x.text); if (!allowNav(u)) return false; if (drm(u)) return true; panel = ''; t.wc.loadURL(u); layout(); try { t.wc.focus(); } catch {} return true; },
       back: () => { back(); return true; }, fwd: () => { fwd(); return true; }, reload: () => { const t = act(); if (t) t.wc.reload(); return true; }, stop: () => { const t = act(); if (t) t.wc.stop(); return true; },
       home: () => { const t = act(); if (t) { if (isApp) t.wc.loadURL(home); else if (home) t.wc.loadURL(fixUrl(home)); else t.wc.loadFile(path.join(__dirname, '..', '..', 'renderer', 'browse', 'newtab.html')); } return true; },
       zoomin: () => { zoom(10); return true; }, zoomout: () => { zoom(-10); return true; }, zoomreset: () => { zoom(0); return true; },
@@ -238,9 +241,10 @@ function create(ctx) {
     };
     win._cmd = (c, x) => (cmds[c] ? cmds[c](x || {}) : false);
     win.on('resize', layout); win.on('enter-full-screen', layout); win.on('leave-full-screen', layout);
-    win.on('closed', () => { wins.delete(win); if (!isApp && !priv && opt('sbClearExit', false)) { try { ses.clearStorageData({ storages: ['cookies', 'localstorage', 'cachestorage'] }); ses.clearCache(); } catch {} } try { ctx.afterClose && ctx.afterClose(isApp); } catch {} });
+    win.on('closed', () => { wins.delete(win); try { ctx.lock && ctx.lock(); } catch {} if (!isApp && !priv && opt('sbClearExit', false)) { try { ses.clearStorageData({ storages: ['cookies', 'localstorage', 'cachestorage'] }); ses.clearCache(); } catch {} } try { ctx.afterClose && ctx.afterClose(isApp); } catch {} });
     win.on('focus', () => { lastFocus = win; });
-    win.once('ready-to-show', () => { win.show(); win.focus(); layout(); });
+    win.show(); win.focus(); layout(); setTimeout(() => { try { if (!win.isDestroyed()) { win.show(); win.focus(); focusActive(); ctx.lock && ctx.lock(); } } catch {} }, 250);
+    ['show', 'hide', 'minimize', 'restore'].forEach(e => win.on(e, () => { try { ctx.lock && ctx.lock(); } catch {} }));
     if (isApp) { const last = a.app.resume !== false ? ((ST().last || {})[a.app.id] || '') : ''; newTab(last && sameSite(hostOf(last), lockHost) ? last : a.app.url); if (a.app.muted) { try { tabs[0].wc.setAudioMuted(true); tabs[0].muted = true; } catch {} } }
     else if (a.url) newTab(a.url);
     else if (!priv && opt('sbRestore', false) && (ST().session || []).length) (ST().session || []).slice(0, 12).forEach(u => newTab(u));
@@ -275,6 +279,7 @@ function create(ctx) {
   const SETTXT = '(function(t,s){var e=document.activeElement;if(!e)return;if(e.isContentEditable){e.textContent=t;e.dispatchEvent(new Event("input",{bubbles:true}));}else{var pr=e.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,ds=Object.getOwnPropertyDescriptor(pr,"value");if(ds&&ds.set)ds.set.call(e,t);else e.value=t;e.dispatchEvent(new Event("input",{bubbles:true}));}if(s){e.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true}));var f=e.form;if(f&&!e.isContentEditable)try{f.requestSubmit?f.requestSubmit():f.submit();}catch(x){}}})';
   function oskResult(r) { const wc = oskWc; oskWc = null; if (!wc || wc.isDestroyed()) return false; if (!r.cancel) wc.executeJavaScript(SETTXT + '(' + JSON.stringify(String(r.text || '')) + ',' + (r.send ? 'true' : 'false') + ')').catch(() => {}); try { const w = fromWin({ sender: wc }); if (w) { w.show(); w.focus(); wc.focus(); } } catch {} return true; }
   const autoList = () => { try { if (opt('sbAutoList', true) && Date.now() - (ST().listAt || 0) > 7 * 86400000) updateList(); } catch {} };
-  return { autoList, favicon, oskResult, hasOsk: () => !!oskWc, open, wins, installExt, removeExt, toggleExt, updateList, loadAllExt, extList: () => ST().ext || [], stats: () => ({ blocked, hosts: adHosts.size, listAt: ST().listAt || 0 }), hook, isDrm: u => DRM.some(d => { const h = hostOf(u); return h === d || h.endsWith('.' + d); }), closeAll: () => { for (const w of Array.from(wins)) { try { w.destroy(); } catch {} } }, whichFocused: () => lastFocus, cmdFor: wc => { for (const w of wins) { if (w.webContents === wc || w.contentView.children.some(v => v.webContents === wc)) return w; } return null; } };
+  const setPaused = v => { for (const w of wins) { try { w.contentView.children.forEach(c => { try { c.webContents.send('pad-pause', !!v); } catch {} }); } catch {} } };
+  return { setPaused, autoList, favicon, oskResult, hasOsk: () => !!oskWc, open, wins, installExt, removeExt, toggleExt, updateList, loadAllExt, extList: () => ST().ext || [], stats: () => ({ blocked, hosts: adHosts.size, listAt: ST().listAt || 0 }), hook, isDrm: u => DRM.some(d => { const h = hostOf(u); return h === d || h.endsWith('.' + d); }), closeAll: () => { for (const w of Array.from(wins)) { try { w.destroy(); } catch {} } }, whichFocused: () => lastFocus, cmdFor: wc => { for (const w of wins) { if (w.webContents === wc || w.contentView.children.some(v => v.webContents === wc)) return w; } return null; } };
 }
 module.exports = { create, unzip, crxToZip, DRM_HOSTS: DRM };

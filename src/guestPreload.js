@@ -4,6 +4,7 @@ const { ipcRenderer } = require('electron');
 let ACTIVE = 0;
 const toHost = (ch, arg) => { try { ipcRenderer.sendToHost(ch, arg); } catch (e) {} try { ipcRenderer.send('guest:' + ch, arg); } catch (e) {} };
 ipcRenderer.on('active-pad', (_e, i) => { ACTIVE = i | 0; });
+let PAUSED = false; ipcRenderer.on('pad-pause', (_e, v) => { PAUSED = !!v; });
 window.addEventListener('keydown', e => { if (e.ctrlKey && e.shiftKey && (e.key === 'H' || e.key === 'h')) toHost('home'); });
 window.addEventListener('DOMContentLoaded', () => {
   const cur = document.createElement('div');
@@ -67,6 +68,7 @@ window.addEventListener('DOMContentLoaded', () => {
     requestAnimationFrame(loop);
     const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
     const g = pads.find(p => p.index === ACTIVE) || pads[0]; if (!g) { cur.style.display = 'none'; return; }
+    if (PAUSED) { prev = g.buttons.map(x => x.pressed); cur.style.display = 'none'; return; }
     const dt = Math.min(50, ts - last || 16) / 16; last = ts;
     const lx = dz(g.axes[0] || 0), ly = dz(g.axes[1] || 0), ry = dz(g.axes[3] || 0);
     if (lx || ly) { cx = Math.max(0, Math.min(innerWidth - 1, cx + lx * Math.abs(lx) * 20 * dt)); cy = Math.max(0, Math.min(innerHeight - 1, cy + ly * Math.abs(ly) * 20 * dt)); idle = 0; if (mode !== 'cursor') { mode = 'cursor'; ring.style.display = 'none'; } fire(document.elementFromPoint(cx, cy) || document.body, 'mousemove', cx, cy); }
