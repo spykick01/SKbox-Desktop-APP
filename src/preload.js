@@ -20,7 +20,8 @@ contextBridge.exposeInMainWorld('skbox', {
   bt: { list: () => inv('bt:run', 'list'), scan: () => inv('bt:run', 'scan'), pair: id => inv('bt:run', 'pair', id), unpair: id => inv('bt:run', 'unpair', id) },
   overlay: { state: () => inv('overlay:state'), close: r => inv('overlay:close', r), home: () => inv('overlay:home'), screenshot: () => inv('overlay:screenshot'), setPlayer: (slot, u) => inv('overlay:setPlayer', slot, u), oskResult: r => inv('overlay:osk-result', r) },
   music: { open: u => inv('music:open', u), ensure: u => inv('music:ensure', u), status: () => inv('music:status'), cmd: (c, a) => inv('music:cmd', c, a) },
+  browse: { engines: () => inv('browse:engines'), drm: u => inv('browse:drm', u), updateList: () => inv('browse:list'), launchApp: a => inv('browse:launchApp', a), open: o => inv('browse:openSK', o), favicon: u => inv('browse:favicon', u), clearApp: id => inv('browse:clearApp', id), clear: w => inv('browse:clearData', w), exportBookmarks: () => inv('browse:exportBookmarks'), openDownloads: () => inv('browse:openDownloads'), resetOpts: () => inv('browse:resetOpts'), info: u => inv('browse:info', u) },
   extras: { do: (n, a) => inv('extras:do', n, a) },
   installUpdate: () => inv('update:install'),
-  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs', 'padin', 'padtest', 'battery', 'timer:fired', 'remote:state'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
+  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'apps:changed', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs', 'padin', 'padtest', 'battery', 'timer:fired', 'remote:state'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
 });

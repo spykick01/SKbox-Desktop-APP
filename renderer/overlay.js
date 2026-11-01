@@ -47,6 +47,8 @@
       ['msg', '\u{1F4AC}', 'Messages', () => messages(), 'Open SKchat to read and send messages.'],
       ['music', '\u266A', 'Music', () => music(), 'Control SKMusic: skip, pause, volume and quick radios.'],
       ['quick', '\u{1F3AE}', 'Quick play', () => quick(), 'Switch to another game or app.'],
+      ['windows', '\u{1FA9F}', 'Windows', () => windows(), 'Switch to, fit, hide or close any open window without leaving SKBox.'],
+      ['browse', '\u{1F310}', 'SKBrowse', () => sk.browse.open({ pad: 0 }).then(() => sk.overlay.close(false)), 'Open the web browser.'],
       ['players', '\u{1F465}', 'Players & controllers', () => players(false), 'See who is playing and set up Player 2.'],
       ...(st.remote && st.remote.on ? [['remote', '\u{1F4E1}', 'Remote play', () => remotePanel(), st.remote.client ? st.remote.client.name + ' is playing. Disconnect, fix the picture or change quality.' : 'Remote play is on. Nobody is connected.']] : []),
       ['vol', '\u{1F50A}', 'Volume', () => sk.sys.volume('mute'), 'Left and right change the volume. Press A to mute.'],
@@ -73,6 +75,26 @@
     hints([['A', 'Select'], ['B', 'Back']]); panel.innerHTML = '<h2>' + esc(title) + '</h2>' + (sub ? '<p class="sub">' + esc(sub) + '</p>' : '');
   }
 
+
+  // ---------- windows: switch / fit / hide / close any window, no trip into Windows needed ----------
+  async function windows() {
+    subView('windows', 'Windows', 'Switch to, fit, hide or close any open window.');
+    const wb = (label, fn) => { const b = nav(el('button', 'btn', esc(label))); b.onclick = fn; return b; }, X = (n, a) => sk.extras.do(n, a), bar = el('div', 'cbar'), box = el('div'); box.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:10px;max-height:62vh;overflow:auto;padding:2px';
+    const draw = async () => {
+      const r = await X('winList'); if (mode !== 'windows') return; box.innerHTML = '';
+      if (!r || !r.ok) { box.appendChild(el('p', 'sub', (r && r.error) || 'Could not read the windows.')); return; }
+      if (!r.wins.length) box.appendChild(el('p', 'sub', 'No other windows are open.'));
+      r.wins.forEach((w, i) => {
+        const row = el('div', 'cbar'); row.style.cssText = 'align-items:center;justify-content:space-between';
+        const lab = el('div', 'sub', (w.game ? '\u2605 ' : '') + esc(w.n || w.t).slice(0, 34) + ' \u2014 ' + esc(w.t).slice(0, 40) + (w.min ? ' (minimized)' : '')); lab.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0';
+        const sw =  wb('Switch', async () => { await X('winSwitch', { h: w.h }); sk.overlay.close(false); }), ft =  wb('Fit', async () => { await X('winFit', { h: w.h }); sk.overlay.close(false); toast('Fitted to the screen'); }), hd =  wb(w.min ? 'Show' : 'Hide', async () => { await X(w.min ? 'winSwitch' : 'winMin', { h: w.h }); if (w.min) sk.overlay.close(false); else setTimeout(draw, 500); });
+        const cl =  wb('Close', async () => { toast('Closing\u2026'); await X('winClose', { h: w.h, pid: w.pid, force: false }); setTimeout(draw, 900); });
+        row.append(lab, sw, ft, hd); if (!w.prot) row.appendChild(cl); box.appendChild(row); if (i === 0) sw.dataset.first = '';
+      });
+      ensureFocus($('#screen'));
+    };
+    bar.append(wb('Show desktop', () => X('minAll')), wb('Task Manager', () => X('taskmgr')), wb('Refresh', draw)); panel.append(bar, box); draw();
+  }
   // ---------- messages ----------
   function messages() {
     const u = user(); mode = 'msg'; S.screen = 'web'; S.backFn = () => toMenu('msg'); S.startFn = () => toMenu('msg');
@@ -112,7 +134,7 @@
   // ---------- remote play (controls live here, not in the player app) ----------
   function remotePanel() {
     subView('remote', 'Remote play', '');
-    const QO = [['smooth', '720p \u00B7 60 fps (fastest)'], ['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']];
+    const QO = [['smooth', '720p \u00B7 60 fps (fastest)'], ['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps'], ['sharp', '1080p \u00B7 60 fps, extra sharp']];
     let rs = st.remote || { cfg: {} };
     const info = el('div', 'np', ''); panel.appendChild(info);
     const btn = (fn, first) => { const b = nav(el('button', 'btn', '')); if (first) b.dataset.first = ''; b.onclick = fn; return b; };
@@ -142,7 +164,7 @@
     const grid = el('div', 'qgrid');
     const stt = st.stats || {}; S.apps.slice().sort((x, y) => ((stt[y.id] || {}).last || 0) - ((stt[x.id] || {}).last || 0)).forEach((a, i) => {
       const t = nav(el('button', 'qt', '<small>' + esc(a.name) + '</small>')); if (a.cover) t.style.backgroundImage = 'url("' + fileUrl(a.cover) + '")'; if (i === 0) t.dataset.first = '';
-      t.onclick = () => { const go = async () => { const r = await sk.launch({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: true }); if (!r.ok) toast(r.error || 'Could not start that.'); else sk.overlay.close(false); }; if (st.game) confirm('Switch games?', 'This closes ' + st.game.name + ' and starts ' + a.name + '.', 'Switch', go); else go(); };
+      t.onclick = () => { const go = async () => { const r = a.kind === 'bapp' ? await sk.browse.launchApp({ id: a.id, name: a.name, url: a.url, adblock: a.adblock !== false, auth: a.auth !== false, engine: a.engine || 'built', cover: a.cover, resume: a.resume !== false, muted: !!a.muted, barHidden: !!a.barHidden, windowed: !!a.windowed, dark: !!a.dark, zoom: a.zoom || 0, pad: 0 }) : await sk.launch({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: true }); if (!r.ok) toast(r.error || 'Could not start that.'); else sk.overlay.close(false); }; if (st.game) confirm('Switch games?', 'This closes ' + st.game.name + ' and starts ' + a.name + '.', 'Switch', go); else go(); };
       grid.appendChild(t);
     });
     panel.appendChild(grid); ensureFocus(panel.parentNode.querySelector('.ovpanel'), grid.firstChild);

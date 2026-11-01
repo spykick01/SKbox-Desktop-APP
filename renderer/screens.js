@@ -4,7 +4,8 @@
   const K = window.K, { sk, S, $, el, esc, nav, fileUrl, toast, hints, focus, ensureFocus, openLayer, closeLayer, confirm, menu, busy, osk, field, setBg } = window.K;
   const BUILTIN = [
     { id: 'skchat', name: 'SKchat', kind: 'web', url: 'https://sksmpchat.netlify.app/chat', art: 'assets/skchat.png', grad: 'linear-gradient(160deg,#0e4a5c,#0b1020)', tag: 'Chat, calls and friends' },
-    { id: 'skmusic', name: 'SKMusic', kind: 'music', url: 'https://sksmpchat.netlify.app/skmusic', art: 'assets/skmusic.png', grad: 'linear-gradient(160deg,#6b1fa0,#14081f)', tag: 'Keeps playing while you game' }
+    { id: 'skmusic', name: 'SKMusic', kind: 'music', url: 'https://sksmpchat.netlify.app/skmusic', art: 'assets/skmusic.png', grad: 'linear-gradient(160deg,#6b1fa0,#14081f)', tag: 'Keeps playing while you game' },
+    { id: 'skbrowse', name: 'SKBrowse', kind: 'browse', url: '', art: 'assets/skbrowse.png', grad: 'linear-gradient(160deg,#0b6e8f,#081425)', tag: 'Web, shows, ad block and extensions' }
   ];
   const PACKS = [
     { id: 'west', name: 'Wild West', items: [['west_hat', 'Sunset Hat'], ['west_star', 'Sheriff Star'], ['west_shoe', 'Lucky Horseshoe'], ['west_cactus', 'Cactus'], ['west_mesa', 'Canyon'], ['west_boot', 'Boot']] },
@@ -242,7 +243,7 @@
       t._onfocus = () => {
         S.lastTile = i; S.lastTileId = a.id || 'lib';
         if (a.lib) { info.innerHTML = '<h1>Library</h1><p>' + (allApps().length) + ' apps and games. Pin the ones you want on this screen.</p><div class="go"><i class="key k-A">A</i> Open</div>'; setBg(''); }
-        else { info.innerHTML = '<h1>' + esc(a.name) + '</h1><p>' + esc([a.tag || a.exe || '', playInfo(a)].filter(Boolean).join(' \u00B7 ')) + '</p><div class="go"><i class="key k-A">A</i> ' + (isRunning(a) ? 'Resume' : a.kind === 'web' ? 'Open' : 'Play') + '</div>'; setBg(a.cover ? fileUrl(a.cover) : ''); }
+        else { info.innerHTML = '<h1>' + esc(a.name) + '</h1><p>' + esc([a.tag || a.exe || '', playInfo(a)].filter(Boolean).join(' \u00B7 ')) + '</p><div class="go"><i class="key k-A">A</i> ' + (isRunning(a) ? 'Resume' : ['web', 'browse', 'bapp'].includes(a.kind) ? 'Open' : 'Play') + '</div>'; setBg(a.cover ? fileUrl(a.cover) : ''); }
       };
       t.onclick = () => a.lib ? go('library') : openApp(a);
       if (!a.lib) t._onopts = () => appMenu(a, 'home'); else t._onopts = () => toast('Press A to open your Library');
@@ -306,7 +307,7 @@
     if (want) ensureFocus(root, want); else ensureFocus(root, addB);
   }
   function appMenu(a, ctx) {
-    const run = isRunning(a), it = [{ label: run ? 'Resume' : (a.kind === 'web' ? 'Open' : 'Play'), fn: () => openApp(a) }];
+    const run = isRunning(a), it = [{ label: run ? 'Resume' : (['web', 'browse', 'bapp'].includes(a.kind) ? 'Open' : 'Play'), fn: () => openApp(a) }];
     const back = () => ctx === 'lib' ? go('library', { focus: a.id }) : go('home');
     if (run) it.push({ label: 'Close game', fn: closeRunning });
     if (isPinned(a)) { it.push({ label: 'Unpin from Home', fn: () => { setPinned(a, false); back(); } }); if (ctx === 'home') { it.push({ label: 'Move left', fn: () => { movePin(a, -1); S.lastTileId = a.id; go('home'); } }); it.push({ label: 'Move right', fn: () => { movePin(a, 1); S.lastTileId = a.id; go('home'); } }); } }
@@ -318,7 +319,9 @@
       menu('Add ' + a.name + ' to', opts);
     } });
     inCols.forEach(c => it.push({ label: 'Remove from ' + c, fn: () => { cols[c] = cols[c].filter(x => x !== a.id); S.settings.collections = cols; saveSettings(); back(); } }));
-    if (!a.kind) {
+    if (a.kind === 'bapp') {
+      it.push({ label: 'Edit browser app\u2026', fn: () => bappMenu(a, back) });
+    } else if (!a.kind) {
       it.push({ label: 'Change cover art', fn: () => findCover(a, () => { saveApps(); back(); }) });
       it.push({ label: 'Edit name and path', fn: () => go('addApp', { app: a }) });
       it.push({ label: 'Remove', fn: () => confirm('Remove ' + a.name + '?', 'This only removes it from SKBox. Your files are not touched.', 'Remove', () => { S.apps = S.apps.filter(x => x.id !== a.id); setPinned(a, false); if (a.cover) sk.cover.remove(a.cover); saveApps(); back(); }, true) });
@@ -357,6 +360,11 @@
   async function openApp(a) {
     if (a.kind) { sk.stats.touch(a.id); (S.stats = S.stats || {})[a.id] = Object.assign({ ms: 0, n: 0 }, S.stats[a.id], { last: Date.now() }); }
     if (a.kind === 'music') { sk.music.open(activeUser()); return; }
+    if (a.kind === 'browse') { sk.browse.open({ pad: Math.max(0, K.padIndexOf(S.active)) }); return; }
+    if (a.kind === 'bapp') {
+      const go2 = async rep => { const stop = busy('Opening ' + a.name + '\u2026'); const r = await sk.browse.launchApp({ id: a.id, name: a.name, url: a.url, adblock: a.adblock !== false, auth: a.auth !== false, engine: a.engine || 'built', cover: a.cover, resume: a.resume !== false, muted: !!a.muted, barHidden: !!a.barHidden, windowed: !!a.windowed, dark: !!a.dark, zoom: a.zoom || 0, pad: Math.max(0, K.padIndexOf(S.active)) }); setTimeout(stop, 600); if (r && r.ok === false) toast(r.error || 'Could not open it'); };
+      if (S.game && S.game.id !== a.id && a.engine === 'edge') confirm('Switch?', S.game.name + ' is running. Close it and open ' + a.name + '?', 'Switch', () => go2()); else if (S.game && S.game.id === a.id) sk.game.resume(); else go2(); return;
+    }
     if (a.kind === 'web') { go('web', { app: a }); return; }
     const payload = replace => ({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: !!replace });
     const run = async replace => { const stop = busy('Launching ' + a.name + '\u2026'); const r = await sk.launch(payload(replace)); setTimeout(stop, 700); if (!r.ok) toast(r.error || 'Could not launch.'); };
@@ -364,6 +372,7 @@
     else if (S.game) sk.game.resume(); else run(false);
   }
   sk.on('launch-error', m => toast('Could not start: ' + m));
+  sk.on('apps:changed', async () => { try { const a = await sk.store.get('apps', []); S.apps = Array.isArray(a) ? a : ((a && a.apps) || []); if (['home', 'library'].includes(S.screen)) go(S.screen); } catch (_) {} });
   sk.on('game:state', async g => { S.game = g; try { S.stats = (await sk.store.get('stats', {})) || S.stats; } catch (_) {} if (S.screen === 'home') go('home'); else if (S.screen === 'library') go('library', { focus: S.lastLibId }); });
   // Player 2: a second controller connects, they pick a profile, done
   function p2Check(n) {
@@ -474,8 +483,65 @@
     wv.addEventListener('console-message', () => {});
   }
 
+
+  // ---------- browser apps: one website as its own app ----------
+  const bapps = () => S.apps.filter(a => a.kind === 'bapp');
+  async function bappCover(d) { const r = await sk.browse.favicon(d.url); if (r && r.ok) { if (d.cover && d.cover !== r.file) sk.cover.remove(d.cover); d.cover = r.file; d.fit = 'icon'; d.coverAuto = true; return true; } return false; }
+  async function createBapp(done) {
+    osk({ title: 'Website address (for example youtube.com)', value: '', submitLabel: 'Next', onDone: async v0 => {
+      let v = String(v0 || '').trim(); if (!v) return; if (!/^https?:\/\//i.test(v)) v = 'https://' + v.replace(/^\/+/, '');
+      let u; try { u = new URL(v); if (!u.hostname.includes('.')) throw 0; } catch (_) { toast('That does not look like a web address'); return; }
+      const stop = busy('Looking at the site\u2026'); const info = await sk.browse.info(u.href).catch(() => ({})); const drm = await sk.browse.drm(u.href); const eng = await sk.browse.engines(); stop();
+      const host = u.hostname.replace(/^www\./, ''), guess = ((info && info.title) || '').split(/\s[|\u2013\u2014\-\u00B7:]\s/)[0].trim().slice(0, 28) || host.split('.')[0].replace(/^./, c => c.toUpperCase());
+      osk({ title: 'Name for this app', value: guess, submitLabel: 'Next', onDone: name => {
+        name = (name || '').trim().slice(0, 28) || guess;
+        const d = { id: 'bapp_' + Date.now().toString(36), kind: 'bapp', name, url: u.origin + (u.pathname === '/' ? '/' : u.pathname) + u.search, adblock: true, engine: 'built', auth: true, cover: '', fit: '', coverAuto: true };
+        const finish = async () => { const stop2 = busy('Getting the site icon\u2026'); await bappCover(d); stop2(); S.apps.push(d); saveApps(); toast(name + ' added to your Library. Press X to pin it to Home.'); done && done(d); };
+        const askEngine = () => { if (drm && eng.edge) menu('This site plays protected shows (DRM)', [{ label: 'Open in an Edge window (Netflix, Disney+ and others play here)', fn: () => { d.engine = 'edge'; d.adblock = false; finish(); } }, { label: 'Open in SKBrowse (ad block, but protected shows will not play)', fn: () => finish() }]); else finish(); };
+        menu('Ad blocker for ' + name, [{ label: 'On (recommended)', fn: askEngine }, { label: 'Off for this app', fn: () => { d.adblock = false; askEngine(); } }]);
+      } });
+    } });
+  }
+  function bappMenu(a, back) {
+    const redo = () => { saveApps(); back && back(); };
+    menu(a.name + ' (' + new URL(a.url).hostname + ')', [
+      { label: 'Ad blocker: ' + (a.adblock !== false ? 'On' : 'Off') + ' (tap to change)', fn: () => { a.adblock = a.adblock === false; redo(); toast('Ad blocker ' + (a.adblock !== false ? 'on' : 'off') + ' for ' + a.name); } },
+      { label: 'Resume where I left off: ' + (a.resume !== false ? 'On' : 'Off'), fn: () => { a.resume = a.resume === false; redo(); } },
+      { label: 'Start muted: ' + (a.muted ? 'On' : 'Off'), fn: () => { a.muted = !a.muted; redo(); } },
+      { label: 'Start with the bar hidden: ' + (a.barHidden ? 'On' : 'Off') + ' (F10 shows it)', fn: () => { a.barHidden = !a.barHidden; redo(); } },
+      { label: 'Open in a window instead of fullscreen: ' + (a.windowed ? 'On' : 'Off'), fn: () => { a.windowed = !a.windowed; redo(); } },
+      { label: 'Dark pages: ' + (a.dark ? 'On' : 'Off'), fn: () => { a.dark = !a.dark; redo(); } },
+      { label: 'Page zoom: ' + (a.zoom || 100) + '% (tap to change)', fn: () => { const L = [100, 110, 125, 150, 175]; a.zoom = L[(L.indexOf(a.zoom || 100) + 1) % L.length]; redo(); } },
+      { label: 'Rename', fn: () => osk({ title: 'Name', value: a.name, submitLabel: 'Save', onDone: v => { v = (v || '').trim().slice(0, 28); if (v) { a.name = v; redo(); } } }) },
+      { label: 'Cover: use the site icon (auto)', fn: async () => { const stop = busy('Getting the site icon\u2026'); const ok = await bappCover(a); stop(); toast(ok ? 'Icon updated' : 'Could not get the site icon'); redo(); } },
+      { label: 'Cover: pick other art\u2026', fn: () => findCover(a, () => { a.coverAuto = false; redo(); }) },
+      { label: 'Engine: ' + (a.engine === 'edge' ? 'Edge window (plays Netflix etc.)' : 'SKBrowse') + ' (tap to change)', fn: async () => { const e = await sk.browse.engines(); if (!e.edge) { toast('Edge or Chrome was not found on this PC'); return; } a.engine = a.engine === 'edge' ? 'built' : 'edge'; redo(); toast('Now opens in ' + (a.engine === 'edge' ? 'an Edge window' : 'SKBrowse')); } },
+      { label: 'Allow sign-in pages (Google, Microsoft\u2026): ' + (a.auth !== false ? 'On' : 'Off'), fn: () => { a.auth = a.auth === false; redo(); } },
+      { label: 'Clear this app\u2019s logins and cache', fn: () => confirm('Clear ' + a.name + ' data?', 'You will be signed out of this site.', 'Clear', async () => { await sk.browse.clearApp(a.id); toast('Cleared'); }, true) },
+      { label: 'Remove', fn: () => confirm('Remove ' + a.name + '?', 'Only the app is removed. Its saved logins stay until you clear them.', 'Remove', () => { S.apps = S.apps.filter(x => x.id !== a.id); setPinned(a, false); if (a.cover) sk.cover.remove(a.cover); saveApps(); back && back(); }, true) }
+    ]);
+  }
+
+
+  // ---------- BIG: Streaming services hub. One tap adds a service as a browser app; each one resumes where you left off. ----------
+  const SERVICES = [
+    ['YouTube', 'https://www.youtube.com/', 'Free', 0], ['Twitch', 'https://www.twitch.tv/', 'Free', 0], ['Kick', 'https://kick.com/', 'Free', 0], ['Pluto TV', 'https://pluto.tv/', 'Free live TV', 0], ['Tubi', 'https://tubitv.com/', 'Free movies', 0],
+    ['Plex', 'https://watch.plex.tv/', 'Free', 0], ['Rumble', 'https://rumble.com/', 'Free', 0], ['Vimeo', 'https://vimeo.com/watch', 'Free', 0], ['Dailymotion', 'https://www.dailymotion.com/', 'Free', 0], ['Roku Channel', 'https://therokuchannel.roku.com/', 'Free', 0],
+    ['SoundCloud', 'https://soundcloud.com/', 'Music', 0], ['Crunchyroll', 'https://www.crunchyroll.com/', 'Anime', 1], ['Netflix', 'https://www.netflix.com/browse', 'Subscription', 1], ['Disney+', 'https://www.disneyplus.com/', 'Subscription', 1], ['Hulu', 'https://www.hulu.com/', 'Subscription', 1],
+    ['Max', 'https://www.max.com/', 'Subscription', 1], ['Prime Video', 'https://www.primevideo.com/', 'Subscription', 1], ['Peacock', 'https://www.peacocktv.com/', 'Subscription', 1], ['Paramount+', 'https://www.paramountplus.com/', 'Subscription', 1], ['Apple TV+', 'https://tv.apple.com/', 'Subscription', 1], ['YouTube TV', 'https://tv.youtube.com/', 'Live TV', 1], ['Spotify', 'https://open.spotify.com/', 'Music', 1]
+  ];
+  const svHas = u => { try { const h = new URL(u).hostname; return S.apps.find(a => a.kind === 'bapp' && new URL(a.url).hostname === h); } catch (_) { return null; } };
+  async function addService(sv, eng) {
+    const u = new URL(sv[1]), d = { id: 'bapp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kind: 'bapp', name: sv[0], tag: sv[2] + ' \u00B7 ' + u.hostname, url: sv[1], adblock: !sv[3], engine: sv[3] && eng && eng.edge ? 'edge' : 'built', auth: true, resume: true, cover: '', fit: '', coverAuto: true };
+    await bappCover(d); S.apps.push(d); saveApps(); return d;
+  }
+
   // ---------- settings ----------
   const NEWS = [
+    ['Streaming services hub', 'Settings > Streaming services adds YouTube, Twitch, Netflix, Disney+ and more as apps in one tap. Each one remembers where you were.'],
+    ['SKBrowse', 'A built-in browser with tabs, ad block and Chrome Web Store extensions. Settings > SKBrowse & browser apps turns any website into its own app, locked to that site.'],
+    ['Cemu and other emulators', 'Start in a clean, full-screen window with the menu bar hidden, even when Remote play is off.'],
+    ['Windows without leaving SKBox', 'The SK menu has a Windows page: switch to, fit, hide or close any window with the controller.'],
     ['Player controllers', 'Each controller now belongs to one player: Player 1\u2019s controller cannot use Player 2\u2019s things and the other way round. The highlight turns orange with a P2 tag when Player 2 is moving. Change who is who in Settings > Controllers, or press Y on a player chip on Home.'],
     ['Xbox button over fullscreen games', 'The menu now steps in front of any fullscreen game (even exclusive fullscreen) by minimizing it, and brings it back when you press Resume.'],
     ['Remote play: Fix black screen', 'If a fullscreen game looks black when streaming, use Fix black screen in the player\u2019s top bar.'],
@@ -496,7 +562,7 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['shows', '\u{1F37F}', 'Streaming services'], ['browser', '\u{1F310}', 'SKBrowse & browser apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
@@ -604,6 +670,70 @@
       pane.appendChild(toggle('Show CPU and memory', 'On Home and in the SK menu', !!S.settings.hud, v => sv('hud', v)));
       const autoOpts = [['', 'Nothing']].concat(allApps().map(a => [a.id, a.name]));
       pane.appendChild(cyc('Open an app when SKBox starts', 'For example SKMusic', autoOpts, () => S.settings.autoApp || '', v => sv('autoApp', v)));
+
+
+    } else if (id === 'shows') {
+      h('Streaming services'); sub('Tap a service to add it to your Library as an app. Apps remember where you left off. Protected services open in an Edge window.');
+      const eng0 = { edge: '' }; sk.browse.engines().then(e => { eng0.edge = e.edge; });
+      pane.appendChild(row('Add all free services', 'YouTube, Twitch, Kick, Pluto TV, Tubi, Plex, Rumble, Vimeo, Dailymotion, Roku Channel, SoundCloud', '+', async () => {
+        const stop = busy('Adding services\u2026'); let n = 0; for (const sv of SERVICES.filter(x => !x[3])) if (!svHas(sv[1])) { await addService(sv, eng0); n++; } stop(); toast(n ? n + ' services added. Press X on one to pin it to Home.' : 'They are all added already'); go('settings', { cat: 'shows' });
+      }));
+      [['Free and music', x => !x[3]], ['Subscription and protected (play in an Edge window)', x => x[3]]].forEach(([title, f]) => {
+        pane.appendChild(el('h3', '', title));
+        SERVICES.filter(f).forEach(sv => { const have = svHas(sv[1]);
+          pane.appendChild(row(sv[0], sv[2] + (sv[3] ? (eng0.edge === '' ? ' \u00B7 needs Edge or Chrome' : '') : ''), have ? 'Added \u2713' : 'Add', () => {
+            if (have) { menu(sv[0], [{ label: 'Open', fn: () => openApp(have) }, { label: 'Pin to Home', fn: () => { setPinned(have, true); toast(sv[0] + ' pinned to Home'); } }, { label: 'Edit\u2026', fn: () => bappMenu(have, () => go('settings', { cat: 'shows' })) }]); return; }
+            (async () => { const e = await sk.browse.engines(); if (sv[3] && !e.edge) toast('Edge or Chrome was not found, so ' + sv[0] + ' cannot play protected video here'); const stop = busy('Adding ' + sv[0] + '\u2026'); const d = await addService(sv, e); stop(); toast(sv[0] + ' added. Press X to pin it to Home.'); go('settings', { cat: 'shows', focus: d.id }); })();
+          })); });
+      });
+    } else if (id === 'browser') {
+      h('SKBrowse & browser apps'); sub('SKBrowse is a full browser with tabs, an ad blocker and Chrome extensions. Browser apps turn one website into its own app.');
+      const sv = (k, v) => { S.settings[k] = v; saveSettings(); };
+      const pad = () => Math.max(0, K.padIndexOf(S.active));
+      pane.appendChild(el('h3', '', 'SKBrowse'));
+      pane.appendChild(row('Open SKBrowse', 'Tabs, bookmarks, history and extensions. Start button opens its menu', '\u2192', () => sk.browse.open({ pad: pad() })));
+      pane.appendChild(row('Open the Chrome Web Store', 'Browse extensions, then press Add to SKBrowse in the bar', '\u2192', () => sk.browse.open({ pad: pad(), url: 'https://chromewebstore.google.com/' })));
+      pane.appendChild(row('Open Netflix, Disney+ and other protected sites', 'Opens in an Edge window, because they need Edge\u2019s video protection', '\u2192', async () => { const e = await sk.browse.engines(); if (!e.edge) { toast('Edge or Chrome was not found on this PC'); return; } sk.launch({ id: 'edge_free', name: 'Edge', exe: e.edge, args: '', cover: '', fs: 'auto' }); }));
+      const ad = row('Ad blocker', 'Blocks ad and tracker hosts, hides ad boxes, skips YouTube ads', '', null); pane.appendChild(ad);
+      pane.appendChild(toggle('Ad blocker on', 'The default for SKBrowse. Browser apps have their own switch', S.settings.sbAdblock !== false, v => sv('sbAdblock', v)));
+      const lst = row('Update the filter list', 'Downloads a larger ad and tracker list', '\u2193', async () => { toast('Downloading\u2026'); const r = await sk.browse.updateList(); toast(r.ok ? r.n + ' hosts blocked (' + r.added + ' new)' : r.error || 'Could not update'); });
+      pane.appendChild(lst);
+      sk.browse.engines().then(e => { if (!ad.isConnected) return; ad.querySelector('.r').textContent = e.stats.hosts + ' hosts'; });
+      pane.appendChild(toggle('Dark pages', 'Turns bright websites dark', !!S.settings.sbDark, v => sv('sbDark', v)));
+      pane.appendChild(toggle('Hide cookie banners', 'Removes consent pop-ups', S.settings.sbCookies !== false, v => sv('sbCookies', v)));
+      pane.appendChild(toggle('Strip tracking from links', 'Removes utm_, fbclid, gclid and similar', S.settings.sbClean !== false, v => sv('sbClean', v)));
+      pane.appendChild(toggle('Send Do Not Track', 'Asks sites not to track you', S.settings.sbDnt !== false, v => sv('sbDnt', v)));
+      pane.appendChild(toggle('Block permission pop-ups', 'Location, notifications, camera and mic requests are refused', S.settings.sbPerms !== false, v => sv('sbPerms', v)));
+      pane.appendChild(toggle('Always use https', 'Upgrades http links', !!S.settings.sbHttpsAll, v => sv('sbHttpsAll', v)));
+      pane.appendChild(toggle('Skip intro, recap and next-episode buttons', 'Clicks them for you while you watch', S.settings.sbSkipIntro !== false, v => sv('sbSkipIntro', v)));
+      pane.appendChild(toggle('Hide the mouse over videos', 'Disappears after 3 seconds', S.settings.sbHideCursor !== false, v => sv('sbHideCursor', v)));
+      pane.appendChild(toggle('Video speed keys', '[ slower, ] faster, \\ normal', S.settings.sbSpeedKeys !== false, v => sv('sbSpeedKeys', v)));
+      pane.appendChild(toggle('Clock in the bar', '', S.settings.sbClock !== false, v => sv('sbClock', v)));
+      pane.appendChild(toggle('Reopen my tabs next time', 'SKBrowse restores the tabs you had', !!S.settings.sbRestore, v => sv('sbRestore', v)));
+      pane.appendChild(toggle('Forget cookies when SKBrowse closes', 'Signs you out each time', !!S.settings.sbClearExit, v => sv('sbClearExit', v)));
+      pane.appendChild(toggle('Upgrade typed addresses to https', 'youtube.com opens as https://youtube.com', S.settings.sbHttps !== false, v => sv('sbHttps', v)));
+      pane.appendChild(toggle('Open SKBrowse fullscreen', 'Off gives a normal window', S.settings.sbFullscreen !== false, v => sv('sbFullscreen', v)));
+      pane.appendChild(toggle('Remember history', 'Sites you visited, shown in the History page', S.settings.sbHistory !== false, v => sv('sbHistory', v)));
+      pane.appendChild(toggle('Closing the last tab leaves SKBrowse', 'Off opens a new tab instead', S.settings.sbCloseLast === 'exit', v => sv('sbCloseLast', v ? 'exit' : 'home')));
+      pane.appendChild(cyc('Search engine', 'Used when you type words instead of an address', [['google', 'Google'], ['duckduckgo', 'DuckDuckGo'], ['bing', 'Bing'], ['brave', 'Brave'], ['youtube', 'YouTube']], () => S.settings.sbSearch || 'google', v => sv('sbSearch', v)));
+      pane.appendChild(cyc('Page zoom', 'Default size of web pages', [100, 110, 125, 150, 175, 200].map(n => [String(n), n + '%']), () => String(S.settings.sbZoom || 100), v => sv('sbZoom', +v)));
+      pane.appendChild(row('Home page', (S.settings.sbHome || 'A new-tab page with shortcuts'), '\u2192', () => osk({ title: 'Home page (empty = new-tab page)', value: S.settings.sbHome || '', submitLabel: 'Save', onDone: v => { sv('sbHome', (v || '').trim()); go('settings', { cat: 'browser' }); } })));
+      pane.appendChild(toggle('Update the filter list by itself', 'About once a week, in the background', S.settings.sbAutoList !== false, v => sv('sbAutoList', v)));
+      pane.appendChild(el('h3', '', 'Tidy up'));
+      [['Clear cookies', 'cookies', 'Signs you out of sites in SKBrowse'], ['Clear the cache', 'cache', 'Frees space'], ['Clear history', 'history', 'The History page'], ['Clear bookmarks', 'bookmarks', 'All of them'], ['Clear the downloads list', 'downloads', 'The list only, not the files']].forEach(([t, k, d0]) => pane.appendChild(row(t, d0, '', () => confirm(t + '?', d0 + '.', 'Clear', async () => { await sk.browse.clear(k); toast('Done'); }, true))));
+      pane.appendChild(row('Open the Downloads folder', '', '\u2192', () => sk.browse.openDownloads()));
+      pane.appendChild(row('Export bookmarks to the Desktop', 'A standard bookmarks file other browsers can import', '\u2192', async () => { const r = await sk.browse.exportBookmarks(); toast(r.ok ? r.n + ' bookmarks exported' : 'Could not export'); }));
+      pane.appendChild(row('Reset SKBrowse options', 'Puts every SKBrowse switch back to its default', '', () => confirm('Reset SKBrowse options?', 'Your bookmarks, history and apps stay.', 'Reset', async () => { await sk.browse.resetOpts(); S.settings = (await sk.store.get('settings', {})) || S.settings; toast('Reset'); go('settings', { cat: 'browser' }); })));
+      pane.appendChild(el('div', 'sub', 'Hotkeys: Ctrl+Alt+Shift+B opens SKBrowse, +H hides it and returns to SKBox, +M shows the desktop, +T opens Task Manager. In SKBrowse: Ctrl+T new tab, Ctrl+L address, Ctrl+W close tab, F10 hides the bar, [ and ] change video speed.'));
+      pane.appendChild(el('h3', '', 'Browser apps'));
+      pane.appendChild(row('Create a browser app', 'Type a website. It becomes an app that only opens that site, with its icon as the cover', '+', () => createBapp(() => go('settings', { cat: 'browser' }))));
+      const bl = bapps();
+      if (!bl.length) pane.appendChild(el('div', 'sub', 'No browser apps yet. Try youtube.com or twitch.tv.'));
+      bl.forEach(a => pane.appendChild(row(a.name, (new URL(a.url).hostname) + ' \u00B7 ads ' + (a.adblock !== false ? 'blocked' : 'allowed') + ' \u00B7 ' + (a.engine === 'edge' ? 'Edge window' : 'SKBrowse'), '\u2026', () => bappMenu(a, () => go('settings', { cat: 'browser' })))));
+      pane.appendChild(el('h3', '', 'Extensions'));
+      const ex = row('Manage extensions', 'Install from the Chrome Web Store with a link or the Add button', '\u2192', () => sk.browse.open({ pad: pad() })); pane.appendChild(ex);
+      sk.browse.engines().then(e => { if (ex.isConnected) ex.querySelector('.r').textContent = (e.ext || []).length + ' installed'; });
+      pane.appendChild(el('div', 'sub', 'Open SKBrowse > Start > Extensions to install, turn off or remove them. SKBrowse runs many Chrome extensions but not all of them.'));
     } else if (id === 'windows') {
       h('Windows opened apps'); sub('Everything open on this PC. Close asks the app to close, and ends it if it will not.');
       const X = (n, a) => sk.extras.do(n, a), sv = (k, v) => { S.settings[k] = v; saveSettings(); };
@@ -620,6 +750,7 @@
           const mk = (label, fn) => { const b = nav(el('button', 'btn', label)); b.onclick = fn; act.appendChild(b); };
           const doClose = force => { const go2 = async () => { toast(force ? 'Ending it\u2026' : 'Closing\u2026'); const rr = await X('winClose', { h: w.h, pid: w.pid, force }); say(rr, rr && rr.state === 'forced' ? 'Ended' : 'Closed'); draw(); };
             if (S.settings.winConfirm === false) go2(); else confirm((force ? 'Force close ' : 'Close ') + (w.n || w.t) + '?', force ? 'It ends at once and may lose unsaved work. All windows of this app close.' : 'If it does not close in a few seconds, SKBox ends it.', force ? 'Force close' : 'Close', go2, true); };
+          mk('Switch', async () => { await X('winSwitch', { h: w.h }); }); mk('Fit', async () => { await X('winFit', { h: w.h }); toast('Fitted to the screen'); });
           mk('Close', () => doClose(false)); if (!w.prot) mk('Force', () => doClose(true));
           mk(w.min ? 'Show' : 'Hide', async () => { await X(w.min ? 'winFront' : 'winMin', { h: w.h }); setTimeout(draw, 500); });
           it.appendChild(act); box.appendChild(it);
@@ -627,6 +758,9 @@
       };
       pane.appendChild(row('Close the running game', 'Ends the game SKBox started', '', async () => { toast('Closing\u2026'); say(await X('closeGame'), 'Closed'); draw(); }));
       pane.appendChild(row('Refresh the list', '', '\u21BB', () => draw()));
+      pane.appendChild(row('Show the desktop', 'Minimizes every window. Ctrl+Alt+Shift+M', '', () => X('minAll')));
+      pane.appendChild(row('Open Task Manager', 'Ctrl+Alt+Shift+T', '', () => X('taskmgr')));
+      pane.appendChild(row('Open File Explorer', 'Your home folder', '', () => X('openExplorer')));
       pane.appendChild(row('Close all other apps', 'Asks every open window to close, except SKBox and the game', '', () => confirm('Close all other apps?', 'Anything unsaved may ask to be saved first.', 'Close them', async () => { const r = await X('winCleanup'); say(r, (r.n || 0) + ' windows asked to close'); setTimeout(draw, 3000); }, true)));
       pane.appendChild(toggle('Refresh by itself', 'Updates the list every few seconds', S.settings.winAuto !== false, v => sv('winAuto', v)));
       pane.appendChild(toggle('Hide system windows', 'Keeps Windows\u2019 own background windows out of the list', S.settings.winHideSys !== false, v => sv('winHideSys', v)));
@@ -680,6 +814,9 @@
       pane.appendChild(row('Fit the game window now', 'Same as Ctrl+Alt+Shift+F', '\u2192', async () => { sk.remote.fix(); toast('Fitting the window\u2026'); }));
       pane.appendChild(row('Undo window fit', 'Gives the game its normal window and menu back', '\u2192', async () => say(await X('undoFit'), 'Window restored')));
       pane.appendChild(toggle('Fit hotkey (Ctrl+Alt+Shift+F)', 'Fits the game window from the keyboard', S.settings.fitKey !== false, v => sv('fitKey', v)));
+      sec('Emulators (Cemu and friends)');
+      pane.appendChild(toggle('Auto full-screen for emulators', 'Cemu, Dolphin, Yuzu, RPCS3 and others start in a clean full-screen window with no title bar or menu. Works with Remote play on or off', S.settings.emuMax !== false, v => sv('emuMax', v)));
+      pane.appendChild(toggle('Sharper stream for emulators', 'Remote play uses 1080p at 60 fps while an emulator runs. Auto quality still steps down on weak Wi-Fi', S.settings.remoteSmart !== false, v => sv('remoteSmart', v)));
       sec('Remote play: safety and power');
       pane.appendChild(toggle('Turn Remote play on when SKBox starts', 'Off by default. The PIN is still required', !!S.settings.remoteAutoStart, v => sv('remoteAutoStart', v)));
       pane.appendChild(cyc('Disconnect when nobody uses it', 'Ends the session if no key, mouse or button is used', [['0', 'Never'], ['5', 'After 5 min'], ['15', 'After 15 min'], ['30', 'After 30 min'], ['60', 'After 1 hour']], () => String(S.settings.remoteIdle || 0), v => sv('remoteIdle', +v)));
@@ -762,7 +899,7 @@
       h('Remote play'); sub('Play this PC from a Mac or another PC on the same Wi-Fi. It only runs while you turn it on here, and it turns itself off when SKBox closes.');
       const box = el('div'); pane.appendChild(box); let st = null;
       const fmtSt = s => s ? [s.w && s.h ? s.w + 'x' + s.h : '', s.fps ? s.fps + ' fps' : '', s.kbps ? (s.kbps / 1000).toFixed(1) + ' Mbps' : '', s.rtt ? s.rtt + ' ms' : '', s.codec || '', s.hw === false && s.codec ? 'software encode' : ''].filter(Boolean).join(' \u00B7 ') : '';
-      const QO = [['instant', '540p \u00B7 60 fps (lowest delay)'], ['smooth', '720p \u00B7 60 fps (fastest)'], ['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']], PO = [['menus', 'Menus (arrows, Enter)'], ['keys', 'Keyboard and mouse preset'], ['off', 'Off']];
+      const QO = [['instant', '540p \u00B7 60 fps (lowest delay)'], ['smooth', '720p \u00B7 60 fps (fastest)'], ['low', '720p \u00B7 30 fps'], ['balanced', '1080p \u00B7 30 fps'], ['high', '1080p \u00B7 60 fps']], PO = [['menus', 'Menus (arrows, Enter)'], ['keys', 'Keyboard and mouse preset'], ['off', 'Off'], ['sharp', '1080p \u00B7 60 fps, extra sharp (strong Wi-Fi)']];
       const render = s => {
         st = s; const fk = K.current && K.current() && K.current().dataset ? K.current().dataset.rk : ''; box.innerHTML = '';
         if (!s.supported) { box.appendChild(row('Remote play host needs Windows', 'Use SKBox on your Windows PC as the host. This device can still be the player.', '', null)); return; }

@@ -81,6 +81,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (edge(4)) history.back(); if (edge(5)) history.forward();
     if (edge(3)) { const a = document.activeElement; toHost('osk', { type: (a && a.type) || 'text', value: (a && a.value) || '' }); }
     if (edge(8) || edge(16)) toHost('home');
+    if (edge(9)) toHost('menu');
     prev = b;
   }
   requestAnimationFrame(loop);

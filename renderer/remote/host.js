@@ -1,6 +1,6 @@
 // Runs in a hidden window while a remote player is connected: captures the screen + system audio and streams it over WebRTC.
 (() => {
-  const PRESETS = { instant: { w: 960, h: 540, fps: 60, kbps: 4500 }, smooth: { w: 1280, h: 720, fps: 60, kbps: 7000 }, low: { w: 1280, h: 720, fps: 30, kbps: 4000 }, balanced: { w: 1920, h: 1080, fps: 30, kbps: 8000 }, high: { w: 1920, h: 1080, fps: 60, kbps: 14000 } };
+  const PRESETS = { instant: { w: 960, h: 540, fps: 60, kbps: 4500 }, smooth: { w: 1280, h: 720, fps: 60, kbps: 7000 }, low: { w: 1280, h: 720, fps: 30, kbps: 4000 }, balanced: { w: 1920, h: 1080, fps: 30, kbps: 8000 }, high: { w: 1920, h: 1080, fps: 60, kbps: 14000 }, sharp: { w: 1920, h: 1080, fps: 60, kbps: 22000 } };
   let ctl = null, pc = null, sid = null, stream = null, statsTimer = null, grace = null, prevStat = null, curP = null, curCfg = null, lvl = 0, goodT = 0, badT = 0, lastShift = 0, bv = null, bc = null, blackT = null, isBlack = false;
 
   function cleanup() {
@@ -111,7 +111,7 @@
         if (st === 'failed' || st === 'closed') finish(st); else if (st === 'disconnected') grace = setTimeout(() => finish('disconnected'), 8000);
       };
       // start fast: tell the encoder what bitrate to begin at instead of slowly ramping up (the main cause of blurry / laggy first seconds)
-      const o = { type: m.offer.type, sdp: String(m.offer.sdp || '').replace(/^(a=fmtp:(\d+) [^\r\n]*)/gm, (l, all, pt) => /apt=/.test(all) || /useinbandfec|minptime|stereo/.test(all) ? all : all + ';x-google-start-bitrate=' + Math.round(P.kbps * 0.8) + ';x-google-min-bitrate=' + Math.round(P.kbps * 0.5) + ';x-google-max-bitrate=' + P.kbps) };
+      const o = { type: m.offer.type, sdp: String(m.offer.sdp || '').replace(/^(a=fmtp:(\d+) [^\r\n]*)/gm, (l, all, pt) => /apt=/.test(all) || /useinbandfec|minptime|stereo/.test(all) ? all : all + ';x-google-start-bitrate=' + Math.round(P.kbps * 1.0) + ';x-google-min-bitrate=' + Math.round(P.kbps * 0.6) + ';x-google-max-bitrate=' + P.kbps) };
       try { await pc.setRemoteDescription(o); } catch (_) { await pc.setRemoteDescription(m.offer); }
       for (const t of pc.getTransceivers()) {
         const kind = t.receiver.track.kind, track = stream.getTracks().find(x => x.kind === kind);

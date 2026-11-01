@@ -14,7 +14,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // speed: keep the hidden streaming window at full speed, use the GPU for capture and encoding
 app.commandLine.appendSwitch('disable-renderer-backgrounding'); app.commandLine.appendSwitch('disable-background-timer-throttling'); app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-app.commandLine.appendSwitch('ignore-gpu-blocklist'); app.commandLine.appendSwitch('enable-zero-copy'); app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion'); app.commandLine.appendSwitch('ignore-gpu-blocklist'); app.commandLine.appendSwitch('enable-zero-copy'); app.commandLine.appendSwitch('enable-gpu-rasterization');
 
 const batteries = {};
 let overlayOpaque = false, padTest = false, fgTarget = null, overlayTarget = null;
@@ -140,6 +140,22 @@ const extras = require('./lib/extras').create({
   diag: () => ['Helper lines: ' + (helperInfo.diag || []).join(' | '), 'Helper error: ' + (helperInfo.error || 'none')].join('\n')
 });
 ipcMain.handle('extras:do', (_e, n, a) => extras.run(String(n || ''), a));
+// SKBrowse: built-in browser + browser apps (src/lib/browse.js)
+const browse = require('./lib/browse').create({ store, notify, isDrm: u => browseDrm(u), appsChanged: () => send('apps:changed'), display: displayNow, comeBack: () => comeBack(), afterClose: () => { if (!game && !overlayOpen) comeBack(); }, openOsk: v => openOverlay({ osk: { value: v || '', target: 'browse' } }) });
+app.whenReady().then(() => { try { browse.loadAllExt(); } catch {} setTimeout(() => { try { browse.autoList(); } catch {} }, 20000); });
+const browseDrm = u => { try { return require('./lib/browse').DRM_HOSTS.some(d => { const h = new URL(u).hostname; return h === d || h.endsWith('.' + d); }); } catch { return false; } };
+const EDGE = () => ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'].find(f => { try { return fs.existsSync(f); } catch { return false; } }) || '';
+ipcMain.handle('browse:engines', () => ({ edge: EDGE(), stats: browse.stats(), ext: browse.extList() }));
+ipcMain.handle('browse:drm', (_e, u) => browse.isDrm(String(u || '')));
+ipcMain.handle('browse:list', () => browse.updateList());
+ipcMain.handle('browse:launchApp', async (_e, a) => {
+  if (!a || !a.url) return { ok: false, error: 'No site set for this app.' };
+  const useEdge = a.engine === 'edge' && EDGE();
+  if (!useEdge) { if (game) { return { ok: false, error: game.name + ' is running. Close it first.' }; } closeOverlay(false); stepAside(); return browse.open({ app: { id: a.id, name: a.name, url: a.url, adblock: a.adblock !== false, auth: a.auth !== false, resume: a.resume !== false, muted: !!a.muted, barHidden: !!a.barHidden, windowed: !!a.windowed, dark: !!a.dark, zoom: +a.zoom || 0 }, pad: a.pad | 0 }); }
+  const prof = path.join(app.getPath('userData'), 'edge-' + String(a.id).replace(/[^\w-]/g, ''));
+  return launchApp({ id: a.id, name: a.name, exe: useEdge, args: '--app="' + a.url + '" --start-fullscreen --user-data-dir="' + prof + '" --no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required', cover: a.cover, fs: 'off' });
+});
+ipcMain.handle('browse:openSK', (_e, o) => { closeOverlay(false); stepAside(); return browse.open(Object.assign({}, o || {})); });
 const splitArgs = s => (String(s || '').match(/"[^"]*"|\S+/g) || []).map(x => x.replace(/^"|"$/g, ''));
 function applyCompat(exe) { // old-game fixes: Windows compatibility flags for this one program (current user only). Fullscreen optimizations stay ON so games can be streamed.
   if (!isWin) return;
@@ -167,6 +183,10 @@ function prepWindowedFs(exe) {
 // Every game starts in windowed fullscreen (borderless) unless the person turned that off, or set this one app to 'Leave it alone'.
 // Windowing is applied by the helper ONLY while a Remote play player is connected (see helper.remote). Otherwise games are left exactly as they are.
 let remoteLive = false;
+const EMU_RE = /(^|[\\/])(cemu|yuzu|suyu|sudachi|ryujinx|citra|lime3ds|azahar|rpcs3|dolphin|pcsx2|duckstation|ppsspp|xemu|xenia[\w-]*|melonds|mgba|vita3k|shadps4|redream|flycast|bsnes|snes9x)[^\\/]*\.exe$/i;
+const EMU_LIB = /(cemu|yuzu|suyu|sudachi|ryujinx|citra|lime3ds|azahar|rpcs3|dolphin|pcsx2|duckstation|xemu)/i;
+// emulators get a clean full-screen window by themselves. 'emuw' = wait until a game is really running (the library window keeps its menu so you can load a game).
+function emuMode(target, a) { const s = store.read('settings', {}); if (s.emuMax === false || (a && a.fs === 'off') || !EMU_RE.test(target)) return ''; const hasGame = String((a && a.args) || '').replace(/(^|\s)-{1,2}(f|fullscreen|fs)\b/gi, '').trim().length > 0; return EMU_LIB.test(path.basename(target)) && !hasGame ? 'emuw' : 'emu'; }
 function gameMode(m) { m = m || 'auto'; if (m === 'off') return 'off'; if (store.read('settings', {}).gameWindow === 'off') return 'off'; return 'auto'; }
 function setRemoteLive(on) { remoteLive = !!on; if (on) { lastRemoteInput = remoteSince = Date.now(); lastLvl = 0; swTicks = 0; swTold = false; } const fa = fitArgs(); if (helper && helper.ready) { helper.remote(on && store.read('settings', {}).gameWindow !== 'off', fa.fit, fa.taskbar); if (on && game && game.hwnd) setTimeout(() => helper.winFit(game && game.hwnd), 1500); } if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
 function showBackdrop(a) {
@@ -267,7 +287,7 @@ async function launchApp(a) {
   try {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
-    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: gameMode(a.fs), noWindow: false, exited: false };
+    game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: emuMode(target, a) || gameMode(a.fs), noWindow: false, exited: false };
     try { extras.onGameStart(); } catch {}
     statsTouch(a.id, 0);
     if (!isUrl && remoteLive && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
@@ -419,6 +439,7 @@ ipcMain.on('guest:home', e => { if (musicWin && !musicWin.isDestroyed() && e.sen
 ipcMain.on('guest:osk', (e, o) => { if (musicWin && !musicWin.isDestroyed() && e.sender === musicWin.webContents) openOverlay({ osk: { value: (o && o.value) || '', target: 'music' } }); });
 ipcMain.handle('overlay:osk-result', (_e, r) => {
   closeOverlay(false);
+  if (r && r.target === 'browse') { browse.oskResult(r); return true; }
   if (r && r.target === 'music' && musicWin && !musicWin.isDestroyed()) {
     if (!r.cancel) musicWin.webContents.executeJavaScript('(function(t,s){var e=document.activeElement;if(!e)return;if(e.isContentEditable){e.textContent=t;e.dispatchEvent(new Event("input",{bubbles:true}));}else{var pr=e.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,ds=Object.getOwnPropertyDescriptor(pr,"value");if(ds&&ds.set)ds.set.call(e,t);else e.value=t;e.dispatchEvent(new Event("input",{bubbles:true}));}if(s){e.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true}));}})(' + JSON.stringify(String(r.text || '')) + ',' + (r.send ? 'true' : 'false') + ')').catch(() => {});
     musicWin.focus(); if (helper) helper.focus(nativeHwnd(musicWin));
@@ -511,7 +532,7 @@ const remoteDisplay = () => { try { if (win && !win.isDestroyed() && win.isVisib
 setInterval(() => { try { if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) lastDisp = screen.getDisplayMatching(win.getBounds()); } catch {} }, 1500);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const REMOTE_DIR = () => path.join(__dirname, '..', 'renderer', 'remote');
-const rset = () => { const s = store.read('settings', {}); return { quality: ['instant', 'smooth', 'low', 'balanced', 'high'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth', autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, fps: +s.remoteFps || 0, res: +s.remoteRes || 0, kbps: +s.remoteKbps || 0, audio: s.remoteAudio !== false, pref: ['framerate', 'resolution', 'balanced'].includes(s.remotePref) ? s.remotePref : 'framerate', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
+const rset = () => { const s = store.read('settings', {}); return { quality: (() => { const q = ['instant', 'smooth', 'low', 'balanced', 'high', 'sharp'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth'; return (s.remoteSmart !== false && q === 'smooth' && game && /^emu/.test(game.mode || '')) ? 'high' : q; })(), autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, fps: +s.remoteFps || 0, res: +s.remoteRes || 0, kbps: +s.remoteKbps || 0, audio: s.remoteAudio !== false, pref: ['framerate', 'resolution', 'balanced'].includes(s.remotePref) ? s.remotePref : 'framerate', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
 const remoteState = () => Object.assign(remote ? remote.state() : { on: false, port: 0, pin: '', ips: [], client: null }, { stats: remoteStats, cfg: rset(), helper: !!(helper && helper.ready), supported: isWin });
 const pushRemote = () => send('remote:state', remoteState());
 const hin = line => { if (helper && helper.ready) helper.send(line); };
@@ -660,6 +681,11 @@ app.whenReady().then(() => {
   globalShortcut.register('Control+Shift+B', comeBack);
   globalShortcut.register('Control+Shift+O', toggleOverlay);
   globalShortcut.register('Control+Shift+S', () => { takeShot(true); });
+  const hk = (acc, fn) => { try { globalShortcut.register(acc, () => { if (store.read('settings', {}).hotkeysOn === false) return; fn(); }); } catch {} };
+  hk('Control+Alt+Shift+B', () => { closeOverlay(false); stepAside(); browse.open({}); });     // open SKBrowse
+  hk('Control+Alt+Shift+M', () => extras.run('minAll'));                                   // show the desktop
+  hk('Control+Alt+Shift+T', () => extras.run('taskmgr'));                                  // Task Manager
+  hk('Control+Alt+Shift+H', () => { try { for (const w of browse.wins) w.hide(); } catch {} comeBack(); });   // hide SKBrowse, back to SKBox
   extras.hotkeys(globalShortcut); display.hotkeys(globalShortcut);
 });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); try { helper && helper.stop(); } catch {} });

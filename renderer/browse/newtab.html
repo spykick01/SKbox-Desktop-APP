@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>New tab</title><style>
+html,body{margin:0;height:100%;background:radial-gradient(circle at 50% 0%,#17315a,#0b0f1a 60%);color:#e8ecf8;font:16px "Segoe UI",system-ui,sans-serif}body{display:flex;flex-direction:column;align-items:center;padding-top:9vh}
+h1{font-weight:300;font-size:56px;margin:0 0 6px}#c{color:#8b95b3;margin-bottom:26px}form{width:min(640px,86vw)}input{width:100%;box-sizing:border-box;height:52px;border-radius:26px;border:1px solid #2a3558;background:#121829;color:#fff;padding:0 24px;font:inherit;outline:0}input:focus{border-color:#2dd4bf}
+.g{display:grid;grid-template-columns:repeat(5,130px);gap:16px;margin-top:40px}.g a{display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 8px;background:#121829;border:1px solid #232c47;border-radius:16px;color:#e8ecf8;text-decoration:none;font-size:13px}.g a:hover{border-color:#2dd4bf}.g img{width:36px;height:36px;border-radius:8px}
+</style></head><body><h1 id="t">SKBrowse</h1><div id="c"></div>
+<form id="f"><input id="q" placeholder="Search the web or type a link" autofocus></form><div class="g" id="g"></div>
+<script>
+const S=[['YouTube','youtube.com'],['Twitch','twitch.tv'],['Reddit','reddit.com'],['Wikipedia','wikipedia.org'],['GitHub','github.com'],['Pluto TV','pluto.tv'],['Tubi','tubitv.com'],['Crunchyroll','crunchyroll.com'],['Google','google.com'],['Spotify','open.spotify.com']];
+document.getElementById('g').innerHTML=S.map(s=>'<a href="https://'+s[1]+'/"><img src="https://www.google.com/s2/favicons?domain='+s[1]+'&sz=64" alt="">'+s[0]+'</a>').join('');
+const tick=()=>{const d=new Date();document.getElementById('c').textContent=d.toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})+' \u00B7 '+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})};tick();setInterval(tick,20000);
+document.getElementById('f').onsubmit=e=>{e.preventDefault();let v=document.getElementById('q').value.trim();if(!v)return;location.href=/^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(v)&&!/\s/.test(v)?'https://'+v:/^https?:/.test(v)?v:'https://www.google.com/search?q='+encodeURIComponent(v)};
+</script></body></html>

@@ -397,7 +397,7 @@ public static class SkHelper
         ex &= ~(0x00000001 | 0x00000200 | 0x00020000 | 0x00000100);
         SetWindowLong(h, -16, style); SetWindowLong(h, -20, ex);
         if (GetMenu(h) != IntPtr.Zero) { SetMenu(h, IntPtr.Zero); DrawMenuBar(h); }   // e.g. Cemu's menu bar
-        int x, y, ww, hh; Fit(mon.Left, mon.Top, mon.Right - mon.Left, mon.Bottom - mon.Top, cw, ch, remoteFit, out x, out y, out ww, out hh);
+        int x, y, ww, hh; Fit(mon.Left, mon.Top, mon.Right - mon.Left, mon.Bottom - mon.Top, cw, ch, (w.Mode == "emu" || w.Mode == "emuw") ? "stretch" : remoteFit, out x, out y, out ww, out hh);
         hh -= 1;   // never exactly the whole monitor
         SetWindowPos(h, new IntPtr(-1), x, y, ww, hh, 0x0020 | 0x0040);   // topmost (over the taskbar), frame changed, show
         // If a title bar / menu / border is still there (the game refused the style change), push it off-screen: make the CLIENT area fill the target.
@@ -443,7 +443,13 @@ public static class SkHelper
             RECT r; GetWindowRect(cand, out r);
             Emit("WIN " + cand.ToInt64().ToString(CultureInfo.InvariantCulture) + " " + wp + " " + (r.Right - r.Left) + " " + (r.Bottom - r.Top));
         }
-        if (valid && w.Mode != "off" && remoteOn) RemoteWin(w);
+        bool emu = w.Mode == "emu" || w.Mode == "emuw";
+        if (valid && emu)
+        {   // emulators (Cemu and friends): clean full-screen window whether or not Remote play is on. "emuw" waits until a game is actually running (title shows it).
+            string et = TextOf(w.Hwnd); bool want = w.Mode == "emu" || et.IndexOf('[') >= 0 || et.IndexOf('|') >= 0 || et.IndexOf(" - ", StringComparison.Ordinal) > 0;
+            if (want) RemoteWin(w); else if (w.Applied && !remoteOn) RestoreWindow(w);
+        }
+        else if (valid && w.Mode != "off" && remoteOn) RemoteWin(w);
         // finished?
         if (!valid && w.Found && (DateTime.UtcNow - w.LastAlive).TotalSeconds > 6.0) { Emit("GONE"); watch = null; return; }
         if (!valid && w.Found && pids.Count == 0 && age > 20) { Emit("GONE"); watch = null; return; }

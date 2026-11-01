@@ -8,7 +8,7 @@ const KEYS = ['remoteAutoQ', 'remoteAutoStart', 'remoteIdle', 'remoteAwake', 're
   'summary', 'panicKey', 'fitKey', 'remoteEncWarn', 'remoteNotices', 'notifications', 'remoteCursor', 'remoteNewPin',
   'remoteFps', 'remoteRes', 'remoteKbps', 'remoteAudio', 'remotePref', 'remoteBoost', 'remoteMaxH', 'remoteGameEnd', 'remoteAutoApp',
   'gamePlan', 'gameQuiet', 'gameModeOn', 'noNexus', 'gameTaskbar', 'closeMode', 'gameMaxH', 'eyeMin', 'hotkeysOn', 'notifSilent',
-  'winConfirm', 'winSort', 'winAuto', 'winHideSys'];
+  'winConfirm', 'winSort', 'winAuto', 'winHideSys', 'emuMax', 'winFitSwitch', 'remoteSmart'];
 
 const fmt = ms => { const m = Math.round(ms / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60 ? (m % 60) + ' min' : ''); };
 const dayKey = d0 => { const d = d0 || new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
@@ -166,6 +166,12 @@ function create(ctx) {
         case 'winMin': return await ctx.wins.min(arg);
         case 'winFront': return await ctx.wins.front(arg);
         case 'winCleanup': return await ctx.wins.cleanup();
+        case 'winFit': { const h = ctx.helper(); if (!h || !h.ready) return { ok: false, error: 'The helper is not running.' }; h.restore(String(arg.h)); setTimeout(() => h.winFit(String(arg.h)), 400); return { ok: true }; }
+        case 'winSwitch': { const h = ctx.helper(); if (!h || !h.ready) return { ok: false, error: 'The helper is not running.' }; h.restore(String(arg.h)); return { ok: true }; }
+        case 'minAll': { if (!ctx.isWin) return { ok: false, error: 'Only on Windows.' }; run1('powershell', ['-NoProfile', '-Command', '(New-Object -ComObject Shell.Application).MinimizeAll()']); return { ok: true }; }
+        case 'taskmgr': { if (!ctx.isWin) return { ok: false, error: 'Only on Windows.' }; run1('taskmgr.exe', []); return { ok: true }; }
+        case 'openExplorer': { await shell.openPath(String(arg && arg.path ? arg.path : app.getPath('home'))); return { ok: true }; }
+        case 'emuStatus': return { ok: true, on: S().emuMax !== false };
       }
     } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 160) }; }
     return { ok: false };
