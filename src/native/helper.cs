@@ -35,6 +35,35 @@ public static class SkHelper
         }
         catch (Exception) { }
     }
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int val, int size);
+    [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr h, int flags, StringBuilder sb, ref int size);
+    static string J(string s) { var b = new StringBuilder(); foreach (char c in (s ?? "")) { if (c == '"' || c == '\\') b.Append('\\').Append(c); else if (c < 32) b.Append(' '); else b.Append(c); } return b.ToString(); }
+    static string PathOf(uint pid) { IntPtr hp = OpenProcess(0x1000, false, pid); if (hp == IntPtr.Zero) return ""; try { var sb = new StringBuilder(520); int n = 520; return QueryFullProcessImageName(hp, 0, sb, ref n) ? sb.ToString() : ""; } finally { CloseHandle(hp); } }
+    // Every normal app window on the PC (title, program, memory), as one JSON line. Used by Settings > Windows opened apps.
+    static void ListWins()
+    {
+        var sb = new StringBuilder("WINS ["); bool first = true; var cache = new Dictionary<uint, string[]>();
+        EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            if (!IsWindowVisible(h)) return true;
+            if (GetWindow(h, 4) != IntPtr.Zero) return true;
+            int ex = GetWindowLong(h, -20); if ((ex & 0x80) != 0 && (ex & 0x40000) == 0) return true;
+            int cloaked; if (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
+            string t = TextOf(h); if (t.Length == 0) return true;
+            uint pid; GetWindowThreadProcessId(h, out pid);
+            string[] info; if (!cache.TryGetValue(pid, out info))
+            {
+                string pp = PathOf(pid); string nm = pp.Length > 0 ? System.IO.Path.GetFileName(pp) : ""; string mem = "0";
+                try { mem = (System.Diagnostics.Process.GetProcessById((int)pid).WorkingSet64 / 1048576).ToString(); } catch (Exception) { }
+                info = new string[] { nm, pp, mem }; cache[pid] = info;
+            }
+            if (!first) sb.Append(','); first = false;
+            sb.Append("{\"h\":\"").Append(h.ToInt64()).Append("\",\"pid\":").Append(pid).Append(",\"n\":\"").Append(J(info[0])).Append("\",\"p\":\"").Append(J(info[1])).Append("\",\"t\":\"").Append(J(t)).Append("\",\"m\":").Append(info[2]).Append(",\"min\":").Append(IsIconic(h) ? 1 : 0).Append('}');
+            return true;
+        }, IntPtr.Zero);
+        sb.Append(']'); Emit(sb.ToString());
+    }
     [DllImport("user32.dll")] static extern IntPtr GetMenu(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetMenu(IntPtr h, IntPtr m);
     [DllImport("user32.dll")] static extern bool DrawMenuBar(IntPtr h);
@@ -551,6 +580,8 @@ public static class SkHelper
                     else if (p[0] == "MIN" && p.Length > 1) { long hv3; if (long.TryParse(p[1], out hv3)) MinimizeWin(new IntPtr(hv3)); }
                     else if (p[0] == "RESTORE" && p.Length > 1) { long hv4; if (long.TryParse(p[1], out hv4)) { IntPtr hh4 = new IntPtr(hv4); Thread t4 = new Thread(delegate() { RestoreWin(hh4); }); t4.IsBackground = true; t4.Start(); } }
                     else if (p[0] == "REMOTE" && p.Length > 1) { bool on = p[1] == "1"; remoteOn = on; if (p.Length > 2 && (p[2] == "auto" || p[2] == "stretch" || p[2] == "aspect")) remoteFit = p[2]; Taskbar(on && !(p.Length > 3 && p[3] == "0")); Watch ww = watch; if (ww != null) { if (on) { ww.Applied = false; ww.Reapply = 0; ww.ExclTried = false; } else RestoreWindow(ww); } }
+                    else if (p[0] == "LISTWINS") ListWins();
+                    else if (p[0] == "TASKBAR" && p.Length > 1) Taskbar(p[1] == "1");
                     else if (p[0] == "RESTOREWIN") { if (watch != null) RestoreWindow(watch); }
                     else if (p[0] == "WINFIT")
                     {   // manual: fit this window (or the one in front) right now, whatever the watcher thinks

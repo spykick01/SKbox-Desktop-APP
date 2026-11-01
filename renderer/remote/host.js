@@ -35,9 +35,13 @@
   window.__skhostRecap = recap;
   function finish(why) { const s = sid; sid = null; cleanup(); if (s) skremote.ended(s); }
 
+  function tuned(cfg) {   // the chosen preset, then the person's own overrides on top
+    const P = Object.assign({}, PRESETS[cfg && cfg.quality] || PRESETS.smooth); if (!cfg) return P;
+    if (cfg.fps > 0) P.fps = cfg.fps; if (cfg.res > 0) { P.h = cfg.res; P.w = Math.round(cfg.res * 16 / 9 / 2) * 2; } if (cfg.kbps > 0) P.kbps = cfg.kbps; return P;
+  }
   async function capture(P) {
     const video = { width: { ideal: P.w }, height: { ideal: P.h }, frameRate: { ideal: P.fps, max: P.fps }, cursor: curCfg && curCfg.cursor === false ? 'never' : 'always' };
-    try { return await navigator.mediaDevices.getDisplayMedia({ video, audio: true }); }
+    try { return await navigator.mediaDevices.getDisplayMedia({ video, audio: !(curCfg && curCfg.audio === false) }); }
     catch (e) { return await navigator.mediaDevices.getDisplayMedia({ video, audio: false }); }   // no system audio available
   }
   // H.264 first (a Mac decodes it in hardware); VP9 / AV1 would be too heavy for an older Mac.
@@ -52,7 +56,7 @@
     try {
       const snd = pc.getSenders().find(s => s.track && s.track.kind === 'video'); if (!snd) return;
       const p = snd.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-      p.encodings[0].maxBitrate = P.kbps * 1000; p.encodings[0].maxFramerate = P.fps; p.degradationPreference = 'maintain-framerate'; p.encodings[0].priority = 'high'; p.encodings[0].networkPriority = 'high';
+      p.encodings[0].maxBitrate = P.kbps * 1000; p.encodings[0].maxFramerate = P.fps; p.degradationPreference = ({ framerate: 'maintain-framerate', resolution: 'maintain-resolution', balanced: 'balanced' })[curCfg && curCfg.pref] || 'maintain-framerate'; p.encodings[0].priority = 'high'; p.encodings[0].networkPriority = 'high';
       await snd.setParameters(p);
     } catch (_) {}
   }
@@ -96,7 +100,7 @@
   skremote.on('toClient', text => { try { if (ctl && ctl.readyState === 'open') ctl.send(text); } catch (_) {} });
   // Chromium only allows screen capture right after a user gesture; SKBox starts this through executeJavaScript(..., true), which counts as one.
   async function onOffer(m) {
-    cleanup(); sid = m.sid; curCfg = m.cfg || null; const P = curP = PRESETS[m.cfg && m.cfg.quality] || PRESETS.smooth;
+    cleanup(); sid = m.sid; curCfg = m.cfg || null; const P = curP = tuned(m.cfg);
     try {
       stream = await capture(P);
       stream.getVideoTracks()[0].addEventListener('ended', () => finish('capture ended'));

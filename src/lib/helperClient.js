@@ -29,6 +29,7 @@ class HelperClient extends EventEmitter {
       case 'GUIDE': this.emit('guide', r[0] || '', r[1] || '0', parseInt(r[2], 10) || 0, r[3] === '1'); break;
       case 'PADS': this.emit('pads', parseInt(r[0], 10) || 0); break;
       case 'WIN': this.emit('win', { hwnd: r[0], pid: parseInt(r[1], 10) || 0, w: parseInt(r[2], 10) || 0, h: parseInt(r[3], 10) || 0 }); break;
+      case 'WINS': try { this.emit('wins', JSON.parse(r.join(' '))); } catch (_) { this.emit('wins', []); } break;
       case 'FS': this.emit('fs', r.join(' ')); break;
       case 'GONE': this.emit('gone'); break;
       case 'NOWIN': this.emit('nowin'); break;
@@ -43,6 +44,8 @@ class HelperClient extends EventEmitter {
   watch(pid, mode, skPid) { this.send('WATCH ' + (pid | 0) + ' ' + (/^(auto|stretch|aspect|altenter|f11|off)$/.test(mode) ? mode : 'auto') + ' ' + (skPid | 0)); }
   winFit(hwnd) { this.send('WINFIT ' + (/^-?\d+$/.test(String(hwnd || 0)) ? (hwnd || 0) : 0)); }
   remote(on, fit, taskbar) { this.send('REMOTE ' + (on ? 1 : 0) + ' ' + (/^(auto|stretch|aspect)$/.test(fit) ? fit : 'auto') + ' ' + (taskbar === false ? 0 : 1)); }
+  listWins() { this.send('LISTWINS'); }
+  taskbar(on) { this.send('TASKBAR ' + (on ? 1 : 0)); }
   restoreWin() { this.send('RESTOREWIN'); }
   unwatch() { this.send('UNWATCH'); }
   minimize(hwnd) { if (/^-?\d+$/.test(String(hwnd))) this.send('MIN ' + hwnd); }

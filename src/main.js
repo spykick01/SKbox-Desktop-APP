@@ -61,7 +61,14 @@ app.on('web-contents-created', (_e, wc) => {
 // ================= storage =================
 const STORES = ['apps', 'settings', 'stats'];
 ipcMain.handle('store:get', (_e, n, d) => STORES.includes(n) ? store.read(n, d) : d);
-ipcMain.handle('store:set', (_e, n, v) => { if (STORES.includes(n)) store.write(n, v); return true; });
+const MAIN_OWNED = ['brightness', 'dim', 'warm'];   // changed by hotkeys in the main process: never let a stale copy from the window overwrite them
+ipcMain.handle('store:set', (_e, n, v) => {
+  if (!STORES.includes(n)) return true;
+  if (n === 'settings' && v && typeof v === 'object') { const cur = store.read('settings', {}); MAIN_OWNED.forEach(k => { if (cur[k] !== undefined) v[k] = cur[k]; else delete v[k]; }); }
+  store.write(n, v);
+  if (n === 'settings') setImmediate(() => { try { display.sync(); extras.applySystem(); } catch {} });
+  return true;
+});
 ipcMain.handle('sys:info', () => ({ version: app.getVersion(), platform: process.platform, covers: COVER_DIR(), startup: isWin ? app.getLoginItemSettings().openAtLogin : false, helper: !!(helper && helper.ready) }));
 
 // ================= accounts (profiles) =================
@@ -117,14 +124,19 @@ ipcMain.handle('cover:icon', async (_e, exe) => { try { if (!/^[a-z]:|^\\/i.test
 ipcMain.handle('cover:remove', (_e, f) => { try { if (f && path.dirname(f) === COVER_DIR()) fs.unlinkSync(f); } catch {} return true; });
 
 // ================= running a game =================
-function notify(title, body, force) { try { if (!force && store.read('settings', {}).notifications === false) return; new Notification({ title, body }).show(); } catch {} }
-let lastRemoteInput = Date.now(), lastLvl = 0, swTicks = 0, swTold = false;
+function notify(title, body, force) { try { if (!force && store.read('settings', {}).notifications === false) return; new Notification({ title, body, silent: !!store.read('settings', {}).notifSilent }).show(); } catch {} }
+let lastRemoteInput = Date.now(), remoteSince = Date.now(), lastLvl = 0, swTicks = 0, swTold = false;
 const fitArgs = () => { const s = store.read('settings', {}); return { fit: ['auto', 'stretch', 'aspect'].includes(s.remoteFit) ? s.remoteFit : 'auto', taskbar: s.remoteTaskbar !== false }; };
+const display = require('./lib/display').create({ store, isWin, notify });
+const winApi = { list: winList, close: winClose, min: async a => { if (helper && helper.ready) helper.minimize(String(a.h)); return { ok: true }; }, front: async a => { if (helper && helper.ready) helper.restore(String(a.h)); return { ok: true }; }, cleanup: winCleanup };
 const extras = require('./lib/extras').create({
-  store, notify, getGame: () => game, helper: () => helper, remoteLive: () => remoteLive, lastInput: () => lastRemoteInput, fitArgs,
+  store, notify, isWin, display, wins: winApi, getGame: () => game, helper: () => helper, remoteLive: () => remoteLive, lastInput: () => lastRemoteInput, sessionSince: () => remoteSince, fitArgs,
   remoteState: () => remoteState(), newPin: () => { try { if (remote && remote.on_) remote.newPin(); } catch {} },
   remoteKick: why => { try { if (remote) remote.endSession(why); } catch {} },
-  closeGame: async () => { if (!game) return; await killGame(); endGame(); },
+  closeGame: async () => { if (game) await closeGameResult(); }, closeGameResult: () => closeGameResult(),
+  launchApp: id => { let apps = store.read('apps', []); if (!Array.isArray(apps)) apps = apps.apps || []; const a = apps.find(x => x.id === id); if (a) launchApp(a).catch(() => {}); },
+  lockPc: () => { if (isWin) execFile('rundll32.exe', ['user32.dll,LockWorkStation'], () => {}); },
+  restartHelper: () => restartHelper(),
   diag: () => ['Helper lines: ' + (helperInfo.diag || []).join(' | '), 'Helper error: ' + (helperInfo.error || 'none')].join('\n')
 });
 ipcMain.handle('extras:do', (_e, n, a) => extras.run(String(n || ''), a));
@@ -156,7 +168,7 @@ function prepWindowedFs(exe) {
 // Windowing is applied by the helper ONLY while a Remote play player is connected (see helper.remote). Otherwise games are left exactly as they are.
 let remoteLive = false;
 function gameMode(m) { m = m || 'auto'; if (m === 'off') return 'off'; if (store.read('settings', {}).gameWindow === 'off') return 'off'; return 'auto'; }
-function setRemoteLive(on) { remoteLive = !!on; if (on) { lastRemoteInput = Date.now(); lastLvl = 0; swTicks = 0; swTold = false; } const fa = fitArgs(); if (helper && helper.ready) { helper.remote(on && store.read('settings', {}).gameWindow !== 'off', fa.fit, fa.taskbar); if (on && game && game.hwnd) setTimeout(() => helper.winFit(game && game.hwnd), 1500); } if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
+function setRemoteLive(on) { remoteLive = !!on; if (on) { lastRemoteInput = remoteSince = Date.now(); lastLvl = 0; swTicks = 0; swTold = false; } const fa = fitArgs(); if (helper && helper.ready) { helper.remote(on && store.read('settings', {}).gameWindow !== 'off', fa.fit, fa.taskbar); if (on && game && game.hwnd) setTimeout(() => helper.winFit(game && game.hwnd), 1500); } if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
 function showBackdrop(a) {
   closeBackdrop(); const d = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   backdrop = new BrowserWindow({ x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height, frame: false, backgroundColor: '#000000', show: false, skipTaskbar: true, focusable: false, movable: false, resizable: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -170,16 +182,74 @@ function gameState() { return game ? { id: game.id, name: game.name, startedAt: 
 const alive = p => { try { process.kill(p, 0); return true; } catch { return false; } };
 const waitDead = async (pids, ms) => { const t = Date.now(); while (Date.now() - t < ms) { if (!pids.some(alive)) return true; await new Promise(r => setTimeout(r, 150)); } return false; };
 const taskkill = pid => new Promise(res => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => res()));
-// Close politely first (so games can save), then force it. Returns true if we found something to close.
+const taskkillE = pid => new Promise(res => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, (e, o, er) => res(String(er || o || ''))));
+let killDenied = false;
+const GENERIC_EXE = /^(cmd|powershell|pwsh|explorer|java|javaw|python|pythonw|node|wscript|conhost)\.exe$/i;
+// Close the game: ask nicely (so it can save), then end every process that still belongs to it, then the program by name. Reports if Windows refuses.
 async function killGame() {
-  if (!game || !isWin) return false;
+  killDenied = false; if (!game || !isWin) return false;
+  const force = store.read('settings', {}).closeMode === 'force', exeName = path.basename(String(game.exe || '')).toLowerCase(), gl = String(game.exe || '').toLowerCase();
   const pidsNow = () => [...new Set([game && game.pid, game && game.wpid].filter(x => x > 0))];
-  let pids = pidsNow(), found = pids.length > 0 || !!game.hwnd;
-  if (helper && helper.ready && game.hwnd) { helper.closeWindow(game.hwnd); if (pids.length) await waitDead(pids, 3000); else await new Promise(r => setTimeout(r, 1500)); }
-  pids = pidsNow().filter(alive);
-  await Promise.all(pids.map(taskkill));
+  const mine = async () => { const l = helper && helper.ready ? await listWins() : []; const ps = new Set(pidsNow()); return l.filter(w => ps.has(w.pid) || (gl && String(w.p).toLowerCase() === gl)); };
+  let wins = await mine(); const found = pidsNow().length > 0 || wins.length > 0 || !!game.hwnd;
+  if (!force && helper && helper.ready) {
+    const hs = new Set(wins.map(w => w.h)); if (game.hwnd) hs.add(String(game.hwnd)); hs.forEach(hw => helper.closeWindow(hw));
+    for (let i = 0; i < 8; i++) { await sleep(500); if (!pidsNow().some(alive) && !(await mine()).length) break; }
+  }
+  wins = await mine(); const kp = new Set([...pidsNow().filter(alive), ...wins.map(w => w.pid)]);
+  await Promise.all([...kp].map(taskkillE)); await sleep(400);
+  let left = await mine();
+  if (left.length && exeName.endsWith('.exe') && !GENERIC_EXE.test(exeName)) { await new Promise(res => execFile('taskkill', ['/IM', exeName, '/F'], { windowsHide: true }, () => res())); await sleep(400); left = await mine(); }
+  if (left.length) killDenied = true;
   return found;
 }
+async function closeGameResult() {
+  if (!game) return { ok: false }; const name = game.name, found = await killGame();
+  if (killDenied) return { ok: false, name, error: 'Windows would not let SKBox close it. It runs as administrator. Start SKBox as administrator, or close it yourself.' };
+  endGame(); return { ok: true, found, name };
+}
+// ---- Settings > Windows opened apps ----
+function listWins() {
+  return new Promise(res => {
+    if (!helper || !helper.ready) return res([]);
+    const f = a => { clearTimeout(t); res(Array.isArray(a) ? a : []); }, t = setTimeout(() => { helper.off('wins', f); res([]); }, 3000);
+    helper.once('wins', f); helper.listWins();
+  });
+}
+const ownPids = () => new Set([process.pid].concat(app.getAppMetrics().map(m => m.pid)));
+const PROTECTED_EXE = ['explorer.exe'];
+async function winList() {
+  if (!isWin) return { ok: false, error: 'Only on Windows.' };
+  if (!helper || !helper.ready) return { ok: false, error: 'The helper is not running yet. Try Restart helper in Extras.' };
+  const own = ownPids(), s = store.read('settings', {});
+  const gp = new Set([game && game.pid, game && game.wpid].filter(x => x > 0)), gx = game ? String(game.exe).toLowerCase() : '';
+  let l = (await listWins()).filter(w => !own.has(w.pid));
+  if (s.winHideSys !== false) l = l.filter(w => !/^(Program Manager|Windows Input Experience|Microsoft Text Input Application)$/.test(w.t));
+  l = l.map(w => ({ h: w.h, pid: w.pid, n: w.n, t: w.t, m: w.m, min: !!w.min, game: gp.has(w.pid) || (!!gx && String(w.p).toLowerCase() === gx), prot: PROTECTED_EXE.includes(String(w.n).toLowerCase()) }));
+  l.sort(s.winSort === 'mem' ? (a, b) => b.m - a.m : (a, b) => String(a.n || a.t).localeCompare(String(b.n || b.t)) || String(a.t).localeCompare(String(b.t)));
+  return { ok: true, wins: l, game: game ? game.name : '' };
+}
+async function winClose(a) {
+  const h = String(a && a.h), pid = (a && a.pid) | 0; if (!/^-?\d+$/.test(h) || !helper || !helper.ready) return { ok: false, error: 'The helper is not running.' };
+  if (ownPids().has(pid)) return { ok: false, error: 'That is SKBox itself.' };
+  const w0 = (await listWins()).find(x => x.h === h), prot = !!w0 && PROTECTED_EXE.includes(String(w0.n).toLowerCase());
+  if (!a.force) {
+    helper.closeWindow(h); await sleep(2500);
+    const l = await listWins(); if (!l.some(x => x.h === h)) return { ok: true, state: 'closed' };
+    if (prot) return { ok: false, error: 'It did not close. It may be asking you something.' };
+    if (l.filter(x => x.pid === pid).length > 1) return { ok: false, error: 'This app did not close that window and has others open. Use Force close to end the whole app.' };
+  }
+  if (prot) return { ok: false, error: 'Windows Explorer cannot be force closed.' };
+  const r = await taskkillE(pid); await sleep(500);
+  if (!(await listWins()).some(x => x.h === h)) return { ok: true, state: 'forced' };
+  return { ok: false, error: /denied/i.test(r) ? 'Windows will not let SKBox end this app. It runs as administrator. Start SKBox as administrator to close it.' : 'It is still open.' };
+}
+async function winCleanup() {
+  const r = await winList(); if (!r.ok) return r; let n = 0;
+  for (const w of r.wins) { if (w.game || w.prot) continue; helper.closeWindow(w.h); n++; }
+  return { ok: true, n };
+}
+function restartHelper() { try { helper && helper.stop(); } catch {} helper = null; startHelper(); }
 function statsTouch(id, ms) { if (!id) return; const st = store.read('stats', {}), x = st[id] || (st[id] = { last: 0, ms: 0, n: 0 }); x.last = Date.now(); if (ms) { x.ms += ms; x.best = Math.max(x.best || 0, ms); } else x.n++; store.write('stats', st); }
 function endGame() {
   if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} try { extras.onGameEnd(game.name, Date.now() - game.startedAt); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
@@ -188,8 +258,8 @@ function endGame() {
 ipcMain.handle('game:state', () => gameState());
 ipcMain.handle('stats:touch', (_e, id) => { statsTouch(String(id || '').slice(0, 60), 0); return true; });
 ipcMain.handle('game:resume', () => { if (!game) return false; hideMusic(false); closeOverlay(false); stepAside(); if (helper && game.hwnd) helper.restore(game.hwnd); return true; });
-ipcMain.handle('game:close', async () => { if (!game) return { ok: false }; const name = game.name, found = await killGame(); endGame(); return { ok: true, found, name }; });
-ipcMain.handle('app:launch', async (_e, a) => {
+ipcMain.handle('game:close', () => closeGameResult());
+async function launchApp(a) {
   const target = String(a.exe || '').trim().replace(/^"|"$/g, '');
   if (!target) return { ok: false, error: 'No file set for this app.' };
   if (game && !a.replace) return { ok: false, error: game.name + ' is already running.', running: true };
@@ -198,6 +268,7 @@ ipcMain.handle('app:launch', async (_e, a) => {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
     game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: gameMode(a.fs), noWindow: false, exited: false };
+    try { extras.onGameStart(); } catch {}
     statsTouch(a.id, 0);
     if (!isUrl && remoteLive && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
     if (a.compat && !isUrl && /\.exe$/i.test(target)) applyCompat(target);
@@ -215,7 +286,8 @@ ipcMain.handle('app:launch', async (_e, a) => {
     stepAside();
     return { ok: true };
   } catch (e) { endGame(); return { ok: false, error: String(e.message || e) }; }
-});
+}
+ipcMain.handle('app:launch', (_e, a) => launchApp(a));
 function backdropFade() { try { if (backdrop && !backdrop.isDestroyed()) backdrop.webContents.executeJavaScript("document.body.classList.add('dim')").catch(() => {}); } catch {} }
 
 // ================= helper (controller guide button, controller count, fullscreen) =================
@@ -371,7 +443,7 @@ let sleepT = null;
 async function fireTimer() {
   const a = sleepT && sleepT.action; sleepT = null; send('timer:fired', a);
   try { new Notification({ title: 'SKBox timer', body: a === 'closegame' ? 'Closing your game.' : a === 'shutdown' ? 'Shutting down.' : 'Going to sleep.' }).show(); } catch {}
-  if (a === 'closegame') { if (game) { await killGame(); endGame(); } } else if (POWER[a] && isWin) setTimeout(() => execFile(POWER[a][0], POWER[a][1], { windowsHide: true }, () => {}), 4000);
+  if (a === 'closegame') { if (game) await closeGameResult(); } else if (POWER[a] && isWin) setTimeout(() => execFile(POWER[a][0], POWER[a][1], { windowsHide: true }, () => {}), 4000);
 }
 const timerInfo = () => sleepT ? { at: sleepT.at, action: sleepT.action } : null;
 ipcMain.handle('timer:get', () => timerInfo());
@@ -439,7 +511,7 @@ const remoteDisplay = () => { try { if (win && !win.isDestroyed() && win.isVisib
 setInterval(() => { try { if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) lastDisp = screen.getDisplayMatching(win.getBounds()); } catch {} }, 1500);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const REMOTE_DIR = () => path.join(__dirname, '..', 'renderer', 'remote');
-const rset = () => { const s = store.read('settings', {}); return { quality: ['instant', 'smooth', 'low', 'balanced', 'high'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth', autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
+const rset = () => { const s = store.read('settings', {}); return { quality: ['instant', 'smooth', 'low', 'balanced', 'high'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth', autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, fps: +s.remoteFps || 0, res: +s.remoteRes || 0, kbps: +s.remoteKbps || 0, audio: s.remoteAudio !== false, pref: ['framerate', 'resolution', 'balanced'].includes(s.remotePref) ? s.remotePref : 'framerate', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
 const remoteState = () => Object.assign(remote ? remote.state() : { on: false, port: 0, pin: '', ips: [], client: null }, { stats: remoteStats, cfg: rset(), helper: !!(helper && helper.ready), supported: isWin });
 const pushRemote = () => send('remote:state', remoteState());
 const hin = line => { if (helper && helper.ready) helper.send(line); };
@@ -472,7 +544,7 @@ async function remoteCreateSession({ sid, name, offer }) {
   const p = new Promise((resolve, reject) => { const t = setTimeout(() => { delete answers[sid]; reject(new Error('The PC took too long to start the stream.')); }, 20000); answers[sid] = { resolve: d => { clearTimeout(t); delete answers[sid]; d && d.error ? reject(new Error(d.error)) : resolve(d); } }; });
   remoteWin.webContents.executeJavaScript('window.__skhostOffer(' + JSON.stringify({ sid, offer, cfg }) + ')', true).catch(() => {});
   const ans = await p; startMapper(); remoteStats = null; setRemoteLive(true);
-  try { notify('Remote play', name + ' connected to SKBox'); } catch {}
+  try { notify('Remote play', name + ' connected to SKBox'); try { extras.onRemoteJoin(); } catch {}; } catch {}
   return ans;
 }
 const toClient = o => { try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:toClient', JSON.stringify(o)); } catch {} };
@@ -495,7 +567,7 @@ function remoteFixFs() {   // manual: fit the window, then the same ladder, from
   fixStage = Math.min(fixStage, 1); fixTold = false; remoteLadder();
 }
 function remoteEndSession() {
-  const wasLive = remoteLive; setRemoteLive(false); if (wasLive) { try { extras.onRemoteLeft(); } catch {} }
+  const wasLive = remoteLive; setRemoteLive(false); if (wasLive && game && store.read('settings', {}).gameTaskbar && helper && helper.ready) setTimeout(() => helper.taskbar(true), 400); if (wasLive) { try { extras.onRemoteLeft(); } catch {} }
   frozenCount = 0; frozenTold = false; fixStage = 0; badCount = 0; remoteSrc = 'screen'; stopMapper(); remoteStats = null; hin('IR');
   try { if (remoteWin && !remoteWin.isDestroyed()) remoteWin.webContents.send('remote:kick'); } catch {}
 }
@@ -583,12 +655,12 @@ app.whenReady().then(() => {
   const st = store.read('settings', {});
   if (st.startup === undefined && (isWin || process.platform === 'darwin')) { app.setLoginItemSettings({ openAtLogin: true }); st.startup = true; store.write('settings', st); }
   if (st.takeGuide !== false) takeGuide(true);
-  createWindow(); setupTray(); setupUpdates(); startHelper(); extras.start();
+  createWindow(); setupTray(); setupUpdates(); startHelper(); extras.start(); display.start();
   if (isWin && store.read('settings', {}).remoteAutoStart) setTimeout(async () => { try { await remoteInit().start(); pushRemote(); } catch {} }, 4000);
   globalShortcut.register('Control+Shift+B', comeBack);
   globalShortcut.register('Control+Shift+O', toggleOverlay);
   globalShortcut.register('Control+Shift+S', () => { takeShot(true); });
-  extras.hotkeys(globalShortcut);
+  extras.hotkeys(globalShortcut); display.hotkeys(globalShortcut);
 });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); try { helper && helper.stop(); } catch {} });
 app.on('window-all-closed', () => app.quit());

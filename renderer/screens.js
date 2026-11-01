@@ -496,7 +496,7 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
@@ -604,6 +604,65 @@
       pane.appendChild(toggle('Show CPU and memory', 'On Home and in the SK menu', !!S.settings.hud, v => sv('hud', v)));
       const autoOpts = [['', 'Nothing']].concat(allApps().map(a => [a.id, a.name]));
       pane.appendChild(cyc('Open an app when SKBox starts', 'For example SKMusic', autoOpts, () => S.settings.autoApp || '', v => sv('autoApp', v)));
+    } else if (id === 'windows') {
+      h('Windows opened apps'); sub('Everything open on this PC. Close asks the app to close, and ends it if it will not.');
+      const X = (n, a) => sk.extras.do(n, a), sv = (k, v) => { S.settings[k] = v; saveSettings(); };
+      const say = (r, ok) => toast(r && r.ok ? (ok || 'Done') : ((r && r.error) || 'That did not work'));
+      const info = el('div', 'sub', 'Loading\u2026'); pane.appendChild(info);
+      const box = el('div');
+      const draw = async () => {
+        const r = await X('winList'); if (!pane.isConnected) return; box.innerHTML = '';
+        if (!r || !r.ok) { info.textContent = (r && r.error) || 'Could not read the windows.'; return; }
+        info.textContent = r.wins.length + ' open' + (r.game ? ' \u00B7 \u2605 is ' + r.game : '');
+        r.wins.forEach(w => {
+          const it = el('div', 'item'); it.innerHTML = '<div>' + (w.game ? '\u2605 ' : '') + esc(w.t) + '<small>' + esc(w.n || 'unknown program') + ' \u00B7 ' + w.m + ' MB' + (w.min ? ' \u00B7 minimized' : '') + '</small></div>';
+          const act = el('div', 'btnrow'); act.style.margin = '0';
+          const mk = (label, fn) => { const b = nav(el('button', 'btn', label)); b.onclick = fn; act.appendChild(b); };
+          const doClose = force => { const go2 = async () => { toast(force ? 'Ending it\u2026' : 'Closing\u2026'); const rr = await X('winClose', { h: w.h, pid: w.pid, force }); say(rr, rr && rr.state === 'forced' ? 'Ended' : 'Closed'); draw(); };
+            if (S.settings.winConfirm === false) go2(); else confirm((force ? 'Force close ' : 'Close ') + (w.n || w.t) + '?', force ? 'It ends at once and may lose unsaved work. All windows of this app close.' : 'If it does not close in a few seconds, SKBox ends it.', force ? 'Force close' : 'Close', go2, true); };
+          mk('Close', () => doClose(false)); if (!w.prot) mk('Force', () => doClose(true));
+          mk(w.min ? 'Show' : 'Hide', async () => { await X(w.min ? 'winFront' : 'winMin', { h: w.h }); setTimeout(draw, 500); });
+          it.appendChild(act); box.appendChild(it);
+        });
+      };
+      pane.appendChild(row('Close the running game', 'Ends the game SKBox started', '', async () => { toast('Closing\u2026'); say(await X('closeGame'), 'Closed'); draw(); }));
+      pane.appendChild(row('Refresh the list', '', '\u21BB', () => draw()));
+      pane.appendChild(row('Close all other apps', 'Asks every open window to close, except SKBox and the game', '', () => confirm('Close all other apps?', 'Anything unsaved may ask to be saved first.', 'Close them', async () => { const r = await X('winCleanup'); say(r, (r.n || 0) + ' windows asked to close'); setTimeout(draw, 3000); }, true)));
+      pane.appendChild(toggle('Refresh by itself', 'Updates the list every few seconds', S.settings.winAuto !== false, v => sv('winAuto', v)));
+      pane.appendChild(toggle('Hide system windows', 'Keeps Windows\u2019 own background windows out of the list', S.settings.winHideSys !== false, v => sv('winHideSys', v)));
+      pane.appendChild(toggle('Ask before closing', 'A confirmation for Close and Force', S.settings.winConfirm !== false, v => sv('winConfirm', v)));
+      pane.appendChild(cyc('Sort by', '', [['name', 'Name'], ['mem', 'Memory used']], () => S.settings.winSort || 'name', v => { sv('winSort', v); draw(); }));
+      pane.appendChild(box); draw();
+      const tm = setInterval(() => { if (!pane.isConnected) return clearInterval(tm); if (S.settings.winAuto !== false) draw(); }, 4000);
+    } else if (id === 'bright') {
+      h('Display & brightness'); sub('Brightness works on laptop and built-in screens. The dimmer and night filter work on any monitor.');
+      const X = (n, a) => sk.extras.do(n, a), sv = (k, v) => { S.settings[k] = v; saveSettings(); };
+      const dv = async (k, v) => { S.settings[k] = v; await X('display', { k, v }); };
+      const act = async (a, v, msg) => { const r = await X('displayAction', { a, v }); if (r && r.settings) ['brightness', 'dim', 'warm'].forEach(k => { S.settings[k] = r.settings[k]; }); toast(msg || 'Done'); };
+      const st = row('Brightness control', 'Checking this screen\u2026', '', null); pane.appendChild(st);
+      X('displayStatus').then(r => { if (!st.isConnected) return; st.querySelector('small').textContent = r.supported ? 'This screen supports brightness control' : 'No brightness control on this screen. Use the dimmer instead'; st.querySelector('.r').textContent = r.supported ? 'Available' : 'Dimmer only'; });
+      pane.appendChild(el('h3', '', 'Brightness'));
+      const bo = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(n => [String(n), n + '%']), bc = String(S.settings.brightness == null ? 100 : S.settings.brightness); if (!bo.some(o => o[0] === bc)) bo.push([bc, bc + '%']);
+      pane.appendChild(cyc('Brightness', 'Built-in screens only', bo, () => String(S.settings.brightness == null ? 100 : S.settings.brightness), v => dv('brightness', +v)));
+      pane.appendChild(row('Brighter', 'Ctrl+Alt+Shift+Up', '+', () => act('step', 1, 'Brighter')));
+      pane.appendChild(row('Darker', 'Ctrl+Alt+Shift+Down', '\u2212', () => act('step', -1, 'Darker')));
+      pane.appendChild(el('h3', '', 'Quick looks'));
+      pane.appendChild(row('Day', 'Full brightness, no filter', '', () => act('preset', 'day', 'Day look')));
+      pane.appendChild(row('Evening', 'A little dimmer with a warm filter', '', () => act('preset', 'evening', 'Evening look')));
+      pane.appendChild(row('Night', 'Dim and warm, easy on the eyes', '', () => act('preset', 'night', 'Night look')));
+      pane.appendChild(row('Reset the screen', 'Brightness 100%, dimmer and filter off', '', () => act('reset', 0, 'Screen reset')));
+      pane.appendChild(el('h3', '', 'Dimmer and night filter (any monitor)'));
+      pane.appendChild(cyc('Screen dimmer', 'Ctrl+Alt+Shift+D', [0, 10, 20, 30, 40, 50, 60, 70, 80, 90].map(n => [String(n), n ? n + '%' : 'Off']), () => String(S.settings.dim || 0), v => dv('dim', +v)));
+      pane.appendChild(cyc('Night filter', 'Warm light. Ctrl+Alt+Shift+N', [['0', 'Off'], ['1', 'Soft'], ['2', 'Medium'], ['3', 'Strong']], () => String(S.settings.warm || 0), v => dv('warm', +v)));
+      pane.appendChild(cyc('Filter color', '', [['amber', 'Soft amber'], ['orange', 'Orange'], ['red', 'Red']], () => S.settings.warmTint || 'amber', v => { sv('warmTint', v); X('display', { k: 'warmTint', v }); }));
+      pane.appendChild(cyc('Night schedule', 'Medium filter turns on by itself', [['off', 'Off'], ['20-7', '8 pm to 7 am'], ['21-6', '9 pm to 6 am'], ['22-6', '10 pm to 6 am']], () => S.settings.nightAuto || 'off', v => { sv('nightAuto', v); X('display', { k: 'nightAuto', v }); }));
+      pane.appendChild(cyc('Dimmer limit', 'The screen never gets darker than this', [50, 60, 70, 80, 90].map(n => [String(n), n + '%']), () => String(S.settings.dimCap || 70), v => { sv('dimCap', +v); X('display', { k: 'dimCap', v: +v }); }));
+      pane.appendChild(el('h3', '', 'While gaming'));
+      pane.appendChild(cyc('Game brightness', 'Set when a game starts, put back afterwards', [['0', 'Off'], ['40', '40%'], ['60', '60%'], ['80', '80%'], ['100', '100%']], () => String(S.settings.gameBright || 0), v => sv('gameBright', +v)));
+      pane.appendChild(el('h3', '', 'Keys'));
+      pane.appendChild(cyc('Brightness step', 'For the hotkeys and Brighter / Darker', [['5', '5%'], ['10', '10%'], ['20', '20%']], () => String(S.settings.brightStep || 10), v => sv('brightStep', +v)));
+      pane.appendChild(toggle('Display hotkeys', 'Ctrl+Alt+Shift with Up, Down, D and N', S.settings.brightKeys !== false, v => sv('brightKeys', v)));
+      pane.appendChild(toggle('Show a small notice when it changes', 'A quiet notification', S.settings.osd !== false, v => sv('osd', v)));
     } else if (id === 'extras') {
       h('Extras & QOL'); sub('Remote play tuning, reminders and helpers. Changes apply right away.');
       const sv = (k, v) => { S.settings[k] = v; saveSettings(); };
@@ -624,7 +683,7 @@
       sec('Remote play: safety and power');
       pane.appendChild(toggle('Turn Remote play on when SKBox starts', 'Off by default. The PIN is still required', !!S.settings.remoteAutoStart, v => sv('remoteAutoStart', v)));
       pane.appendChild(cyc('Disconnect when nobody uses it', 'Ends the session if no key, mouse or button is used', [['0', 'Never'], ['5', 'After 5 min'], ['15', 'After 15 min'], ['30', 'After 30 min'], ['60', 'After 1 hour']], () => String(S.settings.remoteIdle || 0), v => sv('remoteIdle', +v)));
-      pane.appendChild(cyc('When the player disconnects', 'What happens to the game that is running', [['nothing', 'Keep playing'], ['minimize', 'Minimize the game'], ['close', 'Close the game']], () => S.settings.remoteLeave || 'nothing', v => sv('remoteLeave', v)));
+      pane.appendChild(cyc('When the player disconnects', 'What happens to the game that is running', [['nothing', 'Keep playing'], ['minimize', 'Minimize the game'], ['close', 'Close the game'], ['lock', 'Lock this PC']], () => S.settings.remoteLeave || 'nothing', v => sv('remoteLeave', v)));
       pane.appendChild(toggle('New PIN after every session', 'Someone who saw the old PIN cannot reuse it', !!S.settings.remoteNewPin, v => sv('remoteNewPin', v)));
       pane.appendChild(toggle('Keep this PC awake while streaming', 'No screen sleep during a session', S.settings.remoteAwake !== false, v => sv('remoteAwake', v)));
       pane.appendChild(row('Copy the Remote play address', 'Paste it in a browser on the other device', '\u2192', async () => say(await X('copyAddr'), 'Address copied')));
@@ -635,7 +694,43 @@
       pane.appendChild(cyc('Daily play limit', 'One notification when you pass it', [['0', 'Off'], ['1', '1 hour'], ['2', '2 hours'], ['3', '3 hours'], ['4', '4 hours'], ['6', '6 hours']], () => String(S.settings.dailyLimit || 0), v => sv('dailyLimit', +v)));
       pane.appendChild(toggle('Session summary', 'A notification with your time when a game closes', S.settings.summary !== false, v => sv('summary', v)));
       pane.appendChild(toggle('Panic hotkey (Ctrl+Alt+Shift+K)', 'Closes the running game right away', S.settings.panicKey !== false, v => sv('panicKey', v)));
+      sec('Remote play: stream tuning (for lag)');
+      pane.appendChild(cyc('Frame rate', 'Lower can feel smoother on weak Wi-Fi', [['0', 'Preset'], ['30', '30 fps'], ['45', '45 fps'], ['60', '60 fps']], () => String(S.settings.remoteFps || 0), v => sv('remoteFps', +v)));
+      pane.appendChild(cyc('Resolution', 'Lower means less delay', [['0', 'Preset'], ['540', '540p'], ['720', '720p'], ['900', '900p'], ['1080', '1080p']], () => String(S.settings.remoteRes || 0), v => sv('remoteRes', +v)));
+      pane.appendChild(cyc('Top bitrate', 'Mbps. Lower is safer on Wi-Fi', [['0', 'Preset'], ['3000', '3 Mbps'], ['5000', '5 Mbps'], ['8000', '8 Mbps'], ['12000', '12 Mbps'], ['20000', '20 Mbps'], ['30000', '30 Mbps']], () => String(S.settings.remoteKbps || 0), v => sv('remoteKbps', +v)));
+      pane.appendChild(cyc('When it struggles', 'What to give up first', [['framerate', 'Keep it smooth'], ['resolution', 'Keep it sharp'], ['balanced', 'Balance both']], () => S.settings.remotePref || 'framerate', v => sv('remotePref', v)));
+      pane.appendChild(toggle('Stream sound', 'Turn off to test whether sound adds delay', S.settings.remoteAudio !== false, v => sv('remoteAudio', v)));
+      pane.appendChild(toggle('Boost SKBox while streaming', 'Higher priority for the streaming parts', S.settings.remoteBoost !== false, v => sv('remoteBoost', v)));
+      pane.appendChild(row('Test the link to my router', 'Shows if Wi-Fi is the cause of lag', '\u2192', async () => { toast('Testing\u2026'); const r = await X('ping'); r && r.ok ? confirm('Router test', r.text, 'OK', () => {}, false) : say(r); }));
+      sec('Remote play: more safety and automation');
+      pane.appendChild(cyc('Session time limit', 'Ends the session after this long', [['0', 'None'], ['1', '1 hour'], ['2', '2 hours'], ['4', '4 hours'], ['8', '8 hours']], () => String(S.settings.remoteMaxH || 0), v => sv('remoteMaxH', +v)));
+      pane.appendChild(cyc('When the game closes', 'What happens to the connected player', [['nothing', 'Stay connected'], ['disconnect', 'Disconnect the player']], () => S.settings.remoteGameEnd || 'nothing', v => sv('remoteGameEnd', v)));
+      pane.appendChild(cyc('Start this app when a player connects', 'Pick one of your apps', [['', 'None']].concat((S.apps || []).map(a => [a.id, a.name])), () => S.settings.remoteAutoApp || '', v => sv('remoteAutoApp', v)));
+      pane.appendChild(row('Copy the PIN', '', '\u2192', async () => say(await X('copyPin'), 'PIN copied')));
+      pane.appendChild(row('Copy address and PIN', 'Ready to send to yourself', '\u2192', async () => say(await X('copyConnect'), 'Copied')));
+      sec('Game performance');
+      pane.appendChild(toggle('High performance power plan while gaming', 'Switched back when the game closes', !!S.settings.gamePlan, v => sv('gamePlan', v)));
+      pane.appendChild(toggle('Silence Windows notifications while gaming', 'No pop-ups over the game. Turned back on afterwards', !!S.settings.gameQuiet, v => sv('gameQuiet', v)));
+      pane.appendChild(toggle('Windows Game Mode', 'Lets Windows favor the game', !!S.settings.gameModeOn, v => sv('gameModeOn', v)));
+      pane.appendChild(toggle('Stop the Xbox button opening Game Bar', 'Fixes the controller button fighting SKBox', !!S.settings.noNexus, v => sv('noNexus', v)));
+      pane.appendChild(toggle('Hide the taskbar while a game runs', 'Not only during Remote play', !!S.settings.gameTaskbar, v => sv('gameTaskbar', v)));
+      pane.appendChild(cyc('Closing a game', 'Used by every Close button', [['polite', 'Ask first, then force'], ['force', 'Force at once']], () => S.settings.closeMode || 'polite', v => sv('closeMode', v)));
+      pane.appendChild(cyc('Close a game after', 'Ends it when the time is up', [['0', 'Never'], ['1', '1 hour'], ['2', '2 hours'], ['3', '3 hours'], ['4', '4 hours']], () => String(S.settings.gameMaxH || 0), v => sv('gameMaxH', +v)));
+      pane.appendChild(cyc('Rest your eyes reminder', '20 feet, 20 seconds', [['0', 'Off'], ['20', 'Every 20 min'], ['30', 'Every 30 min'], ['45', 'Every 45 min']], () => String(S.settings.eyeMin || 0), v => sv('eyeMin', +v)));
+      const wk = row('Played in the last 7 days', '', '', null); pane.appendChild(wk);
+      X('week').then(r => { if (wk.isConnected) wk.querySelector('.r').textContent = Math.round((r.ms || 0) / 60000) + ' min'; });
+      pane.appendChild(row('Clear today\u2019s playtime', '', '\u2192', async () => say(await X('clearToday'), 'Cleared')));
+      pane.appendChild(row('Close the running game', 'Ends the game SKBox started', '\u2192', async () => { toast('Closing\u2026'); say(await X('closeGame'), 'Closed'); }));
       sec('Helpers');
+      pane.appendChild(toggle('Hotkeys', 'Master switch for every Ctrl+Alt+Shift hotkey', S.settings.hotkeysOn !== false, v => sv('hotkeysOn', v)));
+      pane.appendChild(row('Hotkey list', '', '\u2192', () => confirm('Hotkeys', 'Ctrl+Alt+Shift with:  F fit the game window  \u00B7  K close the game  \u00B7  Up / Down brightness  \u00B7  D dimmer  \u00B7  N night filter.  Ctrl+Shift+S takes a screenshot.', 'OK', () => {}, false)));
+      pane.appendChild(toggle('Quiet notifications', 'No sound with SKBox notifications', !!S.settings.notifSilent, v => sv('notifSilent', v)));
+      pane.appendChild(row('Open Display settings', 'Windows', '\u2192', () => X('open', 'display')));
+      pane.appendChild(row('Open Graphics settings', 'Windows: per-game GPU and windowed-game options', '\u2192', () => X('open', 'graphics')));
+      pane.appendChild(row('Open Network settings', 'Windows', '\u2192', () => X('open', 'network')));
+      pane.appendChild(row('Open Task Manager', '', '\u2192', () => X('open', 'taskmgr')));
+      pane.appendChild(row('Restart the helper', 'If the controller or window features stop working', '\u2192', async () => { await X('restartHelper'); toast('Helper restarting\u2026'); }));
+      pane.appendChild(row('Save diagnostics to the Desktop', 'A text file you can send', '\u2192', async () => say(await X('exportDiag'), 'Saved')));
       pane.appendChild(toggle('Windows notifications', 'Turn off to silence everything SKBox shows', S.settings.notifications !== false, v => sv('notifications', v)));
       pane.appendChild(row('Send a test notification', '', '\u2192', async () => say(await X('testNotify'), 'Sent')));
       pane.appendChild(row('Check for updates now', 'SKBox also checks every few hours', '\u2192', async () => { toast('Checking\u2026'); const r = await X('update'); say(r, r && r.latest && r.latest !== r.current ? 'Update ' + r.latest + ' is downloading' : 'You have the newest version'); }));
