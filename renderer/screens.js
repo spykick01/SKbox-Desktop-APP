@@ -497,7 +497,7 @@
         name = (name || '').trim().slice(0, 28) || guess;
         const d = { id: 'bapp_' + Date.now().toString(36), kind: 'bapp', name, url: u.origin + (u.pathname === '/' ? '/' : u.pathname) + u.search, adblock: true, engine: 'built', auth: true, cover: '', fit: '', coverAuto: true };
         const finish = async () => { const stop2 = busy('Getting the site icon\u2026'); await bappCover(d); stop2(); S.apps.push(d); saveApps(); toast(name + ' added to your Library. Press X to pin it to Home.'); done && done(d); };
-        const askEngine = () => { if (drm && eng.edge) menu('This site plays protected shows (DRM)', [{ label: 'Open in an Edge window (Netflix, Disney+ and others play here)', fn: () => { d.engine = 'edge'; d.adblock = false; finish(); } }, { label: 'Open in SKBrowse (ad block, but protected shows will not play)', fn: () => finish() }]); else finish(); };
+        const askEngine = () => { if (drm) d.adblock = d.adblock; finish(); };
         menu('Ad blocker for ' + name, [{ label: 'On (recommended)', fn: askEngine }, { label: 'Off for this app', fn: () => { d.adblock = false; askEngine(); } }]);
       } });
     } });
@@ -532,7 +532,7 @@
   ];
   const svHas = u => { try { const h = new URL(u).hostname; return S.apps.find(a => a.kind === 'bapp' && new URL(a.url).hostname === h); } catch (_) { return null; } };
   async function addService(sv, eng) {
-    const u = new URL(sv[1]), d = { id: 'bapp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kind: 'bapp', name: sv[0], tag: sv[2] + ' \u00B7 ' + u.hostname, url: sv[1], adblock: !sv[3], engine: sv[3] && eng && eng.edge ? 'edge' : 'built', auth: true, resume: true, cover: '', fit: '', coverAuto: true };
+    const u = new URL(sv[1]), d = { id: 'bapp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kind: 'bapp', name: sv[0], tag: sv[2] + ' \u00B7 ' + u.hostname, url: sv[1], adblock: !sv[3], engine: 'built', auth: true, resume: true, cover: '', fit: '', coverAuto: true };
     await bappCover(d); S.apps.push(d); saveApps(); return d;
   }
 
@@ -673,17 +673,17 @@
 
 
     } else if (id === 'shows') {
-      h('Streaming services'); sub('Tap a service to add it to your Library as an app. Apps remember where you left off. Protected services open in an Edge window.');
+      h('Streaming services'); sub('Tap a service to add it to your Library as an app. Apps remember where you left off. Protected services (Netflix and others) play inside SKBrowse.');
       const eng0 = { edge: '' }; sk.browse.engines().then(e => { eng0.edge = e.edge; });
       pane.appendChild(row('Add all free services', 'YouTube, Twitch, Kick, Pluto TV, Tubi, Plex, Rumble, Vimeo, Dailymotion, Roku Channel, SoundCloud', '+', async () => {
         const stop = busy('Adding services\u2026'); let n = 0; for (const sv of SERVICES.filter(x => !x[3])) if (!svHas(sv[1])) { await addService(sv, eng0); n++; } stop(); toast(n ? n + ' services added. Press X on one to pin it to Home.' : 'They are all added already'); go('settings', { cat: 'shows' });
       }));
-      [['Free and music', x => !x[3]], ['Subscription and protected (play in an Edge window)', x => x[3]]].forEach(([title, f]) => {
+      [['Free and music', x => !x[3]], ['Subscription and protected video', x => x[3]]].forEach(([title, f]) => {
         pane.appendChild(el('h3', '', title));
         SERVICES.filter(f).forEach(sv => { const have = svHas(sv[1]);
-          pane.appendChild(row(sv[0], sv[2] + (sv[3] ? (eng0.edge === '' ? ' \u00B7 needs Edge or Chrome' : '') : ''), have ? 'Added \u2713' : 'Add', () => {
+          pane.appendChild(row(sv[0], sv[2] + '', have ? 'Added \u2713' : 'Add', () => {
             if (have) { menu(sv[0], [{ label: 'Open', fn: () => openApp(have) }, { label: 'Pin to Home', fn: () => { setPinned(have, true); toast(sv[0] + ' pinned to Home'); } }, { label: 'Edit\u2026', fn: () => bappMenu(have, () => go('settings', { cat: 'shows' })) }]); return; }
-            (async () => { const e = await sk.browse.engines(); if (sv[3] && !e.edge) toast('Edge or Chrome was not found, so ' + sv[0] + ' cannot play protected video here'); const stop = busy('Adding ' + sv[0] + '\u2026'); const d = await addService(sv, e); stop(); toast(sv[0] + ' added. Press X to pin it to Home.'); go('settings', { cat: 'shows', focus: d.id }); })();
+            (async () => { const e = await sk.browse.engines(); const stop = busy('Adding ' + sv[0] + '\u2026'); const d = await addService(sv, e); stop(); toast(sv[0] + ' added. Press X to pin it to Home.'); go('settings', { cat: 'shows', focus: d.id }); })();
           })); });
       });
     } else if (id === 'browser') {
@@ -693,7 +693,9 @@
       pane.appendChild(el('h3', '', 'SKBrowse'));
       pane.appendChild(row('Open SKBrowse', 'Tabs, bookmarks, history and extensions. Start button opens its menu', '\u2192', () => sk.browse.open({ pad: pad() })));
       pane.appendChild(row('Open the Chrome Web Store', 'Browse extensions, then press Add to SKBrowse in the bar', '\u2192', () => sk.browse.open({ pad: pad(), url: 'https://chromewebstore.google.com/' })));
-      pane.appendChild(row('Open Netflix, Disney+ and other protected sites', 'Opens in an Edge window, because they need Edge\u2019s video protection', '\u2192', async () => { const e = await sk.browse.engines(); if (!e.edge) { toast('Edge or Chrome was not found on this PC'); return; } sk.launch({ id: 'edge_free', name: 'Edge', exe: e.edge, args: '', cover: '', fs: 'auto' }); }));
+      const drmRow = row('Protected video (Netflix, Disney+, Hulu, Max\u2026)', 'Checking\u2026', '', null); pane.appendChild(drmRow);
+      sk.browse.drmStatus().then(r => { if (!drmRow.isConnected) return; drmRow.querySelector('small').textContent = r.ok ? 'Ready. Widevine ' + (r.version || '') + ' is installed' : (r.why || 'Widevine is ' + (r.status || 'still downloading') + '. Restart SKBox if this stays like this'); });
+      pane.appendChild(row('Install VidAngel for Chrome', 'Adds the VidAngel extension to SKBrowse. Sign in at vidangel.com afterwards', '+', async () => { toast('Installing VidAngel\u2026'); const r = await sk.browse.installExt('mbpfipleganodbgndfadpokojibnfhjb'); toast(r && r.ok ? 'VidAngel installed. Open vidangel.com in SKBrowse' : (r && r.error) || 'Could not install it'); }));
       const ad = row('Ad blocker', 'Blocks ad and tracker hosts, hides ad boxes, skips YouTube ads', '', null); pane.appendChild(ad);
       pane.appendChild(toggle('Ad blocker on', 'The default for SKBrowse. Browser apps have their own switch', S.settings.sbAdblock !== false, v => sv('sbAdblock', v)));
       const lst = row('Update the filter list', 'Downloads a larger ad and tracker list', '\u2193', async () => { toast('Downloading\u2026'); const r = await sk.browse.updateList(); toast(r.ok ? r.n + ' hosts blocked (' + r.added + ' new)' : r.error || 'Could not update'); });

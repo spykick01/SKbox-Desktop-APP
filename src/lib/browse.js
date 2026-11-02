@@ -144,7 +144,7 @@ function create(ctx) {
       if (/^localhost(:\d+)?(\/.*)?$/i.test(s)) return 'http://' + s;
       return (SEARCH[opt('sbSearch', 'google')] || SEARCH.google) + encodeURIComponent(s);
     };
-    function drm(u) { try { if (!/^https?:/.test(u) || !ctx.isDrm(u)) return false; if (!ctx.edge || !ctx.edge()) { ctx.notify('SKBrowse', 'Protected shows need Microsoft Edge or Chrome installed'); return false; } ctx.openEdge(u); return true; } catch { return false; } }
+    function drm() { return false; }   // protected sites play inside SKBrowse (Widevine); no more Edge hand-off
     function allowNav(u) {
       if (!isApp) return true; const h = hostOf(u); if (!h) return /^(about|blob|data):/i.test(u);
       if (sameSite(h, lockHost)) return true; if (a.app.auth !== false && AUTH_HOSTS.some(x => h === x || h.endsWith('.' + x))) return true; return false;
@@ -192,7 +192,7 @@ function create(ctx) {
     function setPanel(p) { panel = p || ''; layout(); send(); setTimeout(focusActive, 30); }
     function close() { try { for (const t of tabs) { try { t.wc.close(); } catch {} } win.destroy(); } catch {} }
     function zoom(d) { const t = act(); if (!t) return; zoomPct = d === 0 ? 100 : Math.max(30, Math.min(300, zoomPct + d)); t.wc.setZoomFactor(zoomPct / 100); const o = ST(); o.zoom = o.zoom || {}; const h = hostOf(t.url); if (h) { if (zoomPct === 100) delete o.zoom[h]; else o.zoom[h] = zoomPct; SAVE(o); } send(); }
-    win._api = { newTab, act, close };
+    win._api = { newTab, act, close }; win._padWc = () => { try { return (panel || !act()) ? chromeView.webContents : act().wc; } catch { return null; } };
     cfg.count = () => { if (Date.now() - (cfg.lastSend || 0) > 1500) { cfg.lastSend = Date.now(); send(); } };
     const cmds = {
       newtab: x => { newTab(x.url || ''); return true; }, close: x => { closeTab(x.id); return true; }, activate: x => { if (tabs.some(t => t.id === x.id)) { activeId = x.id; panel = ''; layout(); send(); setTimeout(focusActive, 30); } return true; },
@@ -243,7 +243,8 @@ function create(ctx) {
     win.on('resize', layout); win.on('enter-full-screen', layout); win.on('leave-full-screen', layout);
     win.on('closed', () => { wins.delete(win); try { ctx.lock && ctx.lock(); } catch {} if (!isApp && !priv && opt('sbClearExit', false)) { try { ses.clearStorageData({ storages: ['cookies', 'localstorage', 'cachestorage'] }); ses.clearCache(); } catch {} } try { ctx.afterClose && ctx.afterClose(isApp); } catch {} });
     win.on('focus', () => { lastFocus = win; });
-    win.show(); win.focus(); layout(); setTimeout(() => { try { if (!win.isDestroyed()) { win.show(); win.focus(); focusActive(); ctx.lock && ctx.lock(); } } catch {} }, 250);
+    const grab = () => { try { if (!win.isDestroyed()) { win.show(); win.focus(); ctx.focusNative && ctx.focusNative(win); focusActive(); ctx.lock && ctx.lock(); } } catch {} };
+    win.show(); win.focus(); layout(); grab(); setTimeout(grab, 250); setTimeout(grab, 900);
     ['show', 'hide', 'minimize', 'restore'].forEach(e => win.on(e, () => { try { ctx.lock && ctx.lock(); } catch {} }));
     if (isApp) { const last = a.app.resume !== false ? ((ST().last || {})[a.app.id] || '') : ''; newTab(last && sameSite(hostOf(last), lockHost) ? last : a.app.url); if (a.app.muted) { try { tabs[0].wc.setAudioMuted(true); tabs[0].muted = true; } catch {} } }
     else if (a.url) newTab(a.url);
@@ -279,7 +280,9 @@ function create(ctx) {
   const SETTXT = '(function(t,s){var e=document.activeElement;if(!e)return;if(e.isContentEditable){e.textContent=t;e.dispatchEvent(new Event("input",{bubbles:true}));}else{var pr=e.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,ds=Object.getOwnPropertyDescriptor(pr,"value");if(ds&&ds.set)ds.set.call(e,t);else e.value=t;e.dispatchEvent(new Event("input",{bubbles:true}));}if(s){e.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true}));var f=e.form;if(f&&!e.isContentEditable)try{f.requestSubmit?f.requestSubmit():f.submit();}catch(x){}}})';
   function oskResult(r) { const wc = oskWc; oskWc = null; if (!wc || wc.isDestroyed()) return false; if (!r.cancel) wc.executeJavaScript(SETTXT + '(' + JSON.stringify(String(r.text || '')) + ',' + (r.send ? 'true' : 'false') + ')').catch(() => {}); try { const w = fromWin({ sender: wc }); if (w) { w.show(); w.focus(); wc.focus(); } } catch {} return true; }
   const autoList = () => { try { if (opt('sbAutoList', true) && Date.now() - (ST().listAt || 0) > 7 * 86400000) updateList(); } catch {} };
+  const padAction = a => { let w = null; for (const x of wins) { try { if (x.isVisible() && !x.isMinimized() && (!w || x === lastFocus)) w = x; } catch {} } const wc = w && w._padWc && w._padWc(); if (wc && !wc.isDestroyed()) { try { wc.send('pad-action', a); } catch {} } return !!wc; };
+  const anyVisible = () => { for (const x of wins) { try { if (x.isVisible() && !x.isMinimized()) return true; } catch {} } return false; };
   const setPaused = v => { for (const w of wins) { try { w.contentView.children.forEach(c => { try { c.webContents.send('pad-pause', !!v); } catch {} }); } catch {} } };
-  return { setPaused, autoList, favicon, oskResult, hasOsk: () => !!oskWc, open, wins, installExt, removeExt, toggleExt, updateList, loadAllExt, extList: () => ST().ext || [], stats: () => ({ blocked, hosts: adHosts.size, listAt: ST().listAt || 0 }), hook, isDrm: u => DRM.some(d => { const h = hostOf(u); return h === d || h.endsWith('.' + d); }), closeAll: () => { for (const w of Array.from(wins)) { try { w.destroy(); } catch {} } }, whichFocused: () => lastFocus, cmdFor: wc => { for (const w of wins) { if (w.webContents === wc || w.contentView.children.some(v => v.webContents === wc)) return w; } return null; } };
+  return { padAction, anyVisible, setPaused, autoList, favicon, oskResult, hasOsk: () => !!oskWc, open, wins, installExt, removeExt, toggleExt, updateList, loadAllExt, extList: () => ST().ext || [], stats: () => ({ blocked, hosts: adHosts.size, listAt: ST().listAt || 0 }), hook, isDrm: u => DRM.some(d => { const h = hostOf(u); return h === d || h.endsWith('.' + d); }), closeAll: () => { for (const w of Array.from(wins)) { try { w.destroy(); } catch {} } }, whichFocused: () => lastFocus, cmdFor: wc => { for (const w of wins) { if (w.webContents === wc || w.contentView.children.some(v => v.webContents === wc)) return w; } return null; } };
 }
 module.exports = { create, unzip, crxToZip, DRM_HOSTS: DRM };

@@ -141,11 +141,13 @@ const extras = require('./lib/extras').create({
 });
 ipcMain.handle('extras:do', (_e, n, a) => extras.run(String(n || ''), a));
 // SKBrowse: built-in browser + browser apps (src/lib/browse.js)
-const browse = require('./lib/browse').create({ store, notify, lock: () => lockUI(), edge: () => EDGE(), openEdge: u => openInEdge(u), isDrm: u => browseDrm(u), appsChanged: () => send('apps:changed'), display: displayNow, comeBack: () => comeBack(), afterClose: () => { if (!game && !overlayOpen) comeBack(); }, openOsk: v => openOverlay({ osk: { value: v || '', target: 'browse' } }) });
+const browse = require('./lib/browse').create({ store, notify, focusNative: w => { try { if (helper) helper.focus(nativeHwnd(w)); } catch {} }, lock: () => lockUI(), edge: () => EDGE(), openEdge: u => openInEdge(u), isDrm: u => browseDrm(u), appsChanged: () => send('apps:changed'), display: displayNow, comeBack: () => comeBack(), afterClose: () => { if (!game && !overlayOpen) comeBack(); }, openOsk: v => openOverlay({ osk: { value: v || '', target: 'browse' } }) });
 app.whenReady().then(() => { try { browse.loadAllExt(); } catch {} setTimeout(() => { try { browse.autoList(); } catch {} }, 20000); });
 const browseDrm = u => { try { return require('./lib/browse').DRM_HOSTS.some(d => { const h = new URL(u).hostname; return h === d || h.endsWith('.' + d); }); } catch { return false; } };
 const EDGE = () => ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'].find(f => { try { return fs.existsSync(f); } catch { return false; } }) || '';
 ipcMain.handle('browse:engines', () => ({ edge: EDGE(), stats: browse.stats(), ext: browse.extList() }));
+ipcMain.handle('browse:drmStatus', () => { try { const { components } = require('electron'); if (!components) return { ok: false, why: 'This build of SKBox does not include Widevine. Install the latest SKBox release.' }; const st = components.status(); const ids = Object.keys(st || {}); const w = ids.map(k => st[k]).find(x => /widevine/i.test(x.name || '')); return { ok: !!w && /up-to-date|installed/i.test(String(w.status)), status: w ? w.status : 'checking', version: w && w.version }; } catch (e) { return { ok: false, why: String(e.message || e) }; } });
+ipcMain.handle('browse:installExt', (_e, id) => browse.installExt(String(id || '')));
 ipcMain.handle('browse:drm', (_e, u) => browse.isDrm(String(u || '')));
 ipcMain.handle('browse:list', () => browse.updateList());
 ipcMain.handle('browse:launchApp', async (_e, a) => {
@@ -156,7 +158,7 @@ ipcMain.handle('browse:launchApp', async (_e, a) => {
   return launchApp({ id: a.id, name: a.name, exe: useEdge, args: '--app="' + a.url + '" --start-fullscreen --user-data-dir="' + prof + '" --no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required', cover: a.cover, fs: 'off' });
 });
 // The main SKBox window must not react to the controller while the SK menu or SKBrowse is in front.
-function lockUI() { try { const on = overlayOpen || Array.from(browse.wins).some(w => { try { return w.isVisible() && !w.isMinimized(); } catch { return false; } }); if (win && !win.isDestroyed()) win.webContents.send('input-lock', !!on); browse.setPaused(overlayOpen); } catch {} }
+function lockUI() { try { const on = overlayOpen || Array.from(browse.wins).some(w => { try { return w.isVisible() && !w.isMinimized(); } catch { return false; } }); if (win && !win.isDestroyed()) win.webContents.send('input-lock', !!on); browse.setPaused(overlayOpen); if (helper && helper.ready) helper.padIn(padTest || overlayOpen || browse.anyVisible()); } catch {} }
 function openInEdge(u) {
   const e = EDGE(); if (!e) return false; let h = 'site'; try { h = new URL(u).hostname.replace(/^www\./, ''); } catch {}
   const prof = path.join(app.getPath('userData'), 'edge-' + h.replace(/[^\w-]/g, ''));
@@ -201,6 +203,12 @@ const EMU_RE = /(^|[\\/])(cemu|yuzu|suyu|sudachi|ryujinx|citra|lime3ds|azahar|rp
 const EMU_LIB = /(cemu|yuzu|suyu|sudachi|ryujinx|citra|lime3ds|azahar|rpcs3|dolphin|pcsx2|duckstation|xemu)/i;
 // emulators get a clean full-screen window by themselves. 'emuw' = wait until a game is really running (the library window keeps its menu so you can load a game).
 function emuMode(target, a) { const s = store.read('settings', {}); if (s.emuMax === false || (a && a.fs === 'off') || !EMU_RE.test(target)) return ''; const hasGame = String((a && a.args) || '').replace(/(^|\s)-{1,2}(f|fullscreen|fs)\b/gi, '').trim().length > 0; return EMU_LIB.test(path.basename(target)) && !hasGame ? 'emuw' : 'emu'; }
+// Cemu has its own borderless full screen. Ask for it whenever a game is passed, instead of fighting its window from outside.
+function emuArgs(target, args) {
+  const s = store.read('settings', {}); args = String(args || '');
+  if (s.emuMax === false || !/(^|[\\/])cemu[^\\/]*\.exe$/i.test(target) || !args.trim() || /(^|\s)(-f|--fullscreen)(\s|$)/i.test(args)) return args;
+  return args + ' -f';
+}
 function gameMode(m) { m = m || 'auto'; if (m === 'off') return 'off'; if (store.read('settings', {}).gameWindow === 'off') return 'off'; return 'auto'; }
 function setRemoteLive(on) { remoteLive = !!on; if (on) { lastRemoteInput = remoteSince = Date.now(); lastLvl = 0; swTicks = 0; swTold = false; } const fa = fitArgs(); if (helper && helper.ready) { helper.remote(on && store.read('settings', {}).gameWindow !== 'off', fa.fit, fa.taskbar); if (on && game && game.hwnd) setTimeout(() => helper.winFit(game && game.hwnd), 1500); } if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
 function showBackdrop(a) {
@@ -310,7 +318,7 @@ async function launchApp(a) {
     let child = null;
     if (isUrl) await shell.openExternal(target);
     else if (/\.exe$/i.test(target)) {
-      child = spawn(target, splitArgs(a.args), { cwd: path.dirname(target), detached: true, stdio: 'ignore' });
+      child = spawn(target, splitArgs(emuArgs(target, a.args)), { cwd: path.dirname(target), detached: true, stdio: 'ignore' });
       game.pid = child.pid || 0;
       child.on('error', err => { const g = game; endGame(); win && win.webContents.send('launch-error', String(err.message || err)); });
       child.on('exit', () => { if (!game) return; game.exited = true; if (!helper || !helper.ready || game.noWindow) { if (Date.now() - game.startedAt > 15000) endGame(); } });
@@ -337,7 +345,7 @@ function startHelper() {
   helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
   helper.on('ready', () => { helperInfo.error = ''; if (remoteLive) helper.remote(store.read('settings', {}).gameWindow !== 'off', fitArgs().fit, fitArgs().taskbar); if (overlayOpen) helper.padIn(true); });
   helper.on('padin', (slot, act) => {
-    try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (padTest) send('padtest', slot, act); } catch {}
+    try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (browse.anyVisible()) browse.padAction(act); else if (padTest) send('padtest', slot, act); } catch {}
   });
   helper.on('battery', (slot, type, level) => { batteries[slot] = { type, level }; send('battery', slot, type, level); });
   helper.on('pads', n => { padCount = n; send('pads', n); const pl = playersMeta(); if (n >= 2 && !pl[1] && game && !overlayOpen) openOverlay({ p2: true }); });
@@ -688,7 +696,9 @@ function setupUpdates() {
 }
 app.on('second-instance', comeBack);
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion');
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Widevine (protected video: Netflix, Disney+, ...) comes with the castLabs Electron build. Wait for it before opening any window that might play video.
+  try { const { components } = require('electron'); if (components && components.whenReady) await Promise.race([components.whenReady().catch(() => {}), new Promise(r => setTimeout(r, 30000))]); } catch (e) {}
   const st = store.read('settings', {});
   if (st.startup === undefined && (isWin || process.platform === 'darwin')) { app.setLoginItemSettings({ openAtLogin: true }); st.startup = true; store.write('settings', st); }
   if (st.takeGuide !== false) takeGuide(true);

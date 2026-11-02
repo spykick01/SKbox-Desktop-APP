@@ -86,5 +86,13 @@ window.addEventListener('DOMContentLoaded', () => {
     if (edge(9)) toHost('menu');
     prev = b;
   }
+  // Controller input forwarded by the SKBox helper. Used only when this page does not have Windows focus (then the Gamepad API stays silent).
+  ipcRenderer.on('pad-action', (_e, a) => {
+    if (PAUSED || document.hasFocus()) return;
+    if (a === 'up' || a === 'down' || a === 'left' || a === 'right') focusMove(a); else if (a === 'ok') click(false); else if (a === 'alt') click(true);
+    else if (a === 'back' || a === 'prev') { if (history.length > 1) history.back(); } else if (a === 'next') history.forward();
+    else if (a === 'opts') { const el = document.activeElement; toHost('osk', { type: (el && el.type) || 'text', value: (el && el.value) || '' }); }
+    else if (a === 'start') toHost('menu'); else if (a === 'select') toHost('home');
+  });
   requestAnimationFrame(loop);
 });
