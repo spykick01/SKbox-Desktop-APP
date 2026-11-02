@@ -37,7 +37,9 @@ function crxToZip(b) {
   const v = b.readUInt32LE(4); if (v === 2) return b.subarray(16 + b.readUInt32LE(8) + b.readUInt32LE(12)); if (v === 3) return b.subarray(12 + b.readUInt32LE(8)); throw new Error('Unknown extension format');
 }
 
+const DNR = require('./dnr'), COMPAT = require('./extcompat');
 function create(ctx) {
+  const dnr = DNR.create();
   const ST = () => ctx.store.read('browse', {}), SAVE = o => ctx.store.write('browse', o);
   const S = () => ctx.store.read('settings', {});
   const opt = (k, d) => { const v = S()[k]; return v === undefined ? d : v; };
@@ -54,6 +56,10 @@ function create(ctx) {
     try { ses.setUserAgent(ua()); } catch {}
     ses.webRequest.onBeforeRequest((d, cb) => {
       const c = cfgs.get(part);
+      if (part === FULL) {   // extension compatibility: rules an extension adds at run time arrive as a POST to a fake address; then extension rules are applied
+        if (d.url.startsWith('https://skbox-ext.invalid/dnr/')) { try { const b = d.uploadData && d.uploadData[0] && d.uploadData[0].bytes; if (b) dnr.setRuntime(d.url.split('/').pop(), JSON.parse(Buffer.from(b).toString('utf8'))); } catch {} return cb({ cancel: true }); }
+        if (dnr.count()) { const r = dnr.evaluate(d); if (r.type === 'block') return cb({ cancel: true }); if (r.type === 'redirect' || r.type === 'upgrade') return cb({ redirectURL: r.url }); if (r.type === 'allow') return cb({}); }
+      }
       if (d.resourceType === 'mainFrame') {   // tidy typed / clicked links: strip tracking parameters, optionally force https
         if (c) try { const u = new URL(d.url); let ch = false; if (!c.lock && opt('sbClean', true)) for (const k of Array.from(u.searchParams.keys())) if (TRACK_P.test(k)) { u.searchParams.delete(k); ch = true; }
           if (opt('sbHttpsAll', false) && u.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.|.*\.local$)/.test(u.hostname)) { u.protocol = 'https:'; ch = true; }
@@ -69,7 +75,8 @@ function create(ctx) {
       if (bad) { blocked++; if (++pendingTotal >= 25) { pendingTotal = 0; try { const o = ST(); o.total = (o.total || 0) + 25; SAVE(o); } catch {} } if (c.count) c.count(); return cb({ cancel: true }); }
       cb({});
     });
-    ses.webRequest.onBeforeSendHeaders((d, cb) => { if (opt('sbDnt', true)) { d.requestHeaders['DNT'] = '1'; d.requestHeaders['Sec-GPC'] = '1'; } cb({ requestHeaders: d.requestHeaders }); });
+    ses.webRequest.onBeforeSendHeaders((d, cb) => { if (opt('sbDnt', true)) { d.requestHeaders['DNT'] = '1'; d.requestHeaders['Sec-GPC'] = '1'; } if (part === FULL && dnr.count()) { try { const r = dnr.evaluate(d); if (r.reqH && r.reqH.length) dnr.applyHeaders(d.requestHeaders, r.reqH); } catch {} } cb({ requestHeaders: d.requestHeaders }); });
+    ses.webRequest.onHeadersReceived((d, cb) => { if (part === FULL && dnr.count()) { try { const r = dnr.evaluate(d); if (r.resH && r.resH.length) return cb({ responseHeaders: dnr.applyHeaders(d.responseHeaders || {}, r.resH) }); } catch {} } cb({}); });
     try { ses.setPermissionRequestHandler((_wc, perm, cb) => cb(opt('sbPerms', true) ? ['fullscreen', 'clipboard-sanitized-write', 'media', 'pointerLock', 'window-management'].includes(perm) && perm !== 'media' : true)); } catch {}
     ses.on('will-download', (_e, item) => {
       const dir = app.getPath('downloads'); const p = path.join(dir, item.getFilename()); try { item.setSavePath(p); } catch {}
@@ -83,7 +90,12 @@ function create(ctx) {
   const extOf = ses => ses.extensions || ses;
   async function loadAllExt() {
     const ses = session.fromPartition(FULL), list = ST().ext || [];
-    for (const x of list) if (x.on !== false) { try { await extOf(ses).loadExtension(path.join(extDir(), x.id), { allowFileAccess: true }); } catch (e) { x.err = String(e.message || e).slice(0, 120); } }
+    for (const x of list) if (x.on !== false) { try { prepExt(x.id); await extOf(ses).loadExtension(path.join(extDir(), x.id), { allowFileAccess: true }); } catch (e) { x.err = String(e.message || e).slice(0, 120); } }
+  }
+  // patch (idempotent) and register the request rules of an unpacked extension, before it is loaded
+  function prepExt(id) {
+    const dir = path.join(extDir(), id); let man; try { man = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch { return null; }
+    const r = COMPAT.patch(dir, man); try { if (COMPAT.analyse(man).dnr) dnr.loadStatic(id, dir, man); } catch {} return { man, compat: r };
   }
   const extId = s => { const m = /[a-p]{32}/.exec(String(s || '')); return m ? m[0] : ''; };
   async function installExt(input) {
@@ -95,17 +107,19 @@ function create(ctx) {
       const dir = path.join(extDir(), id); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true }); unzip(crxToZip(buf), dir);
       const man = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); let name = man.name || id;
       if (/^__MSG_/.test(name)) { try { const loc = (man.default_locale || 'en'); const m = JSON.parse(fs.readFileSync(path.join(dir, '_locales', loc, 'messages.json'), 'utf8')); name = (m[name.slice(6, -2)] || m[name.slice(6, -2).toLowerCase()] || {}).message || id; } catch { name = id; } }
-      const NOPE = { declarativeNetRequest: 'rewriting requests (declarativeNetRequest)', declarativeNetRequestWithHostAccess: 'rewriting requests', declarativeContent: 'page actions (declarativeContent)', nativeMessaging: 'native apps', proxy: 'proxy settings', debugger: 'the debugger', offscreen: 'offscreen pages', sidePanel: 'the side panel', identity: 'Google sign-in (identity)' };
-      const warn = []; (man.permissions || []).concat(man.optional_permissions || []).forEach(p => { if (NOPE[p]) warn.push(NOPE[p]); });
-      if (man.externally_connectable && man.externally_connectable.matches) warn.push('messages sent from websites to the extension (externally_connectable)');
+      const prep = prepExt(id); const cp = prep ? prep.compat : { patched: false, needs: [], unsupported: [] };
+      const NOPE = { declarativeContent: 'page actions (declarativeContent)', nativeMessaging: 'native apps', proxy: 'proxy settings', debugger: 'the debugger', offscreen: 'offscreen pages', sidePanel: 'the side panel', identity: 'Google sign-in (identity)' };
+      const warn = []; (man.permissions || []).concat(man.optional_permissions || []).forEach(p => { if (NOPE[p] && !(p === 'declarativeContent' && cp.patched)) warn.push(NOPE[p]); });
+      cp.unsupported.forEach(u => warn.push(u));
+      if (cp.needs.length && !cp.patched && !cp.unsupported.length) warn.push('compatibility layer could not be added');
       const ses = session.fromPartition(FULL); try { const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } catch {}
       await extOf(ses).loadExtension(dir, { allowFileAccess: true });
-      const o = ST(); o.ext = (o.ext || []).filter(x => x.id !== id).concat([{ id, name: String(name).slice(0, 60), version: man.version || '', on: true, warn: warn.join(', ') }]); SAVE(o);
-      return { ok: true, name, warn: warn.join(', ') };
+      const o = ST(); o.ext = (o.ext || []).filter(x => x.id !== id).concat([{ id, name: String(name).slice(0, 60), version: man.version || '', on: true, warn: warn.join(', '), compat: cp.patched ? cp.needs.join(', ') : '' }]); SAVE(o);
+      return { ok: true, name, warn: warn.join(', '), compat: cp.patched ? cp.needs.join(', ') : '' };
     } catch (e) { return { ok: false, error: 'Could not install it: ' + String(e.message || e).slice(0, 140) }; }
   }
-  async function removeExt(id) { try { const ses = session.fromPartition(FULL); try { const dir = path.join(extDir(), id); const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } catch {} fs.rmSync(path.join(extDir(), id), { recursive: true, force: true }); const o = ST(); o.ext = (o.ext || []).filter(x => x.id !== id); SAVE(o); return { ok: true }; } catch { return { ok: false }; } }
-  async function toggleExt(id) { const o = ST(), x = (o.ext || []).find(y => y.id === id); if (!x) return { ok: false }; x.on = x.on === false; SAVE(o); const ses = session.fromPartition(FULL); try { if (x.on) await extOf(ses).loadExtension(path.join(extDir(), id), { allowFileAccess: true }); else { const dir = path.join(extDir(), id); const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } } catch {} return { ok: true, on: x.on }; }
+  async function removeExt(id) { try { dnr.remove(id); const ses = session.fromPartition(FULL); try { const dir = path.join(extDir(), id); const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } catch {} fs.rmSync(path.join(extDir(), id), { recursive: true, force: true }); const o = ST(); o.ext = (o.ext || []).filter(x => x.id !== id); SAVE(o); return { ok: true }; } catch { return { ok: false }; } }
+  async function toggleExt(id) { const o = ST(), x = (o.ext || []).find(y => y.id === id); if (!x) return { ok: false }; x.on = x.on === false; SAVE(o); const ses = session.fromPartition(FULL); try { if (x.on) { prepExt(id); } else dnr.remove(id); if (x.on) await extOf(ses).loadExtension(path.join(extDir(), id), { allowFileAccess: true }); else { const dir = path.join(extDir(), id); const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } } catch {} return { ok: true, on: x.on }; }
   async function updateList() {
     try { const r = await net.fetch('https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext'); if (!r.ok) return { ok: false, error: 'Could not download the list.' }; const t = await r.text(); fs.writeFileSync(path.join(app.getPath('userData'), 'adlist.txt'), t); const before = adHosts.size; loadList(); const o = ST(); o.listAt = Date.now(); SAVE(o); return { ok: true, n: adHosts.size, added: adHosts.size - before }; }
     catch { return { ok: false, error: 'No internet connection.' }; }
@@ -160,7 +174,7 @@ function create(ctx) {
       const wc = view.webContents, tab = { id: nextId++, view, wc, title: '', url: '', icon: '', loading: false, audible: false, muted: false, pinned: false }; view._tab = tab; tabs.push(tab);
       try { wc.setUserAgent(ua()); } catch {} win.contentView.addChildView(view);
       const upd = () => { tab.url = wc.getURL(); tab.title = wc.getTitle(); send(); };
-      wc.on('page-title-updated', upd); wc.on('did-navigate', (_e, u) => { upd(); history(tab); injectAll(tab); if (isApp && a.app.resume !== false && /^https?:/.test(u) && sameSite(hostOf(u), lockHost)) { const o = ST(); o.last = o.last || {}; if (o.last[a.app.id] !== u) { o.last[a.app.id] = u; SAVE(o); } } }); wc.on('did-navigate-in-page', upd);
+      wc.on('page-title-updated', upd); wc.on('page-title-updated', (_e, t) => { try { if (isApp && a.app.resume !== false && ctx.watch) ctx.watch(a.app.id, wc.getURL(), t); } catch {} }); wc.on('did-navigate', (_e, u) => { upd(); history(tab); injectAll(tab); try { if (isApp && a.app.resume !== false && ctx.watch && /^https?:/.test(u)) ctx.watch(a.app.id, u, wc.getTitle()); } catch {} if (isApp && a.app.resume !== false && /^https?:/.test(u) && sameSite(hostOf(u), lockHost)) { const o = ST(); o.last = o.last || {}; if (o.last[a.app.id] !== u) { o.last[a.app.id] = u; SAVE(o); } } }); wc.on('did-navigate-in-page', upd);
       wc.on('page-favicon-updated', (_e, f) => { tab.icon = (f && f[0]) || ''; send(); });
       wc.on('did-start-loading', () => { tab.loading = true; send(); }); wc.on('did-stop-loading', () => { tab.loading = false; upd(); injectAll(tab); if (tab.id === activeId && !panel) { try { wc.focus(); } catch {} } });
       wc.on('audio-state-changed', e => { tab.audible = !!e.audible; send(); });
@@ -225,6 +239,7 @@ function create(ctx) {
       speed: () => { const L = [0.5, 0.75, 1, 1.25, 1.5, 2]; speed = L[(L.indexOf(speed) + 1) % L.length]; const t = act(); if (t) t.wc.executeJavaScript('document.querySelectorAll("video").forEach(function(v){v.playbackRate=' + speed + '})').catch(() => {}); ctx.notify('SKBrowse', 'Video speed ' + speed + 'x'); send(); return speed; },
       ua: () => { const t = act(); if (!t) return false; ua2 = ua2 ? '' : 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + process.versions.chrome + ' Mobile Safari/537.36'; t.wc.setUserAgent(ua2 || ua()); t.wc.reload(); ctx.notify('SKBrowse', ua2 ? 'Mobile site' : 'Desktop site'); return true; },
       pdf: async () => { const t = act(); if (!t) return false; const buf = await t.wc.printToPDF({ printBackground: true }); const dir = app.getPath('documents'); const f = path.join(dir, 'SKBrowse ' + new Date().toISOString().replace(/[:.]/g, '-') + '.pdf'); fs.writeFileSync(f, buf); ctx.notify('Saved as PDF', path.basename(f)); return true; },
+      later: () => { const t = act(); if (!t) return false; const r = ctx.later ? ctx.later(t.url, t.title) : { ok: false }; ctx.notify('SKBrowse', r.ok ? 'Saved to Watch later (Settings > Continue watching)' : (r.error || 'Could not save this page')); return !!r.ok; },
       reader: () => { const t = act(); if (t) t.wc.executeJavaScript(READER_JS).catch(() => {}); return true; },
       clipgo: () => { const v = clipboard.readText().trim(); if (!v) { ctx.notify('SKBrowse', 'The clipboard is empty'); return false; } return cmds.go({ text: v }); },
       closeothers: x => { if (isApp) return false; tabs.slice().forEach(t => { if (t.id !== (x.id || activeId) && !t.pinned) closeTab(t.id); }); return true; },

@@ -139,9 +139,16 @@ const extras = require('./lib/extras').create({
   restartHelper: () => restartHelper(),
   diag: () => ['Helper lines: ' + (helperInfo.diag || []).join(' | '), 'Helper error: ' + (helperInfo.error || 'none')].join('\n')
 });
-ipcMain.handle('extras:do', (_e, n, a) => extras.run(String(n || ''), a));
+const plus = require('./lib/plus').create({
+  store, notify, lockPc: () => { if (isWin) execFile('rundll32.exe', ['user32.dll,LockWorkStation'], () => {}); },
+  power: w => { const p = POWER[w]; if (p && isWin) execFile(p[0], p[1], { windowsHide: true }, () => {}); },
+  runDetached: cmd => { try { const t = splitArgs(cmd); if (!t.length) return; if (/\.lnk$/i.test(t[0])) { shell.openPath(t[0]); return; } const c = spawn(t[0], t.slice(1), { cwd: path.dirname(t[0]), detached: true, stdio: 'ignore', windowsHide: true }); c.on('error', () => {}); c.unref(); } catch {} },
+  copy: t => { try { require('electron').clipboard.writeText(t); } catch {} }, metrics: () => app.getAppMetrics(),
+  gpu: async () => { const i = await app.getGPUInfo('complete'); return (i && i.auxAttributes && (i.auxAttributes.glRenderer || '')) || ''; }
+});
+ipcMain.handle('extras:do', async (_e, n, a) => { const r = await plus.run(String(n || ''), a); return r !== null ? r : extras.run(String(n || ''), a); });
 // SKBrowse: built-in browser + browser apps (src/lib/browse.js)
-const browse = require('./lib/browse').create({ store, notify, focusNative: w => { try { if (helper) helper.focus(nativeHwnd(w)); } catch {} }, lock: () => lockUI(), edge: () => EDGE(), openEdge: u => openInEdge(u), isDrm: u => browseDrm(u), appsChanged: () => send('apps:changed'), display: displayNow, comeBack: () => comeBack(), afterClose: () => { if (!game && !overlayOpen) comeBack(); }, openOsk: v => openOverlay({ osk: { value: v || '', target: 'browse' } }) });
+const browse = require('./lib/browse').create({ store, notify, watch: (id, u, t) => { try { plus.watchNote(id, u, t); } catch {} }, later: (u, t) => plus.laterAdd(u, t), focusNative: w => { try { if (helper) helper.focus(nativeHwnd(w)); } catch {} }, lock: () => lockUI(), edge: () => EDGE(), openEdge: u => openInEdge(u), isDrm: u => browseDrm(u), appsChanged: () => send('apps:changed'), display: displayNow, comeBack: () => comeBack(), afterClose: () => { if (!game && !overlayOpen) comeBack(); }, openOsk: v => openOverlay({ osk: { value: v || '', target: 'browse' } }) });
 app.whenReady().then(() => { try { browse.loadAllExt(); } catch {} setTimeout(() => { try { browse.autoList(); } catch {} }, 20000); });
 const browseDrm = u => { try { return require('./lib/browse').DRM_HOSTS.some(d => { const h = new URL(u).hostname; return h === d || h.endsWith('.' + d); }); } catch { return false; } };
 const EDGE = () => ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'].find(f => { try { return fs.existsSync(f); } catch { return false; } }) || '';
@@ -202,12 +209,14 @@ let remoteLive = false;
 const EMU_RE = /(^|[\\/])(cemu|yuzu|suyu|sudachi|ryujinx|citra|lime3ds|azahar|rpcs3|dolphin|pcsx2|duckstation|ppsspp|xemu|xenia[\w-]*|melonds|mgba|vita3k|shadps4|redream|flycast|bsnes|snes9x)[^\\/]*\.exe$/i;
 const EMU_LIB = /(cemu|yuzu|suyu|sudachi|ryujinx|citra|lime3ds|azahar|rpcs3|dolphin|pcsx2|duckstation|xemu)/i;
 // emulators get a clean full-screen window by themselves. 'emuw' = wait until a game is really running (the library window keeps its menu so you can load a game).
-function emuMode(target, a) { const s = store.read('settings', {}); if (s.emuMax === false || (a && a.fs === 'off') || !EMU_RE.test(target)) return ''; const hasGame = String((a && a.args) || '').replace(/(^|\s)-{1,2}(f|fullscreen|fs)\b/gi, '').trim().length > 0; return EMU_LIB.test(path.basename(target)) && !hasGame ? 'emuw' : 'emu'; }
-// Cemu has its own borderless full screen. Ask for it whenever a game is passed, instead of fighting its window from outside.
+function emuMode(target, a) { const s = store.read('settings', {}); if (s.emuMax === false || s.emuStyle === 'own' || (a && a.fs === 'off') || !EMU_RE.test(target)) return ''; const hasGame = String((a && a.args) || '').replace(/(^|\s)-{1,2}(f|fullscreen|fs)\b/gi, '').trim().length > 0; return EMU_LIB.test(path.basename(target)) && !hasGame ? 'emuw' : 'emu'; }
+// Cemu's own -f flag is real exclusive-style fullscreen, which Remote play cannot capture. So never pass it: the helper makes Cemu a
+// borderless full-screen window instead (same look, streamable). Any -f / --fullscreen is removed unless "Cemu's own fullscreen" is chosen in Extras.
 function emuArgs(target, args) {
   const s = store.read('settings', {}); args = String(args || '');
-  if (s.emuMax === false || !/(^|[\\/])cemu[^\\/]*\.exe$/i.test(target) || !args.trim() || /(^|\s)(-f|--fullscreen)(\s|$)/i.test(args)) return args;
-  return args + ' -f';
+  if (s.emuMax === false || !/(^|[\\/])cemu[^\\/]*\.exe$/i.test(target)) return args;
+  if (s.emuStyle === 'own') return args.trim() && !/(^|\s)(-f|--fullscreen)(\s|$)/i.test(args) ? args + ' -f' : args;   // the person chose Cemu's own fullscreen
+  return args.replace(/(^|\s)(-f|--fullscreen)(?=\s|$)/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 function gameMode(m) { m = m || 'auto'; if (m === 'off') return 'off'; if (store.read('settings', {}).gameWindow === 'off') return 'off'; return 'auto'; }
 function setRemoteLive(on) { remoteLive = !!on; if (on) { lastRemoteInput = remoteSince = Date.now(); lastLvl = 0; swTicks = 0; swTold = false; } const fa = fitArgs(); if (helper && helper.ready) { helper.remote(on && store.read('settings', {}).gameWindow !== 'off', fa.fit, fa.taskbar); if (on && game && game.hwnd) setTimeout(() => helper.winFit(game && game.hwnd), 1500); } if (on && game && game.exe && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(game.exe); }
@@ -294,7 +303,7 @@ async function winCleanup() {
 function restartHelper() { try { helper && helper.stop(); } catch {} helper = null; startHelper(); }
 function statsTouch(id, ms) { if (!id) return; const st = store.read('stats', {}), x = st[id] || (st[id] = { last: 0, ms: 0, n: 0 }); x.last = Date.now(); if (ms) { x.ms += ms; x.best = Math.max(x.best || 0, ms); } else x.n++; store.write('stats', st); }
 function endGame() {
-  if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} try { extras.onGameEnd(game.name, Date.now() - game.startedAt); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
+  if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} try { extras.onGameEnd(game.name, Date.now() - game.startedAt); } catch {} try { const g0 = game, ms0 = Date.now() - game.startedAt; plus.onGameEnd(g0, ms0); plus.post(g0.app); plus.restoreProfile(); plus.after(g0, ms0, g0.app); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
   send('game:state', null); comeBack();
 }
 ipcMain.handle('game:state', () => gameState());
@@ -317,8 +326,11 @@ async function launchApp(a) {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
     game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: emuMode(target, a) || (store.read('settings', {}).emuMax === false && gameMode(a.fs) !== 'off' ? 'autox' : gameMode(a.fs)), noWindow: false, exited: false };
+    game.app = a; try { plus.applyProfile(a); } catch {}
     try { extras.onGameStart(); } catch {}
     statsTouch(a.id, 0);
+    if (store.read('settings', {}).closeBrowseOnGame) { try { browse.closeAll(); } catch {} }
+    try { await plus.pre(a); } catch {}
     if (!isUrl && remoteLive && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
     if (a.compat && !isUrl && /\.exe$/i.test(target)) applyCompat(target);
     showBackdrop(game); send('game:state', gameState());
@@ -365,7 +377,7 @@ function startHelper() {
   helper.on('padin', (slot, act) => {
     try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (browse.anyVisible()) browse.padAction(act); else if (padTest) send('padtest', slot, act); } catch {}
   });
-  helper.on('battery', (slot, type, level) => { batteries[slot] = { type, level }; send('battery', slot, type, level); });
+  helper.on('battery', (slot, type, level) => { batteries[slot] = { type, level }; try { plus.battery(slot, type, level); } catch {} send('battery', slot, type, level); });
   helper.on('pads', n => { padCount = n; send('pads', n); const pl = playersMeta(); if (n >= 2 && !pl[1] && game && !overlayOpen) openOverlay({ p2: true }); });
   helper.on('win', w => {
     if (!game) return; game.hwnd = w.hwnd; game.wpid = w.pid; send('game:state', gameState());
@@ -715,6 +727,7 @@ function setupUpdates() {
 }
 app.on('second-instance', comeBack);
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion');
+app.whenReady().then(() => { try { plus.recover(false); } catch {} setTimeout(() => { try { plus.weeklyReport(); } catch {} }, 25000); });
 app.whenReady().then(async () => {
   // Widevine (protected video: Netflix, Disney+, ...) comes with the castLabs Electron build. Wait for it before opening any window that might play video.
   try { const { components } = require('electron'); if (components && components.whenReady) await Promise.race([components.whenReady().catch(() => {}), new Promise(r => setTimeout(r, 30000))]); } catch (e) {}

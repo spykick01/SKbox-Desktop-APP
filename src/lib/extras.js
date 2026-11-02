@@ -8,7 +8,8 @@ const KEYS = ['remoteAutoQ', 'remoteAutoStart', 'remoteIdle', 'remoteAwake', 're
   'summary', 'panicKey', 'fitKey', 'remoteEncWarn', 'remoteNotices', 'notifications', 'remoteCursor', 'remoteNewPin',
   'remoteFps', 'remoteRes', 'remoteKbps', 'remoteAudio', 'remotePref', 'remoteBoost', 'remoteMaxH', 'remoteGameEnd', 'remoteAutoApp',
   'gamePlan', 'gameQuiet', 'gameModeOn', 'noNexus', 'gameTaskbar', 'closeMode', 'gameMaxH', 'eyeMin', 'hotkeysOn', 'notifSilent',
-  'winConfirm', 'winSort', 'winAuto', 'winHideSys', 'emuMax', 'winFitSwitch', 'remoteSmart'];
+  'winConfirm', 'winSort', 'winAuto', 'winHideSys', 'emuMax', 'winFitSwitch', 'remoteSmart',
+  'emuStyle', 'afterGame', 'closeBrowseOnGame', 'padBatteryWarn', 'weeklyReport', 'hideCursor', 'statRange'];
 
 const fmt = ms => { const m = Math.round(ms / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60 ? (m % 60) + ' min' : ''); };
 const dayKey = d0 => { const d = d0 || new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };

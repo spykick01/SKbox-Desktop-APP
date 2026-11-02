@@ -65,6 +65,8 @@
     const im = S.settings.idleMood == null ? 'twilight' : S.settings.idleMood;
     if (K.audio && K.audio.idle && im !== 'off') { K.audio.idle(im); const nm = (K.audio.moods().find(x => x[0] === im) || [])[1]; if (nm) saverEl.querySelector('.np').textContent = '\u266A ' + nm; }
   }
+  // hide the mouse cursor after a few idle seconds (controller-first; any mouse move brings it back)
+  let curT = 0; document.addEventListener('mousemove', () => { document.body.classList.remove('nocursor'); clearTimeout(curT); if (S.settings.hideCursor !== false) curT = setTimeout(() => document.body.classList.add('nocursor'), 4000); });
   setInterval(() => { const m = +S.settings.saver || 0; if (!m || K.saverOn || S.game || !['home', 'library', 'settings', 'start'].includes(S.screen)) return; if (Date.now() - K.lastInput > m * 60000) saverShow(); }, 5000);
 
   // ---------- boot ----------
@@ -193,7 +195,9 @@
   function movePin(a, d) { const p = pinnedIds().slice(), i = p.indexOf(a.id), j = i + d; if (i < 0 || j < 0 || j >= p.length) return false; [p[i], p[j]] = [p[j], p[i]]; S.settings.pinned = p; saveSettings(); return true; }
   const fmtPlay = ms => { const m = Math.round((ms || 0) / 60000); if (m < 1) return 'Not played yet'; if (m < 60) return m + ' min played'; const h = Math.floor(m / 60); return h + ' h ' + (m % 60 ? (m % 60) + ' min ' : '') + 'played'; };
   const fmtAgo = t => { if (!t) return ''; const d = Date.now() - t, m = Math.floor(d / 60000); if (m < 2) return 'just now'; if (m < 60) return m + ' min ago'; const h = Math.floor(m / 60); if (h < 24) return h + ' h ago'; const dd = Math.floor(h / 24); return dd === 1 ? 'yesterday' : dd + ' days ago'; };
-  const playInfo = a => { const x = (S.stats || {})[a.id]; if (!x || (!x.ms && !x.last)) return a.kind ? '' : 'Not played yet'; return [x.ms ? fmtPlay(x.ms) : '', x.last ? 'last ' + fmtAgo(x.last) : ''].filter(Boolean).join(' \u00B7 '); };
+  const refreshWatch = () => { try { sk.extras.do('watchList').then(r => { S.watchMap = {}; ((r && r.list) || []).forEach(w => { S.watchMap[w.id] = w; }); }).catch(() => {}); } catch (_) {} }; refreshWatch(); sk.on('returned', refreshWatch);
+  const watchInfo = a => { const w = (S.watchMap || {})[a.id]; return w && w.title ? 'Continue: ' + w.title.slice(0, 42) : ''; };
+  const playInfo = a => { const wi = watchInfo(a); if (wi) return wi; const x = (S.stats || {})[a.id]; if (!x || (!x.ms && !x.last)) return a.kind ? '' : 'Not played yet'; return [x.ms ? fmtPlay(x.ms) : '', x.last ? 'last ' + fmtAgo(x.last) : ''].filter(Boolean).join(' \u00B7 '); };
   function tileEl(a) {
     const t = nav(el('button', 'tile' + (a.add ? ' add' : '') + (a.lib ? ' lib' : '')));
     let art;
@@ -269,7 +273,7 @@
   let libSort = 'az', libQuery = '', libFilter = 'all';
   const SORTS = [['az', 'A\u2013Z'], ['recent', 'Recently played'], ['most', 'Most played']];
   function libList() {
-    const cols = S.settings.collections || {}; let l = allApps().filter(a => !libQuery || a.name.toLowerCase().includes(libQuery.toLowerCase())); const st = S.stats || {}, g = a => st[a.id] || { last: 0, ms: 0 };
+    const cols = S.settings.collections || {}; const hid = S.settings.hiddenApps || []; let l = allApps().filter(a => (!libQuery || a.name.toLowerCase().includes(libQuery.toLowerCase())) && (libFilter === 'hidden' ? hid.includes(a.id) : !hid.includes(a.id))); const st = S.stats || {}, g = a => st[a.id] || { last: 0, ms: 0 };
     if (libFilter === 'pinned') l = l.filter(isPinned); else if (libFilter === 'recent') l = l.filter(a => g(a).last > Date.now() - 14 * 864e5); else if (cols[libFilter]) l = l.filter(a => cols[libFilter].includes(a.id));
     if (libSort === 'az') l.sort((x, y) => x.name.localeCompare(y.name)); else if (libSort === 'recent') l.sort((x, y) => g(y).last - g(x).last || x.name.localeCompare(y.name)); else l.sort((x, y) => g(y).ms - g(x).ms || x.name.localeCompare(y.name));
     return l;
@@ -277,20 +281,22 @@
   function library(root, d) {
     hints([['A', 'Open'], ['X', 'Pin / Unpin'], ['Y', 'Options'], ['L', 'Sort'], ['B', 'Home']]);
     S.backFn = () => go('home'); S.startFn = () => go('settings'); if (!S.libInit) { S.libInit = true; libSort = S.settings.libSort || libSort; libFilter = S.settings.libFilter || libFilter; }
-    if (libFilter !== 'all' && libFilter !== 'pinned' && libFilter !== 'recent' && !(S.settings.collections || {})[libFilter]) libFilter = 'all';
+    if (libFilter !== 'all' && libFilter !== 'pinned' && libFilter !== 'recent' && !(libFilter === 'hidden' && (S.settings.hiddenApps || []).length) && !(S.settings.collections || {})[libFilter]) libFilter = 'all';
     root.innerHTML = '<div class="page lib"><h1>Library</h1></div>';
     const page = root.querySelector('.page'), bar = el('div', 'libbar');
     const sortB = nav(el('button', 'chip', '<span>Sort: ' + esc(SORTS.find(x => x[0] === libSort)[1]) + '</span>')), findB = nav(el('button', 'chip', '<span>\u{1F50D} ' + (libQuery ? esc(libQuery) : 'Search') + '</span>')), addB = nav(el('button', 'chip', '<div class="av">+</div><span>Add an app</span>'));
     const cycle = dir => { const i = SORTS.findIndex(x => x[0] === libSort); libSort = SORTS[(i + (dir || 1) + SORTS.length) % SORTS.length][0]; S.settings.libSort = libSort; saveSettings(); go('library', { focus: S.lastLibId }); };
-    const FILTERS = ['all', 'pinned', 'recent'].concat(Object.keys(S.settings.collections || {})), fname = f => ({ all: 'All', pinned: 'On Home', recent: 'Played lately' }[f] || f);
+    const FILTERS = ['all', 'pinned', 'recent'].concat(Object.keys(S.settings.collections || {})).concat((S.settings.hiddenApps || []).length ? ['hidden'] : []), fname = f => ({ all: 'All', pinned: 'On Home', recent: 'Played lately', hidden: 'Hidden apps' }[f] || f);
     const filtB = nav(el('button', 'chip', '<span>Show: ' + esc(fname(libFilter)) + '</span>'));
     filtB.onclick = () => { libFilter = FILTERS[(FILTERS.indexOf(libFilter) + 1) % FILTERS.length]; S.settings.libFilter = libFilter; saveSettings(); go('library'); };
-    if (!['all', 'pinned', 'recent'].includes(libFilter)) filtB._onopts = () => confirm('Delete the collection \u201C' + libFilter + '\u201D?', 'Your apps stay in the Library. Only the group is removed.', 'Delete', () => { delete S.settings.collections[libFilter]; libFilter = 'all'; S.settings.libFilter = 'all'; saveSettings(); go('library'); }, true);
+    if (!['all', 'pinned', 'recent', 'hidden'].includes(libFilter)) filtB._onopts = () => confirm('Delete the collection \u201C' + libFilter + '\u201D?', 'Your apps stay in the Library. Only the group is removed.', 'Delete', () => { delete S.settings.collections[libFilter]; libFilter = 'all'; S.settings.libFilter = 'all'; saveSettings(); go('library'); }, true);
     sortB.onclick = () => cycle(1); S.bumper = a => cycle(a === 'prev' ? -1 : 1);
     findB.onclick = () => osk({ title: 'Search your library', value: libQuery, submitLabel: 'Search', onDone: v => { libQuery = (v || '').trim(); go('library'); } });
     if (libQuery) findB._onopts = () => { libQuery = ''; go('library'); };
     addB.onclick = () => go('addApp');
-    bar.append(filtB, sortB, findB, addB); page.appendChild(bar);
+    const luckyB = nav(el('button', 'chip', '<span>\u{1F3B2} Surprise me</span>'));
+    luckyB.onclick = () => { const pool = libList().filter(a => !isRunning(a)); if (!pool.length) return toast('Nothing to pick from'); const a = pool[Math.floor(Math.random() * pool.length)]; confirm('How about ' + a.name + '?', playInfo(a) || 'Picked at random from what you see here.', ['web', 'browse', 'bapp'].includes(a.kind) ? 'Open' : 'Play', () => openApp(a), false); };
+    bar.append(filtB, sortB, findB, luckyB, addB); page.appendChild(bar);
     const grid = el('div', 'libgrid'), info = el('div', 'libinfo'), list = libList(), els = [];
     if (!list.length) grid.appendChild(el('div', 'sub', libQuery ? 'Nothing matches \u201C' + esc(libQuery) + '\u201D.' : 'Nothing here yet. Press \u201CAdd an app\u201D.'));
     list.forEach((a, i) => {
@@ -306,6 +312,23 @@
     const want = els.find(e => e._id === (d.focus || S.lastLibId)) || els[0];
     if (want) ensureFocus(root, want); else ensureFocus(root, addB);
   }
+  // ---------- per-game profile: settings that apply only while this game runs ----------
+  function profileMenu(a, back) {
+    const p = a.profile = a.profile || {}, redo = () => { saveApps(); profileMenu(a, back); };
+    const pick = (key, label, opts, fmt) => ({ label: label + ': ' + ((opts.find(o => String(o[0]) === String(p[key] || '')) || opts[0])[1]), fn: () => { const i = Math.max(0, opts.findIndex(o => String(o[0]) === String(p[key] || ''))); const n = opts[(i + 1) % opts.length][0]; if (n === '' || n === 0) delete p[key]; else p[key] = n; redo(); } });
+    const path = (key, label) => ({ label: label + ': ' + (p[key] ? p[key].split(/[\\/]/).pop() : 'None'), fn: async () => { if (p[key]) { delete p[key]; return redo(); } const f = await sk.pickFile('exe'); if (f) { p[key] = f; redo(); } else redo(); } });
+    menu('Game profile: ' + a.name, [
+      pick('quality', 'Remote play quality', [['', 'Same as Extras'], ['smooth', 'Smooth (720p 60)'], ['sharp', 'Sharp (1080p 30)'], ['lowlag', 'Lowest delay'], ['ultra', 'Ultra (1080p 60, 20 Mbps)']]),
+      pick('bright', 'Brightness while playing', [[0, 'Same as Extras'], [40, '40%'], [60, '60%'], [80, '80%'], [100, '100%']]),
+      pick('closeMode', 'Closing this game', [['', 'Same as Extras'], ['polite', 'Ask first, then force'], ['force', 'Force at once']]),
+      pick('maxH', 'Close it after', [[0, 'Never'], [1, '1 hour'], [2, '2 hours'], [3, '3 hours']]),
+      pick('after', 'When I stop playing', [['', 'Same as Extras'], ['lock', 'Lock the PC'], ['sleep', 'Sleep'], ['shutdown', 'Shut down']]),
+      path('pre', 'Start before the game'), pick('preWait', 'Wait after starting it', [[0, 'No wait'], [3, '3 seconds'], [5, '5 seconds'], [10, '10 seconds']]), path('post', 'Start after the game'),
+      { label: 'Use this profile for every emulator', fn: () => { let n = 0; S.apps.forEach(x => { if (x.id !== a.id && !x.kind && /(cemu|yuzu|suyu|ryujinx|citra|rpcs3|dolphin|pcsx2|duckstation|xemu|ppsspp)/i.test(x.exe || '')) { x.profile = JSON.parse(JSON.stringify(p)); n++; } }); saveApps(); toast(n ? 'Copied to ' + n + ' emulator' + (n > 1 ? 's' : '') : 'No other emulators found'); back(); } },
+      { label: 'Clear this profile', fn: () => { delete a.profile; saveApps(); toast('Profile cleared'); back(); } },
+      { label: 'Done', fn: () => back() }
+    ]);
+  }
   function appMenu(a, ctx) {
     const run = isRunning(a), it = [{ label: run ? 'Resume' : (['web', 'browse', 'bapp'].includes(a.kind) ? 'Open' : 'Play'), fn: () => openApp(a) }];
     const back = () => ctx === 'lib' ? go('library', { focus: a.id }) : go('home');
@@ -319,6 +342,10 @@
       menu('Add ' + a.name + ' to', opts);
     } });
     inCols.forEach(c => it.push({ label: 'Remove from ' + c, fn: () => { cols[c] = cols[c].filter(x => x !== a.id); S.settings.collections = cols; saveSettings(); back(); } }));
+    const hidList = S.settings.hiddenApps || [], isHid = hidList.includes(a.id);
+    it.push({ label: isHid ? 'Show in Library again' : 'Hide from Library', fn: () => { S.settings.hiddenApps = isHid ? hidList.filter(x => x !== a.id) : hidList.concat([a.id]); saveSettings(); toast(isHid ? a.name + ' is back in the Library' : a.name + ' is hidden. Library > Show > Hidden apps brings it back'); go(ctx === 'lib' ? 'library' : 'home'); } });
+    if (!a.kind) it.push({ label: 'Game profile\u2026', fn: () => profileMenu(a, back) });
+    if (!a.kind || a.kind === 'bapp') it.push({ label: 'Duplicate', fn: () => { const c = JSON.parse(JSON.stringify(a)); c.id = (a.kind === 'bapp' ? 'bapp_' : 'app_') + Date.now().toString(36); c.name = a.name + ' (copy)'; S.apps.push(c); saveApps(); toast(c.name + ' added'); back(); } });
     if (a.kind === 'bapp') {
       it.push({ label: 'Edit browser app\u2026', fn: () => bappMenu(a, back) });
     } else if (!a.kind) {
@@ -540,6 +567,11 @@
 
   // ---------- settings ----------
   const NEWS = [
+    ['Playtime dashboard', 'Settings > Play stats now has a chart, your streak, a ranking with bars and a 7, 14 or 30 day view.'],
+    ['Continue watching', 'Settings > Continue watching lists every streaming app with the show you were on, plus pages saved with Watch later in SKBrowse. Home and Library show \u201CContinue: title\u201D.'],
+    ['Game profiles', 'Press Y on a game > Game profile: its own Remote play quality, brightness, close method, time limit, a program to start before and after it, and an action when you stop playing.'],
+    ['Cemu fullscreen fix', 'Emulators no longer use their own exclusive fullscreen, so Remote play can see them. Extras > Emulator window style changes it back.'],
+    ['VidAngel in SKBrowse', 'A compatibility layer lets Chrome extensions that message their website or rewrite requests run inside SKBrowse.'],
     ['Streaming services hub', 'Settings > Streaming services adds YouTube, Twitch, Netflix, Disney+ and more as apps in one tap. Each one remembers where you were.'],
     ['SKBrowse', 'A built-in browser with tabs, ad block and Chrome Web Store extensions. Settings > SKBrowse & browser apps turns any website into its own app, locked to that site.'],
     ['Cemu and other emulators', 'Start in a clean, full-screen window with the menu bar hidden, even when Remote play is off.'],
@@ -564,17 +596,17 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['shows', '\u{1F37F}', 'Streaming services'], ['browser', '\u{1F310}', 'SKBrowse & browser apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['shows', '\u{1F37F}', 'Streaming services'], ['browser', '\u{1F310}', 'SKBrowse & browser apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['watching', '\u25B6', 'Continue watching'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
     const split = el('div', 'split'), menuE = el('div', 'menu'), pane = el('div', 'pane');
     split.append(menuE, pane); root.querySelector('.page').appendChild(split);
-    let sel = d.cat || 'wifi', firstEl = null;
+    let sel = d.cat || (CATS.some(c => c[0] === S.settings.lastCat) ? S.settings.lastCat : 'wifi'), firstEl = null;
     const items = {};
     CATS.forEach(([id, ic, name]) => {
       const m = nav(el('button', 'mi', '<span>' + ic + '</span>' + name)); items[id] = m; if (id === sel) { m.classList.add('sel'); firstEl = m; }
-      m._onfocus = () => { if (sel !== id || !pane.firstChild) { sel = id; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); panel(id, pane); } };
+      m._onfocus = () => { if (sel !== id || !pane.firstChild) { sel = id; if (S.settings.lastCat !== id) { S.settings.lastCat = id; saveSettings(); } Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); panel(id, pane); } };
       m.onclick = () => { const f = pane.querySelector('[data-nav]'); if (f) focus(f); };
       menuE.appendChild(m);
     });
@@ -623,6 +655,12 @@
       h('Apps'); sub('Add a game or program by its file path. SKBox finds cover art for you.');
       pane.appendChild(row('Add an app', '', '+', () => go('addApp')));
       S.apps.forEach(a => { pane.appendChild(row(a.name, a.exe + (isPinned(a) ? ' \u00B7 on Home' : ''), 'Edit', () => go('addApp', { app: a }))); });
+      pane.appendChild(row('Find missing cover art', 'Looks up covers for every app that has none', '\u2192', async () => {
+        const todo = S.apps.filter(a => !a.kind && !a.cover); if (!todo.length) return toast('Every app already has a cover');
+        const stop = busy('Finding covers for ' + todo.length + ' app' + (todo.length > 1 ? 's' : '') + '\u2026'); let n = 0;
+        for (const a of todo) { try { const r = await sk.cover.auto(a.name); if (r && r.ok) { a.cover = r.file; a.fit = r.fit || 'fill'; n++; } else { const ic = await sk.cover.icon(a.exe); if (ic && ic.ok) { a.cover = ic.file; a.fit = 'icon'; } } } catch (_) {} }
+        stop(); saveApps(); toast(n + ' of ' + todo.length + ' covers found'); go('settings', { cat: 'apps' });
+      }));
       pane.appendChild(row('Open Library', 'Pin or unpin apps on the Home screen', '\u2192', () => go('library')));
       if (!S.apps.length) pane.appendChild(el('div', 'sub', 'No apps yet.'));
     } else if (id === 'cozy') {
@@ -708,7 +746,7 @@
       pane.appendChild(row('Open the Chrome Web Store', 'Browse extensions, then press Add to SKBrowse in the bar', '\u2192', () => sk.browse.open({ pad: pad(), url: 'https://chromewebstore.google.com/' })));
       const drmRow = row('Protected video (Netflix, Disney+, Hulu, Max\u2026)', 'Checking\u2026', '', null); pane.appendChild(drmRow);
       sk.browse.drmStatus().then(r => { if (!drmRow.isConnected) return; drmRow.querySelector('small').textContent = r.ok ? 'Ready. Widevine ' + (r.version || '') + ' is installed' : (r.why || 'Widevine is ' + (r.status || 'still downloading') + '. Restart SKBox if this stays like this'); });
-      pane.appendChild(el('div', 'sub', 'VidAngel: its extension needs Chrome features that SKBrowse does not have, so it cannot work inside SKBrowse. Add VidAngel from Settings > Streaming services instead: it opens in Chrome or Edge using your own profile, where you install the extension once.'));
+      pane.appendChild(el('div', 'sub', 'VidAngel and other extensions that talk to their website or rewrite requests now work through a built-in compatibility layer. Install the extension from the Web Store inside SKBrowse, then use vidangel.com in the same SKBrowse window. If it still refuses, Settings > Streaming services has VidAngel in your own Chrome or Edge profile.'));
       const ad = row('Ad blocker', 'Blocks ad and tracker hosts, hides ad boxes, skips YouTube ads', '', null); pane.appendChild(ad);
       pane.appendChild(toggle('Ad blocker on', 'The default for SKBrowse. Browser apps have their own switch', S.settings.sbAdblock !== false, v => sv('sbAdblock', v)));
       const lst = row('Update the filter list', 'Downloads a larger ad and tracker list', '\u2193', async () => { toast('Downloading\u2026'); const r = await sk.browse.updateList(); toast(r.ok ? r.n + ' hosts blocked (' + r.added + ' new)' : r.error || 'Could not update'); });
@@ -880,6 +918,13 @@
       X('week').then(r => { if (wk.isConnected) wk.querySelector('.r').textContent = Math.round((r.ms || 0) / 60000) + ' min'; });
       pane.appendChild(row('Clear today\u2019s playtime', '', '\u2192', async () => say(await X('clearToday'), 'Cleared')));
       pane.appendChild(row('Close the running game', 'Ends the game SKBox started', '\u2192', async () => { toast('Closing\u2026'); say(await X('closeGame'), 'Closed'); }));
+      sec('SKBox Plus');
+      pane.appendChild(cyc('Emulator window style', 'How Cemu and other emulators go full screen', [['window', 'Windowed fullscreen (Remote play can see it)'], ['own', 'The emulator\u2019s own fullscreen']], () => S.settings.emuStyle || 'window', v => sv('emuStyle', v)));
+      pane.appendChild(cyc('When I stop playing', 'Happens 45 seconds after a game closes (only after 1+ minute of play)', [['', 'Nothing'], ['lock', 'Lock the PC'], ['sleep', 'Sleep'], ['shutdown', 'Shut down']], () => S.settings.afterGame || '', v => sv('afterGame', v)));
+      pane.appendChild(row('Cancel the automatic PC action', 'If one is counting down', '\u2192', async () => say(await X('cancelAfter'), 'Cancelled')));
+      pane.appendChild(toggle('Close SKBrowse windows when a game starts', 'Frees memory and stops sound from the browser', !!S.settings.closeBrowseOnGame, v => sv('closeBrowseOnGame', v)));
+      pane.appendChild(toggle('Controller battery warning', 'A notification when a controller is almost empty', S.settings.padBatteryWarn !== false, v => sv('padBatteryWarn', v)));
+      pane.appendChild(toggle('Hide the mouse cursor when idle', 'In SKBox, after a few seconds without moving it', S.settings.hideCursor !== false, v => { sv('hideCursor', v); document.body.classList.remove('nocursor'); }));
       sec('Helpers');
       pane.appendChild(toggle('Hotkeys', 'Master switch for every Ctrl+Alt+Shift hotkey', S.settings.hotkeysOn !== false, v => sv('hotkeysOn', v)));
       pane.appendChild(row('Hotkey list', '', '\u2192', () => confirm('Hotkeys', 'Ctrl+Alt+Shift with:  F fit the game window  \u00B7  K close the game  \u00B7  Up / Down brightness  \u00B7  D dimmer  \u00B7  N night filter.  Ctrl+Shift+S takes a screenshot.', 'OK', () => {}, false)));
@@ -899,17 +944,49 @@
       pane.appendChild(row('Open the helper log', 'Shows errors from the controller / window helper', '\u2192', async () => say(await X('openLog'))));
       pane.appendChild(row('Reset Extras to defaults', '', '\u2192', () => confirm('Reset Extras?', 'Every setting on this page goes back to its default.', 'Reset', async () => { await X('reset'); S.settings = await sk.store.get('settings', {}) || S.settings; toast('Extras reset'); go('settings', { cat: 'extras' }); }, false)));
     } else if (id === 'stats') {
-      h('Play stats'); const st = S.stats || {}, rows = allApps().map(a => ({ a, x: st[a.id] || { ms: 0, n: 0, last: 0, best: 0 } })).filter(o => o.x.ms || o.x.n);
-      const total = rows.reduce((t, o) => t + (o.x.ms || 0), 0), opens = rows.reduce((t, o) => t + (o.x.n || 0), 0), fh = ms => { const m = Math.round(ms / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
-      if (!rows.length) { sub('Nothing yet. Play something and it shows up here.'); }
-      else {
-        sub('Games track time while they run. Apps like SKchat count how often you open them.');
-        pane.appendChild(row('Total play time', 'Across all games', fh(total), null)); pane.appendChild(row('Times you launched something', '', String(opens), null));
-        const top = rows.filter(o => o.x.ms).sort((p, q) => q.x.ms - p.x.ms)[0]; if (top) pane.appendChild(row('Most played', top.a.name, fh(top.x.ms), null));
-        const longest = rows.filter(o => o.x.best).sort((p, q) => q.x.best - p.x.best)[0]; if (longest) pane.appendChild(row('Longest session', longest.a.name, fh(longest.x.best), null));
-        pane.appendChild(el('h2', '', 'By game'));
-        rows.sort((p, q) => (q.x.ms || 0) - (p.x.ms || 0)).slice(0, 12).forEach(o => pane.appendChild(row(o.a.name, (o.x.n || 0) + ' launches \u00B7 last ' + (o.x.last ? fmtAgo(o.x.last) : 'never'), o.x.ms ? fh(o.x.ms) : '', null)));
-      }
+      h('Play stats'); const X = (n, a) => sk.extras.do(n, a), sec = t => pane.appendChild(el('h3', '', t)), fh = ms => { const m = Math.round((ms || 0) / 60000); return m < 1 ? '0 min' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
+      const box = el('div'), WD = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+      const load = async () => {
+        const r = await X('report', +S.settings.statRange || 14); if (!box.isConnected || !r || !r.ok) return; box.innerHTML = '';
+        if (!r.total && !r.rangeTotal) { box.appendChild(el('div', 'sub', 'Nothing yet. Play something and it shows up here.')); return; }
+        const top = Math.max.apply(null, r.days.map(d => d.ms).concat([1]));
+        box.appendChild(row('Today', '', fh(r.today), null)); box.appendChild(row('Last ' + r.range + ' days', 'Average ' + fh(r.rangeTotal / r.range) + ' a day', fh(r.rangeTotal), null)); box.appendChild(row('Last 30 days', '', fh(r.month), null));
+        box.appendChild(row('Play streak', 'Days in a row with at least a minute of play', r.streak + (r.streak === 1 ? ' day' : ' days'), null)); if (r.best.ms) box.appendChild(row('Biggest day', r.best.k.split('-').reverse().slice(0, 2).join('/'), fh(r.best.ms), null));
+        const ch = el('div', 'pchart'), lb = el('div', 'pcl'); r.days.forEach(d => { const b = el('i'); b.style.height = Math.max(2, Math.round(d.ms / top * 100)) + '%'; b.title = fh(d.ms); ch.appendChild(b); lb.appendChild(el('span', '', r.range > 14 ? (d.dom % 5 === 0 ? String(d.dom) : '') : WD[d.wd])); });
+        const cw = el('div', 'pwrap'); cw.append(ch, lb); box.appendChild(cw);
+        box.appendChild(el('h3', '', 'Ranking (last ' + r.range + ' days)'));
+        const maxg = Math.max.apply(null, r.games.map(g => g.range).concat([1]));
+        r.games.forEach(g => { const rw = row(g.name, g.plays + ' launches \u00B7 ' + fh(g.ms) + ' in total' + (g.last ? ' \u00B7 last ' + fmtAgo(g.last) : ''), g.range ? fh(g.range) : '', null); const gb = el('div', 'gbar'); gb.innerHTML = '<i style="width:' + Math.round(g.range / maxg * 100) + '%"></i>'; rw.firstChild.appendChild(gb); rw._onopts = () => confirm('Reset ' + g.name + '?', 'Its play time and launch count go back to zero.', 'Reset', async () => { await X('resetGame', g.id); S.stats = (await sk.store.get('stats', {})) || {}; toast('Reset'); load(); }, true); box.appendChild(rw); });
+        box.appendChild(el('div', 'sub', 'Press Y on a game to reset just that one.'));
+      };
+      pane.appendChild(cyc('Show the last', 'Days in the chart and the ranking', [['7', '7 days'], ['14', '14 days'], ['30', '30 days']], () => String(S.settings.statRange || 14), v => { S.settings.statRange = +v; saveSettings(); load(); }));
+      pane.appendChild(box); load();
+      sec('Tools');
+      pane.appendChild(row('Copy this summary', 'Handy to paste to a friend', '\u2192', async () => { const r = await X('summary', +S.settings.statRange || 14); toast(r && r.ok ? 'Copied' : 'That did not work'); }));
+      pane.appendChild(toggle('Monday play report', 'A short notification about last week', S.settings.weeklyReport !== false, v => { S.settings.weeklyReport = v; saveSettings(); }));
+      pane.appendChild(row('Reset all play stats', 'Play time, launches and history', '\u2192', () => confirm('Reset all play stats?', 'This cannot be undone.', 'Reset', async () => { await X('resetAll'); S.stats = {}; toast('Stats reset'); load(); }, true)));
+    } else if (id === 'watching') {
+      h('Continue watching'); sub('Pick a show up where you left it. SKBox remembers the last page of each streaming app, and anything you save with Watch later in SKBrowse (Start menu in SKBrowse).');
+      const X = (n, a) => sk.extras.do(n, a), box = el('div'); pane.appendChild(box);
+      const load = async () => {
+        const r = await X('watchList'); if (!box.isConnected) return; box.innerHTML = ''; refreshWatch();
+        if (!(r.list || []).length && !(r.later || []).length) { box.appendChild(el('div', 'sub', 'Nothing yet. Open a streaming app and watch something. It shows up here.')); return; }
+        if ((r.list || []).length) { box.appendChild(el('h3', '', 'Where you left off')); r.list.forEach(w => { const ap = allApps().find(x => x.id === w.id); const rw = row(w.name, (w.title || w.url).slice(0, 70) + ' \u00B7 ' + fmtAgo(w.t), 'Continue', () => ap && openApp(ap)); rw._onopts = () => confirm('Forget ' + w.name + '?', 'It will open at its start page next time.', 'Forget', async () => { await X('watchClear', w.id); load(); }, true); box.appendChild(rw); }); }
+        if ((r.later || []).length) { box.appendChild(el('h3', '', 'Watch later')); r.later.forEach(l => { let host = ''; try { host = new URL(l.url).hostname.replace(/^www\./, ''); } catch (_) {} const rw = row(l.title, host + ' \u00B7 ' + fmtAgo(l.t), 'Open', () => sk.browse.open({ url: l.url })); rw._onopts = () => confirm('Remove from Watch later?', l.title, 'Remove', async () => { await X('laterRemove', l.url); load(); }, true); box.appendChild(rw); }); }
+        box.appendChild(el('div', 'sub', 'Press Y on an item to remove it.'));
+        box.appendChild(row('Forget everything I was watching', '', '\u2192', () => confirm('Forget where you left off?', 'Saved Watch later pages stay.', 'Forget', async () => { await X('watchClear'); load(); }, true)));
+      };
+      load();
+    } else if (id === 'sysinfo') {
+      h('System info'); sub('A look at this PC while you play. Updates every few seconds.');
+      const X = (n, a) => sk.extras.do(n, a), box = el('div'); pane.appendChild(box); const gb = n => (n / 1073741824).toFixed(1) + ' GB';
+      const draw = async () => { const i = await X('sysinfo'); if (!box.isConnected) { clearInterval(clockTimer); return; } if (!i || !i.ok) { box.innerHTML = '<div class="sub">Could not read system info.</div>'; return; } box.innerHTML = '';
+        box.appendChild(row('Processor', i.cpu + ' (' + i.cores + ' threads)', i.load != null ? i.load + '%' : '', null)); box.appendChild(row('Memory', gb(i.ramUsed) + ' used of ' + gb(i.ramTotal), Math.round(i.ramUsed / i.ramTotal * 100) + '%', null));
+        if (i.gpu) box.appendChild(row('Graphics', i.gpu, '', null)); if (i.disk) box.appendChild(row('Disk ' + i.disk.path, gb(i.disk.free) + ' free of ' + gb(i.disk.total), Math.round((1 - i.disk.free / i.disk.total) * 100) + '% full', null));
+        box.appendChild(row('SKBox is using', 'All of its windows together', gb(i.skbox), null)); box.appendChild(row('This PC has been on for', i.os, Math.floor(i.uptime / 3600) + ' h ' + Math.floor(i.uptime % 3600 / 60) + ' min', null)); };
+      draw(); clockTimer = setInterval(draw, 4000);
+      pane.appendChild(row('Copy this info', 'Paste it when asking for help', '\u2192', async () => { const r = await X('sysCopy'); toast(r && r.ok ? 'Copied' : 'That did not work'); }));
+      pane.appendChild(row('Open Task Manager', '', '\u2192', () => X('open', 'taskmgr')));
     } else if (id === 'padtest') {
       h('Controller test'); sub('Press buttons and move the D-pad. \u201CBrowser\u201D works while SKBox is in front. \u201CHelper\u201D also works over a game. If Helper counts up, the SK menu will see your controller.');
       const LBL = { up: 'D-pad up', down: 'D-pad down', left: 'D-pad left', right: 'D-pad right', ok: 'A / Cross', back: 'B / Circle', alt: 'X / Square', opts: 'Y / Triangle', prev: 'LB / L1', next: 'RB / R1', start: 'Start / Options', select: 'View / Share' };
@@ -1014,6 +1091,7 @@
         const set = (m, a, label) => ({ label, fn: async () => { await sk.timer.set(m, a); toast('Timer set: ' + label); tdraw(); } });
         menu('Sleep timer', [set(30, 'sleep', 'Sleep in 30 min'), set(60, 'sleep', 'Sleep in 1 hour'), set(120, 'sleep', 'Sleep in 2 hours'), set(60, 'shutdown', 'Shut down in 1 hour'), set(30, 'closegame', 'Close game in 30 min'), set(60, 'closegame', 'Close game in 1 hour'), { label: 'Turn timer off', fn: async () => { await sk.timer.set(0, 'sleep'); toast('Timer off'); tdraw(); } }]);
       };
+      pane.appendChild(row('Cancel the automatic PC action', 'Stops a sleep, lock or shut down that is counting down after a game', '', async () => { const r = await sk.extras.do('cancelAfter'); toast(r && r.ok ? 'Cancelled' : 'Nothing is waiting'); }));
       pane.appendChild(row('Restart SKBox', 'Closes and opens SKBox again', '', () => confirm('Restart SKBox?', 'A running game keeps running.', 'Restart', () => sk.extras.do('restart'), false)));
       P.forEach(([n, k]) => pane.appendChild(row(n, '', '', () => confirm(n + '?', k === 'quit' ? 'Press Ctrl+Shift+B or use the tray icon to bring SKBox back.' : 'Anything unsaved will be lost.', n, () => sk.sys.power(k), k !== 'sleep'))));
     } else {

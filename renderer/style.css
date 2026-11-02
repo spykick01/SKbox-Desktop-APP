@@ -233,3 +233,9 @@ body.pl2{--ring:#ff9f43}
 @keyframes pa{50%{transform:scale(1.05);box-shadow:0 0 36px color-mix(in srgb,var(--a) 70%,transparent)}}
 .pressa.focus{box-shadow:0 0 0 4px color-mix(in srgb,var(--a) 45%,transparent),0 0 40px var(--a)}
 body.calm .amb .ab,body.calm .ambclock,body.calm .pressa{animation:none}
+
+.pwrap{margin:.6rem 0 1.2rem;padding:.9rem 1rem;border-radius:1rem;background:var(--panel);border:1px solid var(--line)}
+.pchart{display:flex;align-items:flex-end;gap:.3rem;height:6.5rem}.pchart i{flex:1;min-height:2px;border-radius:.3rem .3rem 0 0;background:linear-gradient(180deg,var(--a),var(--a2,var(--a)));opacity:.9}
+.pcl{display:flex;gap:.3rem;margin-top:.3rem;font-size:.7rem;opacity:.6}.pcl span{flex:1;text-align:center}
+.gbar{height:.28rem;border-radius:.2rem;background:rgba(255,255,255,.1);margin-top:.35rem;overflow:hidden}.gbar i{display:block;height:100%;background:var(--a);border-radius:.2rem}
+.nocursor,.nocursor *{cursor:none!important}
