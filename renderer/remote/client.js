@@ -46,7 +46,10 @@
       input.onmessage = e => { try { const m = JSON.parse(e.data); if (m && m.t === 'notice' && typeof m.text === 'string') notice(m.text.slice(0, 160)); else if (m && m.t === 'mode') { wantLock = !!m.game; if (!m.game && document.pointerLockElement) document.exitPointerLock(); } } catch (_) {} };
       const ms = new MediaStream(); stream = ms;
       pc.ontrack = e => {
-        ms.addTrack(e.track); try { e.receiver.playoutDelayHint = 0; } catch (_) {} try { e.receiver.jitterBufferTarget = 0; } catch (_) {}
+        ms.addTrack(e.track);
+        // video: as little delay as possible. audio: a small cushion, a zero buffer makes sound crackle whenever Wi-Fi hiccups.
+        const isA = e.track.kind === 'audio'; try { e.receiver.playoutDelayHint = isA ? 0.06 : 0; } catch (_) {} try { e.receiver.jitterBufferTarget = isA ? 60 : 0; } catch (_) {}
+        if (isA) limiter(e.track);
         if (e.track.kind === 'video') { v.srcObject = ms; startPlay(); }
       };
       pc.onconnectionstatechange = () => { const s = pc && pc.connectionState; clearTimeout(graceT); if (s === 'failed' || s === 'closed') lost('Connection lost.'); else if (s === 'disconnected') graceT = setTimeout(() => lost('Connection lost.'), 6000); };
@@ -63,6 +66,21 @@
 
   // Start the picture by itself. Browsers only allow sound after you have clicked the page (you did: Connect), but if
   // that is refused we start muted, show the picture, and switch the sound on at your first click or key press.
+  // Loudness limiter: keeps loud game sound from clipping (the harsh, glitchy distortion). If Web Audio does not start, plain playback is used.
+  let ac = null;
+  function limiter(track) {
+    if (localStorage.getItem('sk.limiter') === '0') return;
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+      const stream = new MediaStream([track]), keep = new Audio(); keep.muted = true; keep.srcObject = stream; keep.play().catch(() => {});   // Chrome needs a media element attached to a remote stream
+      const src = ac.createMediaStreamSource(stream), comp = ac.createDynamicsCompressor(), g = ac.createGain();
+      comp.threshold.value = -14; comp.knee.value = 8; comp.ratio.value = 10; comp.attack.value = 0.002; comp.release.value = 0.2; g.gain.value = 0.9;
+      src.connect(comp); comp.connect(g); g.connect(ac.destination); window.skAudio = { ac, gain: g };
+      const wake = () => { try { ac.resume(); } catch (_) {} }; wake(); ['pointerdown', 'keydown'].forEach(n => window.addEventListener(n, wake));
+      v.dataset.viaAc = '1'; v.volume = 0;   // the picture element stays silent, the limiter chain plays the sound
+      setTimeout(() => { if (ac && ac.state !== 'running') { v.dataset.viaAc = ''; ac = null; v.volume = 1; } }, 2500);   // Web Audio blocked: fall back to normal playback
+    } catch (_) { ac = null; }
+  }
   function startPlay() {
     v.muted = false;
     v.play().then(() => { $('#tap').hidden = true; }).catch(() => {

@@ -39,10 +39,17 @@
     const P = Object.assign({}, PRESETS[cfg && cfg.quality] || PRESETS.smooth); if (!cfg) return P;
     if (cfg.fps > 0) P.fps = cfg.fps; if (cfg.res > 0) { P.h = cfg.res; P.w = Math.round(cfg.res * 16 / 9 / 2) * 2; } if (cfg.kbps > 0) P.kbps = cfg.kbps; return P;
   }
+  // Opus: ask for real stereo at a decent bitrate. The default is a small stream that distorts when the game gets loud.
+  function opusTune(sdp, kbps) {
+    const m = /a=rtpmap:(\d+) opus\/48000\/2/.exec(sdp); if (!m) return sdp; const br = Math.max(64, Math.min(320, kbps || 192)) * 1000;
+    return sdp.replace(new RegExp('(a=fmtp:' + m[1] + ' )([^\\r\\n]*)'), (l, p, v) => p + v.replace(/;?(stereo|sprop-stereo|maxaveragebitrate|cbr|usedtx)=\d+/g, '').replace(/^;/, '') + ';stereo=1;sprop-stereo=1;maxaveragebitrate=' + br + ';cbr=0;usedtx=0');
+  }
   async function capture(P) {
     const video = { width: { ideal: P.w }, height: { ideal: P.h }, frameRate: { ideal: P.fps, max: P.fps }, cursor: curCfg && curCfg.cursor === false ? 'never' : 'always' };
-    try { return await navigator.mediaDevices.getDisplayMedia({ video, audio: !(curCfg && curCfg.audio === false) }); }
-    catch (e) { return await navigator.mediaDevices.getDisplayMedia({ video, audio: false }); }   // no system audio available
+    // No echo cancellation / noise suppression / auto gain on game sound: they pump and distort loud audio.
+    const want = !(curCfg && curCfg.audio === false);
+    if (want) { try { return await navigator.mediaDevices.getDisplayMedia({ video, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 } }); } catch (_) {} try { return await navigator.mediaDevices.getDisplayMedia({ video, audio: true }); } catch (_) {} }
+    return await navigator.mediaDevices.getDisplayMedia({ video, audio: false });   // no system audio available
   }
   // H.264 first (a Mac decodes it in hardware); VP9 / AV1 would be too heavy for an older Mac.
   function videoCodecs() {
@@ -111,7 +118,7 @@
         if (st === 'failed' || st === 'closed') finish(st); else if (st === 'disconnected') grace = setTimeout(() => finish('disconnected'), 8000);
       };
       // start fast: tell the encoder what bitrate to begin at instead of slowly ramping up (the main cause of blurry / laggy first seconds)
-      const o = { type: m.offer.type, sdp: String(m.offer.sdp || '').replace(/^(a=fmtp:(\d+) [^\r\n]*)/gm, (l, all, pt) => /apt=/.test(all) || /useinbandfec|minptime|stereo/.test(all) ? all : all + ';x-google-start-bitrate=' + Math.round(P.kbps * 1.0) + ';x-google-min-bitrate=' + Math.round(P.kbps * 0.6) + ';x-google-max-bitrate=' + P.kbps) };
+      const o = { type: m.offer.type, sdp: opusTune(String(m.offer.sdp || ''), curCfg && curCfg.audioKbps).replace(/^(a=fmtp:(\d+) [^\r\n]*)/gm, (l, all, pt) => /apt=/.test(all) || /useinbandfec|minptime|stereo/.test(all) ? all : all + ';x-google-start-bitrate=' + Math.round(P.kbps * 1.0) + ';x-google-min-bitrate=' + Math.round(P.kbps * 0.6) + ';x-google-max-bitrate=' + P.kbps) };
       try { await pc.setRemoteDescription(o); } catch (_) { await pc.setRemoteDescription(m.offer); }
       for (const t of pc.getTransceivers()) {
         const kind = t.receiver.track.kind, track = stream.getTracks().find(x => x.kind === kind);

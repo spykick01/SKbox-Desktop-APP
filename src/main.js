@@ -155,7 +155,7 @@ ipcMain.handle('browse:launchApp', async (_e, a) => {
   const useEdge = a.engine === 'edge' && EDGE();
   if (!useEdge) { if (game) { return { ok: false, error: game.name + ' is running. Close it first.' }; } closeOverlay(false); stepAside(); return browse.open({ app: { id: a.id, name: a.name, url: a.url, adblock: a.adblock !== false, auth: a.auth !== false, resume: a.resume !== false, muted: !!a.muted, barHidden: !!a.barHidden, windowed: !!a.windowed, dark: !!a.dark, zoom: +a.zoom || 0 }, pad: a.pad | 0 }); }
   const prof = path.join(app.getPath('userData'), 'edge-' + String(a.id).replace(/[^\w-]/g, ''));
-  return launchApp({ id: a.id, name: a.name, exe: useEdge, args: '--app="' + a.url + '" --start-fullscreen --user-data-dir="' + prof + '" --no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required', cover: a.cover, fs: 'off' });
+  return launchApp({ id: a.id, name: a.name, exe: useEdge, args: '--app="' + a.url + '" --start-fullscreen ' + (a.ownProfile ? '' : '--user-data-dir="' + prof + '" ') + '--no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required', cover: a.cover, fs: 'off' });
 });
 // The main SKBox window must not react to the controller while the SK menu or SKBrowse is in front.
 function lockUI() { try { const on = overlayOpen || Array.from(browse.wins).some(w => { try { return w.isVisible() && !w.isMinimized(); } catch { return false; } }); if (win && !win.isDestroyed()) win.webContents.send('input-lock', !!on); browse.setPaused(overlayOpen); if (helper && helper.ready) helper.padIn(padTest || overlayOpen || browse.anyVisible()); } catch {} }
@@ -301,8 +301,15 @@ ipcMain.handle('game:state', () => gameState());
 ipcMain.handle('stats:touch', (_e, id) => { statsTouch(String(id || '').slice(0, 60), 0); return true; });
 ipcMain.handle('game:resume', () => { if (!game) return false; hideMusic(false); closeOverlay(false); stepAside(); if (helper && game.hwnd) helper.restore(game.hwnd); return true; });
 ipcMain.handle('game:close', () => closeGameResult());
+// A .lnk shortcut is opened through Windows, which hides the real program from SKBox (no process to follow, Cemu not recognised, no full screen).
+// So read the shortcut and start its target directly, with the shortcut's own arguments and "Start in" folder.
+function resolveLnk(p) {
+  try { if (process.platform === 'win32' && /\.lnk$/i.test(p)) { const l = shell.readShortcutLink(p); if (l && l.target && /\.exe$/i.test(l.target) && fs.existsSync(l.target)) return { target: l.target, args: l.args || '', cwd: l.cwd || '' }; } } catch {}
+  return null;
+}
 async function launchApp(a) {
-  const target = String(a.exe || '').trim().replace(/^"|"$/g, '');
+  let target = String(a.exe || '').trim().replace(/^"|"$/g, ''); let lnkCwd = '';
+  const rl = resolveLnk(target); if (rl) { target = rl.target; lnkCwd = rl.cwd; a = Object.assign({}, a, { args: [rl.args, a.args].filter(Boolean).join(' ') }); }
   if (!target) return { ok: false, error: 'No file set for this app.' };
   if (game && !a.replace) return { ok: false, error: game.name + ' is already running.', running: true };
   if (game && a.replace) { await killGame(); endGame(); await new Promise(r => setTimeout(r, 600)); }
@@ -318,7 +325,7 @@ async function launchApp(a) {
     let child = null;
     if (isUrl) await shell.openExternal(target);
     else if (/\.exe$/i.test(target)) {
-      child = spawn(target, splitArgs(emuArgs(target, a.args)), { cwd: path.dirname(target), detached: true, stdio: 'ignore' });
+      child = spawn(target, splitArgs(emuArgs(target, a.args)), { cwd: (lnkCwd && fs.existsSync(lnkCwd)) ? lnkCwd : path.dirname(target), detached: true, stdio: 'ignore' });
       game.pid = child.pid || 0;
       child.on('error', err => { const g = game; endGame(); win && win.webContents.send('launch-error', String(err.message || err)); });
       child.on('exit', () => { if (!game) return; game.exited = true; if (!helper || !helper.ready || game.noWindow) { if (Date.now() - game.startedAt > 15000) endGame(); } });
@@ -330,6 +337,17 @@ async function launchApp(a) {
   } catch (e) { endGame(); return { ok: false, error: String(e.message || e) }; }
 }
 ipcMain.handle('app:launch', (_e, a) => launchApp(a));
+// Import apps: look through the Start Menu and Desktop shortcuts and offer the real programs behind them.
+ipcMain.handle('apps:scan', () => {
+  if (process.platform !== 'win32') return { ok: true, list: [] };
+  const roots = [path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'), app.getPath('desktop'), 'C:\\Users\\Public\\Desktop'];
+  const out = [], seen = new Set(), skip = /(uninstall|setup|installer|update|updater|crash|redist|vc_redist|helper|repair|readme|license|documentation|manual|support|website|release notes|changelog|configur|settings|command prompt|powershell|windows |administrative)/i;
+  const walk = (d, depth) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of es) { const f = path.join(d, e.name); if (e.isDirectory()) { if (depth < 3) walk(f, depth + 1); } else if (/\.lnk$/i.test(e.name)) {
+    const name = e.name.replace(/\.lnk$/i, ''); if (skip.test(name)) continue; const r = resolveLnk(f); if (!r || /^[a-z]:\\windows\\/i.test(r.target) || skip.test(path.basename(r.target, '.exe'))) continue;
+    const key = (r.target + '|' + r.args).toLowerCase(); if (seen.has(key)) continue; seen.add(key); out.push({ name, target: r.target, args: r.args, emu: EMU_RE.test(r.target) }); } } };
+  roots.forEach(r => walk(r, 0)); out.sort((a, b) => (b.emu - a.emu) || a.name.localeCompare(b.name));
+  return { ok: true, list: out.slice(0, 300) };
+});
 function backdropFade() { try { if (backdrop && !backdrop.isDestroyed()) backdrop.webContents.executeJavaScript("document.body.classList.add('dim')").catch(() => {}); } catch {} }
 
 // ================= helper (controller guide button, controller count, fullscreen) =================
@@ -556,7 +574,7 @@ const remoteDisplay = () => { try { if (win && !win.isDestroyed() && win.isVisib
 setInterval(() => { try { if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) lastDisp = screen.getDisplayMatching(win.getBounds()); } catch {} }, 1500);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const REMOTE_DIR = () => path.join(__dirname, '..', 'renderer', 'remote');
-const rset = () => { const s = store.read('settings', {}); return { quality: (() => { const q = ['instant', 'smooth', 'low', 'balanced', 'high', 'sharp'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth'; return (s.remoteSmart !== false && q === 'smooth' && game && /^emu/.test(game.mode || '')) ? 'high' : q; })(), autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, fps: +s.remoteFps || 0, res: +s.remoteRes || 0, kbps: +s.remoteKbps || 0, audio: s.remoteAudio !== false, pref: ['framerate', 'resolution', 'balanced'].includes(s.remotePref) ? s.remotePref : 'framerate', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
+const rset = () => { const s = store.read('settings', {}); return { audioKbps: +s.remoteAudioKbps || 192, quality: (() => { const q = ['instant', 'smooth', 'low', 'balanced', 'high', 'sharp'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth'; return (s.remoteSmart !== false && q === 'smooth' && game && /^emu/.test(game.mode || '')) ? 'high' : q; })(), autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, fps: +s.remoteFps || 0, res: +s.remoteRes || 0, kbps: +s.remoteKbps || 0, audio: s.remoteAudio !== false, pref: ['framerate', 'resolution', 'balanced'].includes(s.remotePref) ? s.remotePref : 'framerate', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
 const remoteState = () => Object.assign(remote ? remote.state() : { on: false, port: 0, pin: '', ips: [], client: null }, { stats: remoteStats, cfg: rset(), helper: !!(helper && helper.ready), supported: isWin });
 const pushRemote = () => send('remote:state', remoteState());
 const hin = line => { if (helper && helper.ready) helper.send(line); };
@@ -636,7 +654,8 @@ ipcMain.handle('remote:fix', () => { remoteFixFs(); return true; });
 ipcMain.handle('remote:kick', () => { if (remote) remote.endSession('Disconnected from SKBox'); return remoteState(); });
 ipcMain.handle('remote:cfg', (_e, patch) => {
   const s = store.read('settings', {}); patch = patch || {};
-  if (['instant', 'smooth', 'low', 'balanced', 'high'].includes(patch.quality)) s.remoteQuality = patch.quality;
+  if (['instant', 'smooth', 'low', 'balanced', 'high', 'sharp'].includes(patch.quality)) s.remoteQuality = patch.quality;
+  if ([96, 128, 192, 256, 320].includes(+patch.audioKbps)) s.remoteAudioKbps = +patch.audioKbps;
   if (typeof patch.autoFix === 'boolean') s.remoteAutoFix = patch.autoFix;
   if (typeof patch.allowInput === 'boolean') s.remoteInput = patch.allowInput;
   if (['menus', 'keys', 'off'].includes(patch.padMode)) { s.remotePad = patch.padMode; if (mapper) mapper.setMode(patch.padMode); }

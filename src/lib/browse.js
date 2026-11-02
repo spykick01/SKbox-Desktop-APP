@@ -95,10 +95,13 @@ function create(ctx) {
       const dir = path.join(extDir(), id); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true }); unzip(crxToZip(buf), dir);
       const man = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); let name = man.name || id;
       if (/^__MSG_/.test(name)) { try { const loc = (man.default_locale || 'en'); const m = JSON.parse(fs.readFileSync(path.join(dir, '_locales', loc, 'messages.json'), 'utf8')); name = (m[name.slice(6, -2)] || m[name.slice(6, -2).toLowerCase()] || {}).message || id; } catch { name = id; } }
+      const NOPE = { declarativeNetRequest: 'rewriting requests (declarativeNetRequest)', declarativeNetRequestWithHostAccess: 'rewriting requests', declarativeContent: 'page actions (declarativeContent)', nativeMessaging: 'native apps', proxy: 'proxy settings', debugger: 'the debugger', offscreen: 'offscreen pages', sidePanel: 'the side panel', identity: 'Google sign-in (identity)' };
+      const warn = []; (man.permissions || []).concat(man.optional_permissions || []).forEach(p => { if (NOPE[p]) warn.push(NOPE[p]); });
+      if (man.externally_connectable && man.externally_connectable.matches) warn.push('messages sent from websites to the extension (externally_connectable)');
       const ses = session.fromPartition(FULL); try { const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } catch {}
       await extOf(ses).loadExtension(dir, { allowFileAccess: true });
-      const o = ST(); o.ext = (o.ext || []).filter(x => x.id !== id).concat([{ id, name: String(name).slice(0, 60), version: man.version || '', on: true }]); SAVE(o);
-      return { ok: true, name };
+      const o = ST(); o.ext = (o.ext || []).filter(x => x.id !== id).concat([{ id, name: String(name).slice(0, 60), version: man.version || '', on: true, warn: warn.join(', ') }]); SAVE(o);
+      return { ok: true, name, warn: warn.join(', ') };
     } catch (e) { return { ok: false, error: 'Could not install it: ' + String(e.message || e).slice(0, 140) }; }
   }
   async function removeExt(id) { try { const ses = session.fromPartition(FULL); try { const dir = path.join(extDir(), id); const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } catch {} fs.rmSync(path.join(extDir(), id), { recursive: true, force: true }); const o = ST(); o.ext = (o.ext || []).filter(x => x.id !== id); SAVE(o); return { ok: true }; } catch { return { ok: false }; } }
