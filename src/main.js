@@ -303,7 +303,7 @@ async function winCleanup() {
 function restartHelper() { try { helper && helper.stop(); } catch {} helper = null; startHelper(); }
 function statsTouch(id, ms) { if (!id) return; const st = store.read('stats', {}), x = st[id] || (st[id] = { last: 0, ms: 0, n: 0 }); x.last = Date.now(); if (ms) { x.ms += ms; x.best = Math.max(x.best || 0, ms); } else x.n++; store.write('stats', st); }
 function endGame() {
-  if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} try { extras.onGameEnd(game.name, Date.now() - game.startedAt); } catch {} try { const g0 = game, ms0 = Date.now() - game.startedAt; plus.onGameEnd(g0, ms0); plus.post(g0.app); plus.restoreProfile(); plus.after(g0, ms0, g0.app); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
+  if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} try { extras.onGameEnd(game.name, Date.now() - game.startedAt); } catch {} try { const g0 = game, ms0 = Date.now() - game.startedAt; plus.onGameEnd(g0, ms0); plus.post(g0.app); plus.restoreProfile(); plus.after(g0, ms0, g0.app); plus.checkMilestones(); const nx = plus.queuePeek(); if (nx && store.read('settings', {}).queuePrompt !== false && !plus.pending()) setTimeout(() => send('queue:next', nx), 2500); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
   send('game:state', null); comeBack();
 }
 ipcMain.handle('game:state', () => gameState());
@@ -312,6 +312,29 @@ ipcMain.handle('game:resume', () => { if (!game) return false; hideMusic(false);
 ipcMain.handle('game:close', () => closeGameResult());
 // A .lnk shortcut is opened through Windows, which hides the real program from SKBox (no process to follow, Cemu not recognised, no full screen).
 // So read the shortcut and start its target directly, with the shortcut's own arguments and "Start in" folder.
+// Backup for emulator windows: make the window borderless and cover its monitor (1 pixel short, so Windows treats it as a normal window
+// and Remote play can capture it). Used only when the helper did not manage it. Runs a short PowerShell script.
+const PS_FIT = `Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;using System.Runtime.InteropServices;
+public class SKW{[DllImport("user32.dll")]public static extern bool SetProcessDPIAware();
+[DllImport("user32.dll")]public static extern int GetWindowLong(IntPtr h,int i);[DllImport("user32.dll")]public static extern int SetWindowLong(IntPtr h,int i,int v);
+[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int w,int c,uint f);[DllImport("user32.dll")]public static extern bool SetMenu(IntPtr h,IntPtr m);
+[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int c);[DllImport("user32.dll")]public static extern bool SetForegroundWindow(IntPtr h);}
+"@
+[SKW]::SetProcessDPIAware() | Out-Null
+$h = [IntPtr][long]$env:SK_HWND; $b = [System.Windows.Forms.Screen]::FromHandle($h).Bounds
+[SKW]::ShowWindow($h, 9) | Out-Null
+$st = [SKW]::GetWindowLong($h, -16); $st = $st -band (-bnot 0xC40000)
+[SKW]::SetWindowLong($h, -16, $st) | Out-Null; [SKW]::SetMenu($h, [IntPtr]::Zero) | Out-Null
+[SKW]::SetWindowPos($h, [IntPtr]::new(-1), $b.X, $b.Y, $b.Width, $b.Height - 1, 0x0060) | Out-Null
+[SKW]::SetForegroundWindow($h) | Out-Null`;
+function psFit(hwnd, why) {
+  if (!isWin || !hwnd) return; const g = game; if (g) g.emuFit = true;
+  execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', PS_FIT], { windowsHide: true, env: Object.assign({}, process.env, { SK_HWND: String(hwnd) }) }, err => {
+    try { notify('SKBox', err ? 'Could not fit the game window. Try Extras > Emulator window style.' : why + ' If this keeps happening, reinstall SKBox so the helper updates.'); } catch {}
+  });
+}
 function resolveLnk(p) {
   try { if (process.platform === 'win32' && /\.lnk$/i.test(p)) { const l = shell.readShortcutLink(p); if (l && l.target && /\.exe$/i.test(l.target) && fs.existsSync(l.target)) return { target: l.target, args: l.args || '', cwd: l.cwd || '' }; } } catch {}
   return null;
@@ -326,7 +349,7 @@ async function launchApp(a) {
     const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(target);
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
     game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: emuMode(target, a) || (store.read('settings', {}).emuMax === false && gameMode(a.fs) !== 'off' ? 'autox' : gameMode(a.fs)), noWindow: false, exited: false };
-    game.app = a; try { plus.applyProfile(a); } catch {}
+    game.app = a; try { plus.queueRemove(a.id); plus.applyProfile(a); } catch {}
     try { extras.onGameStart(); } catch {}
     statsTouch(a.id, 0);
     if (store.read('settings', {}).closeBrowseOnGame) { try { browse.closeAll(); } catch {} }
@@ -381,9 +404,10 @@ function startHelper() {
   helper.on('pads', n => { padCount = n; send('pads', n); const pl = playersMeta(); if (n >= 2 && !pl[1] && game && !overlayOpen) openOverlay({ p2: true }); });
   helper.on('win', w => {
     if (!game) return; game.hwnd = w.hwnd; game.wpid = w.pid; send('game:state', gameState());
+    if (game.mode === 'emu' && !game.emuTimer) { const g = game; g.emuTimer = setTimeout(() => { if (game === g && !g.emuFit) psFit(g.hwnd, 'The helper did not fit the emulator window, so SKBox did it directly.'); }, 20000); }
     if (isWin && store.read('settings', {}).boost && w.pid > 0 && game.boosted !== w.pid) { game.boosted = w.pid; execFile('powershell', ['-NoProfile', '-Command', '$p = Get-Process -Id ' + (w.pid | 0) + ' -ErrorAction SilentlyContinue; if ($p) { $p.PriorityClass = "High" }'], { windowsHide: true }, () => {}); }
   });
-  helper.on('fs', t => { if (remoteLive && /^(remote|fail|exclusive|restored)/.test(String(t))) toClient({ t: 'notice', text: /^remote window/.test(t) ? 'Game window fitted.' : /^remote offset/.test(t) ? 'Game window fitted (bars pushed off-screen).' : /^fail/.test(t) ? 'Could not fit the game window. Press Fix the picture.' : 'Leaving exclusive fullscreen\u2026' }); backdropFade(); if (game) game.fsOk = /^(already|borderless)/.test(String(t)); send('fs', t); });
+  helper.on('fs', t => { if (remoteLive && /^(remote|fail|exclusive|restored)/.test(String(t))) toClient({ t: 'notice', text: /^remote window/.test(t) ? 'Game window fitted.' : /^remote offset/.test(t) ? 'Game window fitted (bars pushed off-screen).' : /^fail/.test(t) ? 'Could not fit the game window. Press Fix the picture.' : 'Leaving exclusive fullscreen\u2026' }); backdropFade(); if (game) { game.fsOk = /^(already|borderless)/.test(String(t)); if (/^remote (window|offset)/.test(String(t))) game.emuFit = true; else if (/^fail/.test(String(t)) && game.mode === 'emu' && !game.emuFit) psFit(game.hwnd, 'The helper could not fit the emulator window, so SKBox did it directly.'); } send('fs', t); });
   helper.on('gone', () => endGame());
   helper.on('nowin', () => { if (game) { game.noWindow = true; if (game.exited || !game.pid) endGame(); } });
   helper.on('error-line', l => { helperInfo.error = String(l).slice(0, 200); try { fs.appendFileSync(path.join(app.getPath('userData'), 'helper.log'), new Date().toISOString() + ' ' + l + '\n'); } catch {} });
@@ -727,7 +751,7 @@ function setupUpdates() {
 }
 app.on('second-instance', comeBack);
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion');
-app.whenReady().then(() => { try { plus.recover(false); } catch {} setTimeout(() => { try { plus.weeklyReport(); } catch {} }, 25000); });
+app.whenReady().then(() => { try { plus.recover(false); } catch {} setTimeout(() => { try { plus.weeklyReport(); plus.checkMilestones(); } catch {} }, 25000); });
 app.whenReady().then(async () => {
   // Widevine (protected video: Netflix, Disney+, ...) comes with the castLabs Electron build. Wait for it before opening any window that might play video.
   try { const { components } = require('electron'); if (components && components.whenReady) await Promise.race([components.whenReady().catch(() => {}), new Promise(r => setTimeout(r, 30000))]); } catch (e) {}

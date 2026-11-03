@@ -5,6 +5,7 @@
   const BUILTIN = [
     { id: 'skchat', name: 'SKchat', kind: 'web', url: 'https://sksmpchat.netlify.app/chat', art: 'assets/skchat.png', grad: 'linear-gradient(160deg,#0e4a5c,#0b1020)', tag: 'Chat, calls and friends' },
     { id: 'skmusic', name: 'SKMusic', kind: 'music', url: 'https://sksmpchat.netlify.app/skmusic', art: 'assets/skmusic.png', grad: 'linear-gradient(160deg,#6b1fa0,#14081f)', tag: 'Keeps playing while you game' },
+    { id: 'skwatch', name: 'Watch', kind: 'screen', screen: 'watchhub', url: '', grad: 'linear-gradient(160deg,#b0243b,#1a0910)', tag: 'Continue watching, your streaming apps and Watch later' },
     { id: 'skbrowse', name: 'SKBrowse', kind: 'browse', url: '', art: 'assets/skbrowse.png', grad: 'linear-gradient(160deg,#0b6e8f,#081425)', tag: 'Web, shows, ad block and extensions' }
   ];
   const PACKS = [
@@ -33,7 +34,7 @@
   function go(name, data) {
     clearTimers(); S.screen = name; if (window.K.audio) window.K.audio.setSuspended(name === 'web'); S.backFn = null; S.startFn = null; S.bumper = null;
     const root = $('#screen'); root.innerHTML = ''; root.className = 'fade';
-    ({ boot, start, welcome, profiles, home, library, settings, addApp, web }[name])(root, data || {});
+    ({ boot, start, welcome, profiles, home, library, settings, addApp, web, watchhub }[name])(root, data || {});
   }
   window.K.go = go;
 
@@ -195,6 +196,7 @@
   function movePin(a, d) { const p = pinnedIds().slice(), i = p.indexOf(a.id), j = i + d; if (i < 0 || j < 0 || j >= p.length) return false; [p[i], p[j]] = [p[j], p[i]]; S.settings.pinned = p; saveSettings(); return true; }
   const fmtPlay = ms => { const m = Math.round((ms || 0) / 60000); if (m < 1) return 'Not played yet'; if (m < 60) return m + ' min played'; const h = Math.floor(m / 60); return h + ' h ' + (m % 60 ? (m % 60) + ' min ' : '') + 'played'; };
   const fmtAgo = t => { if (!t) return ''; const d = Date.now() - t, m = Math.floor(d / 60000); if (m < 2) return 'just now'; if (m < 60) return m + ' min ago'; const h = Math.floor(m / 60); if (h < 24) return h + ' h ago'; const dd = Math.floor(h / 24); return dd === 1 ? 'yesterday' : dd + ' days ago'; };
+  sk.on('queue:next', q => { if (!q || S.game || ['boot', 'start', 'welcome', 'profiles'].includes(S.screen)) return; const a = allApps().find(x => x.id === q.id); if (!a) return; confirm('Up next: ' + a.name, 'It is first in your Up next list. Start it now?', 'Play', () => openApp(a), false); });
   const refreshWatch = () => { try { sk.extras.do('watchList').then(r => { S.watchMap = {}; ((r && r.list) || []).forEach(w => { S.watchMap[w.id] = w; }); }).catch(() => {}); } catch (_) {} }; refreshWatch(); sk.on('returned', refreshWatch);
   const watchInfo = a => { const w = (S.watchMap || {})[a.id]; return w && w.title ? 'Continue: ' + w.title.slice(0, 42) : ''; };
   const playInfo = a => { const wi = watchInfo(a); if (wi) return wi; const x = (S.stats || {})[a.id]; if (!x || (!x.ms && !x.last)) return a.kind ? '' : 'Not played yet'; return [x.ms ? fmtPlay(x.ms) : '', x.last ? 'last ' + fmtAgo(x.last) : ''].filter(Boolean).join(' \u00B7 '); };
@@ -312,6 +314,22 @@
     const want = els.find(e => e._id === (d.focus || S.lastLibId)) || els[0];
     if (want) ensureFocus(root, want); else ensureFocus(root, addB);
   }
+  // ---------- Watch hub: shows in one place ----------
+  async function watchhub(root, d) {
+    hints([['A', 'Open'], ['Y', 'Options'], ['B', 'Home']]); S.backFn = () => go('home'); S.startFn = () => go('settings');
+    root.innerHTML = '<div class="page lib"><h1>Watch</h1></div>'; const page = root.querySelector('.page'), els = [];
+    const r = (await sk.extras.do('watchList')) || { list: [], later: [] }, info = el('div', 'libinfo'), bapps = S.apps.filter(a => a.kind === 'bapp'), byId = {}; bapps.forEach(a => { byId[a.id] = a; });
+    const bar = el('div', 'libbar'), srch = nav(el('button', 'chip', '<span>\u{1F50D} Search YouTube</span>')), web = nav(el('button', 'chip', '<span>\u{1F310} Open SKBrowse</span>')), add = nav(el('button', 'chip', '<div class="av">+</div><span>Add a streaming app</span>'));
+    srch.onclick = () => osk({ title: 'Search YouTube', value: '', submitLabel: 'Search', onDone: v => { v = (v || '').trim(); if (v) sk.browse.open({ url: 'https://www.youtube.com/results?search_query=' + encodeURIComponent(v) }); } });
+    web.onclick = () => sk.browse.open({ pad: Math.max(0, K.padIndexOf(S.active)) }); add.onclick = () => go('settings', { cat: 'shows' });
+    bar.append(srch, web, add); page.appendChild(bar); els.push(srch, web, add);
+    const section = (title, items, mk) => { if (!items.length) return; page.appendChild(el('h3', '', title)); const g = el('div', 'libgrid'); items.forEach(x => { const t = mk(x); els.push(t); g.appendChild(t); }); page.appendChild(g); };
+    section('Continue watching', r.list.filter(w => byId[w.id]), w => { const a = byId[w.id], t = tileEl(a); t._id = a.id; t.insertAdjacentHTML('beforeend', '<span class="badge pin">\u25B6 ' + esc((w.title || 'Resume').slice(0, 22)) + '</span>'); t._onfocus = () => { info.innerHTML = '<b>' + esc(a.name) + '</b><span>' + esc((w.title || w.url).slice(0, 90) + ' \u00B7 ' + fmtAgo(w.t)) + '</span>'; }; t.onclick = () => openApp(a); t._onopts = () => appMenu(a, 'lib'); return t; });
+    section('Your streaming apps', bapps, a => { const t = tileEl(a); t._id = a.id; t._onfocus = () => { info.innerHTML = '<b>' + esc(a.name) + '</b><span>' + esc(watchInfo(a) || a.url || '') + '</span>'; }; t.onclick = () => openApp(a); t._onopts = () => appMenu(a, 'lib'); return t; });
+    if (r.later.length) { page.appendChild(el('h3', '', 'Watch later')); const g = el('div', 'libbar'); r.later.slice(0, 12).forEach(l => { const c = nav(el('button', 'chip', '<span>' + esc(l.title.slice(0, 38)) + '</span>')); c.onclick = () => sk.browse.open({ url: l.url }); c._onopts = () => confirm('Remove from Watch later?', l.title, 'Remove', async () => { await sk.extras.do('laterRemove', l.url); go('watchhub'); }, true); els.push(c); g.appendChild(c); }); page.appendChild(g); }
+    if (!r.list.length && !r.later.length && !bapps.length) page.appendChild(el('div', 'sub', 'Add a streaming app to get started. Settings > Streaming services adds YouTube, Twitch, Netflix and more in one tap.'));
+    page.appendChild(info); ensureFocus(root, els.find(e => e._id === d.focus) || els[0]);
+  }
   // ---------- per-game profile: settings that apply only while this game runs ----------
   function profileMenu(a, back) {
     const p = a.profile = a.profile || {}, redo = () => { saveApps(); profileMenu(a, back); };
@@ -344,6 +362,7 @@
     inCols.forEach(c => it.push({ label: 'Remove from ' + c, fn: () => { cols[c] = cols[c].filter(x => x !== a.id); S.settings.collections = cols; saveSettings(); back(); } }));
     const hidList = S.settings.hiddenApps || [], isHid = hidList.includes(a.id);
     it.push({ label: isHid ? 'Show in Library again' : 'Hide from Library', fn: () => { S.settings.hiddenApps = isHid ? hidList.filter(x => x !== a.id) : hidList.concat([a.id]); saveSettings(); toast(isHid ? a.name + ' is back in the Library' : a.name + ' is hidden. Library > Show > Hidden apps brings it back'); go(ctx === 'lib' ? 'library' : 'home'); } });
+    if (!a.kind || a.kind === 'bapp' || a.kind === 'web') it.push({ label: 'Add to Up next', fn: async () => { const r = await sk.extras.do('queueAdd', a.id); toast(r && r.ok ? a.name + ' is lined up (' + r.n + ')' : ((r && r.error) || 'Could not add')); back(); } });
     if (!a.kind) it.push({ label: 'Game profile\u2026', fn: () => profileMenu(a, back) });
     if (!a.kind || a.kind === 'bapp') it.push({ label: 'Duplicate', fn: () => { const c = JSON.parse(JSON.stringify(a)); c.id = (a.kind === 'bapp' ? 'bapp_' : 'app_') + Date.now().toString(36); c.name = a.name + ' (copy)'; S.apps.push(c); saveApps(); toast(c.name + ' added'); back(); } });
     if (a.kind === 'bapp') {
@@ -386,6 +405,7 @@
   const activeUser = () => (S.players[S.active] || S.players[0] || { u: 'guest' }).u;
   async function openApp(a) {
     if (a.kind) { sk.stats.touch(a.id); (S.stats = S.stats || {})[a.id] = Object.assign({ ms: 0, n: 0 }, S.stats[a.id], { last: Date.now() }); }
+    if (a.kind === 'screen') { go(a.screen); return; }
     if (a.kind === 'music') { sk.music.open(activeUser()); return; }
     if (a.kind === 'browse') { sk.browse.open({ pad: Math.max(0, K.padIndexOf(S.active)) }); return; }
     if (a.kind === 'bapp') {
@@ -567,6 +587,7 @@
 
   // ---------- settings ----------
   const NEWS = [
+    ['Watch hub, Milestones, Up next', 'A Watch tile in the Library with everything for shows. 23 Milestones to unlock (Settings > Milestones). Up next lines up games and asks what to play when one closes.'],
     ['Playtime dashboard', 'Settings > Play stats now has a chart, your streak, a ranking with bars and a 7, 14 or 30 day view.'],
     ['Continue watching', 'Settings > Continue watching lists every streaming app with the show you were on, plus pages saved with Watch later in SKBrowse. Home and Library show \u201CContinue: title\u201D.'],
     ['Game profiles', 'Press Y on a game > Game profile: its own Remote play quality, brightness, close method, time limit, a program to start before and after it, and an action when you stop playing.'],
@@ -596,7 +617,7 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['shows', '\u{1F37F}', 'Streaming services'], ['browser', '\u{1F310}', 'SKBrowse & browser apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['watching', '\u25B6', 'Continue watching'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['shows', '\u{1F37F}', 'Streaming services'], ['browser', '\u{1F310}', 'SKBrowse & browser apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['watching', '\u25B6', 'Continue watching'], ['queue', '\u23ED', 'Up next'], ['milestones', '\u{1F3C6}', 'Milestones'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
@@ -977,6 +998,25 @@
         box.appendChild(row('Forget everything I was watching', '', '\u2192', () => confirm('Forget where you left off?', 'Saved Watch later pages stay.', 'Forget', async () => { await X('watchClear'); load(); }, true)));
       };
       load();
+    } else if (id === 'milestones') {
+      h('Milestones'); const box = el('div'); pane.appendChild(box);
+      sk.extras.do('milestones').then(r => {
+        if (!box.isConnected || !r || !r.ok) return; box.appendChild(row('Unlocked', 'Earned by playing, watching and setting things up', r.done + ' of ' + r.total, null));
+        r.list.slice().sort((a, b) => (b.done - a.done) || ((b.cur / b.goal) - (a.cur / a.goal))).forEach(m => { const rw = row((m.done ? '\u{1F3C6} ' : '\u{1F512} ') + m.name, m.desc + (m.done && m.t ? ' \u00B7 ' + fmtAgo(m.t) : ''), m.done ? 'Unlocked' : m.cur + ' / ' + m.goal, null); if (!m.done) { const gb = el('div', 'gbar'); gb.innerHTML = '<i style="width:' + Math.round(m.cur / m.goal * 100) + '%"></i>'; rw.firstChild.appendChild(gb); } box.appendChild(rw); });
+        box.appendChild(el('div', 'sub', 'A notification pops up when you unlock one.'));
+      });
+    } else if (id === 'queue') {
+      h('Up next'); sub('Line up games and shows. When a game closes, SKBox asks if you want to start the next one. Add things with Y > Add to Up next.');
+      const box = el('div'); pane.appendChild(box);
+      const load = async () => {
+        const r = await sk.extras.do('queue'); if (!box.isConnected) return; box.innerHTML = '';
+        if (!r.list.length) box.appendChild(el('div', 'sub', 'Nothing lined up yet.'));
+        r.list.forEach((q, i) => { const a = allApps().find(x => x.id === q.id); const rw = row((i + 1) + '. ' + q.name, i === 0 ? 'Starts next. X moves it down, Y moves it up.' : '', 'Remove', async () => { await sk.extras.do('queueRemove', q.id); load(); }); rw._onopts = async () => { await sk.extras.do('queueMove', { id: q.id, dir: -1 }); load(); }; rw._onalt = async () => { await sk.extras.do('queueMove', { id: q.id, dir: 1 }); load(); }; box.appendChild(rw); });
+        if (r.list.length) { box.appendChild(row('Start the first one now', '', '\u2192', () => { const a = allApps().find(x => x.id === r.list[0].id); if (a) openApp(a); })); box.appendChild(row('Clear the list', '', '\u2192', async () => { await sk.extras.do('queueClear'); load(); })); }
+      };
+      load();
+      pane.appendChild(toggle('Ask me when a game closes', 'Shows \u201CUp next\u201D after a game ends', S.settings.queuePrompt !== false, v => { S.settings.queuePrompt = v; saveSettings(); }));
+      pane.appendChild(row('Add from the Library', '', '\u2192', () => go('library')));
     } else if (id === 'sysinfo') {
       h('System info'); sub('A look at this PC while you play. Updates every few seconds.');
       const X = (n, a) => sk.extras.do(n, a), box = el('div'); pane.appendChild(box); const gb = n => (n / 1073741824).toFixed(1) + ' GB';

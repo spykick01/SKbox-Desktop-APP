@@ -10,19 +10,20 @@ function analyse(man) {
   const ec = man.externally_connectable && Array.isArray(man.externally_connectable.matches) && man.externally_connectable.matches.length ? man.externally_connectable.matches : null;
   const dnr = has('declarativeNetRequest') || has('declarativeNetRequestWithHostAccess') || has('declarativeNetRequestFeedback');
   const wr = has('webRequest') || has('webRequestBlocking') || has('webRequestAuthProvider');
-  const dc = has('declarativeContent');
-  return { ec, dnr, wr, wrBlock: has('webRequestBlocking'), dc };
+  const dc = has('declarativeContent'), ck = has('cookies');
+  return { ec, dnr, wr, wrBlock: has('webRequestBlocking'), dc, ck };
 }
 
-function patch(dir, man) {
+function patch(dir, man, bridge) {
   const a = analyse(man), res = { patched: false, needs: [], unsupported: [] };
-  if (a.ec) res.needs.push('website messages'); if (a.dnr) res.needs.push('request rewriting'); if (a.wr) res.needs.push('webRequest'); if (a.dc) res.needs.push('declarativeContent');
+  if (a.ec) res.needs.push('website messages'); if (a.dnr) res.needs.push('request rewriting'); if (a.wr) res.needs.push('webRequest'); if (a.dc) res.needs.push('declarativeContent'); if (a.ck) res.needs.push('cookies');
   if (a.wrBlock) res.unsupported.push('blocking webRequest listeners (only declarativeNetRequest rules can change requests)');
   if (!res.needs.length) return res;
   const bg = man.background || {}; let inject = false;
   try {
-    if (man.sk_patched) { res.patched = true; return res; }
-    fs.writeFileSync(path.join(dir, 'sk-shim-bg.js'), SH('bg.js'));
+    const shimSrc = SH('bg.js').replace('__SK_PORT__', bridge && a.ck ? String(bridge.port | 0) : '0').replace('__SK_TOKEN__', bridge && a.ck ? bridge.token : '');
+    if (man.sk_patched) { try { fs.writeFileSync(path.join(dir, 'sk-shim-bg.js'), shimSrc); } catch {} res.patched = true; return res; }   // refresh the port and token on every start
+    fs.writeFileSync(path.join(dir, 'sk-shim-bg.js'), shimSrc);
     if (man.manifest_version === 3 && bg.service_worker) {
       const mod = bg.type === 'module', orig = bg.service_worker.replace(/^\/+/, '');
       fs.writeFileSync(path.join(dir, 'sk-sw.js'), mod ? "import './sk-shim-bg.js';\nimport './" + orig + "';\n" : "importScripts('sk-shim-bg.js', '" + orig.replace(/'/g, "\\'") + "');\n");

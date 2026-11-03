@@ -37,7 +37,7 @@ function crxToZip(b) {
   const v = b.readUInt32LE(4); if (v === 2) return b.subarray(16 + b.readUInt32LE(8) + b.readUInt32LE(12)); if (v === 3) return b.subarray(12 + b.readUInt32LE(8)); throw new Error('Unknown extension format');
 }
 
-const DNR = require('./dnr'), COMPAT = require('./extcompat');
+const DNR = require('./dnr'), COMPAT = require('./extcompat'), BRIDGE = require('./extbridge');
 function create(ctx) {
   const dnr = DNR.create();
   const ST = () => ctx.store.read('browse', {}), SAVE = o => ctx.store.write('browse', o);
@@ -90,12 +90,13 @@ function create(ctx) {
   const extOf = ses => ses.extensions || ses;
   async function loadAllExt() {
     const ses = session.fromPartition(FULL), list = ST().ext || [];
-    for (const x of list) if (x.on !== false) { try { prepExt(x.id); await extOf(ses).loadExtension(path.join(extDir(), x.id), { allowFileAccess: true }); } catch (e) { x.err = String(e.message || e).slice(0, 120); } }
+    for (const x of list) if (x.on !== false) { try { await prepExt(x.id); await extOf(ses).loadExtension(path.join(extDir(), x.id), { allowFileAccess: true }); } catch (e) { x.err = String(e.message || e).slice(0, 120); } }
   }
   // patch (idempotent) and register the request rules of an unpacked extension, before it is loaded
-  function prepExt(id) {
+  let bridgeP = null; const getBridge = () => bridgeP || (bridgeP = BRIDGE.start(() => session.fromPartition(FULL)).catch(() => null));
+  async function prepExt(id) {
     const dir = path.join(extDir(), id); let man; try { man = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); } catch { return null; }
-    const r = COMPAT.patch(dir, man); try { if (COMPAT.analyse(man).dnr) dnr.loadStatic(id, dir, man); } catch {} return { man, compat: r };
+    const r = COMPAT.patch(dir, man, COMPAT.analyse(man).ck ? await getBridge() : null); try { if (COMPAT.analyse(man).dnr) dnr.loadStatic(id, dir, man); } catch {} return { man, compat: r };
   }
   const extId = s => { const m = /[a-p]{32}/.exec(String(s || '')); return m ? m[0] : ''; };
   async function installExt(input) {
@@ -107,7 +108,7 @@ function create(ctx) {
       const dir = path.join(extDir(), id); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true }); unzip(crxToZip(buf), dir);
       const man = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')); let name = man.name || id;
       if (/^__MSG_/.test(name)) { try { const loc = (man.default_locale || 'en'); const m = JSON.parse(fs.readFileSync(path.join(dir, '_locales', loc, 'messages.json'), 'utf8')); name = (m[name.slice(6, -2)] || m[name.slice(6, -2).toLowerCase()] || {}).message || id; } catch { name = id; } }
-      const prep = prepExt(id); const cp = prep ? prep.compat : { patched: false, needs: [], unsupported: [] };
+      const prep = await prepExt(id); const cp = prep ? prep.compat : { patched: false, needs: [], unsupported: [] };
       const NOPE = { declarativeContent: 'page actions (declarativeContent)', nativeMessaging: 'native apps', proxy: 'proxy settings', debugger: 'the debugger', offscreen: 'offscreen pages', sidePanel: 'the side panel', identity: 'Google sign-in (identity)' };
       const warn = []; (man.permissions || []).concat(man.optional_permissions || []).forEach(p => { if (NOPE[p] && !(p === 'declarativeContent' && cp.patched)) warn.push(NOPE[p]); });
       cp.unsupported.forEach(u => warn.push(u));
@@ -119,7 +120,7 @@ function create(ctx) {
     } catch (e) { return { ok: false, error: 'Could not install it: ' + String(e.message || e).slice(0, 140) }; }
   }
   async function removeExt(id) { try { dnr.remove(id); const ses = session.fromPartition(FULL); try { const dir = path.join(extDir(), id); const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } catch {} fs.rmSync(path.join(extDir(), id), { recursive: true, force: true }); const o = ST(); o.ext = (o.ext || []).filter(x => x.id !== id); SAVE(o); return { ok: true }; } catch { return { ok: false }; } }
-  async function toggleExt(id) { const o = ST(), x = (o.ext || []).find(y => y.id === id); if (!x) return { ok: false }; x.on = x.on === false; SAVE(o); const ses = session.fromPartition(FULL); try { if (x.on) { prepExt(id); } else dnr.remove(id); if (x.on) await extOf(ses).loadExtension(path.join(extDir(), id), { allowFileAccess: true }); else { const dir = path.join(extDir(), id); const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } } catch {} return { ok: true, on: x.on }; }
+  async function toggleExt(id) { const o = ST(), x = (o.ext || []).find(y => y.id === id); if (!x) return { ok: false }; x.on = x.on === false; SAVE(o); const ses = session.fromPartition(FULL); try { if (x.on) { await prepExt(id); } else dnr.remove(id); if (x.on) await extOf(ses).loadExtension(path.join(extDir(), id), { allowFileAccess: true }); else { const dir = path.join(extDir(), id); const old = (extOf(ses).getAllExtensions ? extOf(ses).getAllExtensions() : []).find(e => e.path === dir); if (old) await extOf(ses).removeExtension(old.id); } } catch {} return { ok: true, on: x.on }; }
   async function updateList() {
     try { const r = await net.fetch('https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext'); if (!r.ok) return { ok: false, error: 'Could not download the list.' }; const t = await r.text(); fs.writeFileSync(path.join(app.getPath('userData'), 'adlist.txt'), t); const before = adHosts.size; loadList(); const o = ST(); o.listAt = Date.now(); SAVE(o); return { ok: true, n: adHosts.size, added: adHosts.size - before }; }
     catch { return { ok: false, error: 'No internet connection.' }; }

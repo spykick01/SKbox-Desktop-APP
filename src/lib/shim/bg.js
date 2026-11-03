@@ -45,6 +45,15 @@
       post();
     }
   } catch (e) {}
+  // 2b) chrome.cookies, served by SKBrowse over a private local connection (port and token are filled in when the extension is prepared)
+  try {
+    var B = { port: __SK_PORT__, token: '__SK_TOKEN__' };
+    if (!c.cookies && B.port) {
+      var call = function (op, a) { return fetch('http://127.0.0.1:' + B.port + '/c/' + B.token + '/' + op, { method: 'POST', body: JSON.stringify(a || {}) }).then(function (r) { return r.json(); }).then(function (r) { if (r.err) throw new Error(r.err); return r.v; }); };
+      var wr = function (p, cb) { if (typeof cb !== 'function') return p; p.then(function (v) { cb(v); }, function (e) { try { rt.lastError = { message: String(e.message || e) }; cb(undefined); } finally { rt.lastError = undefined; } }); };
+      c.cookies = { get: function (d, cb) { return wr(call('get', d), cb); }, getAll: function (d, cb) { return wr(call('getAll', d), cb); }, set: function (d, cb) { return wr(call('set', d), cb); }, remove: function (d, cb) { return wr(call('remove', d), cb); }, getAllCookieStores: function (cb) { return wr(call('stores'), cb); }, onChanged: ev(), SameSiteStatus: { NO_RESTRICTION: 'no_restriction', LAX: 'lax', STRICT: 'strict', UNSPECIFIED: 'unspecified' } };
+    }
+  } catch (e) {}
   // 3) quiet stubs so code that touches these APIs does not crash
   try {
     if (!c.webRequest) { var w = {}; ['onBeforeRequest', 'onBeforeSendHeaders', 'onSendHeaders', 'onHeadersReceived', 'onAuthRequired', 'onResponseStarted', 'onBeforeRedirect', 'onCompleted', 'onErrorOccurred'].forEach(function (n) { w[n] = ev(); }); w.handlerBehaviorChanged = function (cb) { return rv(cb); }; w.MAX_HANDLER_BEHAVIOR_CHANGED_CALLS_PER_10_MINUTES = 20; c.webRequest = w; }

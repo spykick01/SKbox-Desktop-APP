@@ -111,6 +111,49 @@ function create(ctx) {
     if (level >= 2) lowSeen[slot] = false; return false;
   }
 
+
+  // ---------- milestones ----------
+  const MS = [
+    ['first', 'First launch', 'Start your first game', 'launches', 1], ['l10', 'Getting started', '10 launches', 'launches', 10], ['l50', 'Regular', '50 launches', 'launches', 50], ['l250', 'Always on', '250 launches', 'launches', 250],
+    ['h1', 'Warmed up', 'Play for 1 hour in total', 'hours', 1], ['h10', 'Dedicated', '10 hours in total', 'hours', 10], ['h50', 'Veteran', '50 hours in total', 'hours', 50], ['h100', 'Centurion', '100 hours in total', 'hours', 100], ['h250', 'Legend', '250 hours in total', 'hours', 250],
+    ['s3', 'On a roll', 'Play 3 days in a row', 'bestStreak', 3], ['s7', 'Full week', 'Play 7 days in a row', 'bestStreak', 7], ['s14', 'Two weeks', 'Play 14 days in a row', 'bestStreak', 14], ['s30', 'Unstoppable', 'Play 30 days in a row', 'bestStreak', 30],
+    ['v5', 'Explorer', 'Play 5 different apps', 'played', 5], ['v10', 'Collector\u2019s taste', 'Play 10 different apps', 'played', 10],
+    ['m4', 'Marathon', 'Play 4 hours in one day', 'bestDayH', 4], ['m8', 'Ultra marathon', 'Play 8 hours in one day', 'bestDayH', 8],
+    ['c10', 'Shelf started', 'Add 10 apps', 'apps', 10], ['c25', 'Full shelf', 'Add 25 apps', 'apps', 25],
+    ['w3', 'Channel surfer', 'Watch something in 3 streaming apps', 'watchApps', 3], ['wl5', 'Plenty to watch', 'Save 5 pages with Watch later', 'later', 5],
+    ['p3', 'Tuner', 'Set up game profiles for 3 games', 'profiles', 3], ['q3', 'Planner', 'Line up 3 games in Up next', 'queueMax', 3]
+  ];
+  function metrics() {
+    const st = ctx.store.read('stats', {}), log = ctx.store.read('gamedays', {}), ap = apps(), ms = ctx.store.read('milestones', {}), r = report(7);
+    const byDay = {}; Object.values(log).forEach(g => Object.keys(g).forEach(k => { byDay[k] = (byDay[k] || 0) + g[k]; }));
+    const stats = Object.values(st);
+    return { launches: stats.reduce((n, x) => n + (x.n || 0), 0), hours: Math.floor(stats.reduce((n, x) => n + (x.ms || 0), 0) / 3600000), played: stats.filter(x => (x.n || 0) > 0).length,
+      bestStreak: Math.max(r.streak, ms.bestStreak || 0), bestDayH: Math.floor(Math.max(0, ...Object.values(byDay)) / 3600000), apps: ap.filter(a => !a.kind).length,
+      watchApps: Object.keys(ctx.store.read('watch', {})).length, later: ctx.store.read('later', []).length, profiles: ap.filter(a => a.profile && Object.keys(a.profile).length).length, queueMax: Math.max(ms.queueMax || 0, ctx.store.read('queue', []).length) };
+  }
+  function milestones() {
+    const m = metrics(), st = ctx.store.read('milestones', {}), done = st.done || {};
+    const list = MS.map(([id, name, desc, key, goal]) => ({ id, name, desc, goal, cur: Math.min(m[key] || 0, goal), done: (m[key] || 0) >= goal || !!done[id], t: done[id] || 0 }));
+    return { ok: true, list, done: list.filter(x => x.done).length, total: list.length, bestStreak: m.bestStreak };
+  }
+  function checkMilestones() {   // unlock what is newly reached, remember it forever, tell the person
+    const m = metrics(), st = ctx.store.read('milestones', {}); st.done = st.done || {}; st.bestStreak = m.bestStreak; st.queueMax = m.queueMax; const fresh = [];
+    MS.forEach(([id, name, desc, key, goal]) => { if (!st.done[id] && (m[key] || 0) >= goal) { st.done[id] = now(); fresh.push({ id, name, desc }); } });
+    ctx.store.write('milestones', st);
+    // the very first run only records what you already earned, so you are not buried in notifications
+    const first = !st.seen; if (first) { st.seen = true; ctx.store.write('milestones', st); return []; }
+    fresh.slice(0, 3).forEach(f => ctx.notify('Milestone unlocked: ' + f.name, f.desc)); if (fresh.length > 3) ctx.notify('And ' + (fresh.length - 3) + ' more milestones', 'See Settings > Milestones.');
+    return fresh;
+  }
+
+  // ---------- Up next queue ----------
+  const qIds = () => ctx.store.read('queue', []);
+  function queueList() { const ap = apps(), out = []; qIds().forEach(id => { const a = ap.find(x => x.id === id); if (a) out.push({ id: a.id, name: a.name, cover: a.cover || '', kind: a.kind || '' }); }); return out; }
+  function queueAdd(id) { id = String(id || ''); if (!apps().some(a => a.id === id)) return { ok: false, error: 'That app is not in your Library.' }; const q = qIds().filter(x => x !== id); if (q.length >= 20) return { ok: false, error: 'Up next is full (20).' }; q.push(id); ctx.store.write('queue', q); return { ok: true, n: q.length }; }
+  function queueRemove(id) { ctx.store.write('queue', qIds().filter(x => x !== String(id))); return { ok: true }; }
+  function queueMove(id, dir) { const q = qIds(), i = q.indexOf(String(id)); const j = i + (dir < 0 ? -1 : 1); if (i < 0 || j < 0 || j >= q.length) return { ok: true }; [q[i], q[j]] = [q[j], q[i]]; ctx.store.write('queue', q); return { ok: true }; }
+  const queuePeek = () => queueList()[0] || null;
+
   // ---------- system info ----------
   let lastCpu = null;
   function cpuLoad() {
@@ -138,6 +181,13 @@ function create(ctx) {
         case 'watchClear': return watchClear(arg ? String(arg) : '');
         case 'laterAdd': return laterAdd(arg && arg.url, arg && arg.title);
         case 'laterRemove': return laterRemove(String(arg || ''));
+        case 'milestones': return milestones();
+        case 'milestoneCheck': return { ok: true, fresh: checkMilestones() };
+        case 'queue': return { ok: true, list: queueList() };
+        case 'queueAdd': return queueAdd(arg);
+        case 'queueRemove': return queueRemove(arg);
+        case 'queueMove': return queueMove(arg && arg.id, arg && arg.dir);
+        case 'queueClear': ctx.store.write('queue', []); return { ok: true };
         case 'sysinfo': return await sysinfo();
         case 'sysCopy': { const t = sysText(await sysinfo()); if (ctx.copy) ctx.copy(t); return { ok: true, text: t }; }
         case 'cancelAfter': return { ok: cancelAfter() , error: 'Nothing is waiting to happen.' };
@@ -146,6 +196,6 @@ function create(ctx) {
     } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 160) }; }
     return null;
   }
-  return { applyProfile, restoreProfile, recover, onGameEnd, report, resetGame, resetAll, weeklyReport, watchNote, watchList, watchClear, laterAdd, laterList, laterRemove, pre, post, after, cancelAfter, pending, battery, sysinfo, sysText, summaryText, run, profileValues, QUALITY, PROFILE_KEYS };
+  return { applyProfile, restoreProfile, recover, onGameEnd, report, resetGame, resetAll, weeklyReport, watchNote, watchList, watchClear, laterAdd, laterList, laterRemove, pre, post, after, cancelAfter, pending, battery, milestones, checkMilestones, queueList, queueAdd, queueRemove, queueMove, queuePeek, sysinfo, sysText, summaryText, run, profileValues, QUALITY, PROFILE_KEYS };
 }
 module.exports = { create, dayKey, QUALITY };
