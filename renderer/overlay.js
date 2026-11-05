@@ -14,8 +14,12 @@
   const OPAQUE = /[?&]opaque=1/.test(location.search); if (OPAQUE) document.body.classList.add('opaque');
   sk.on('padin', (slot, a) => K.padIn(slot, a));
   K.startPads();   // the menu window also reads the controller itself (the old build never started this, so only the mouse worked)
-  sk.on('overlay:open', s => open(s));
-  sk.on('overlay:close', () => reset());
+  // close the menu by itself after a while with no input (Extras > Close the SK menu when idle)
+  let idleT = 0; const armIdle = () => { clearTimeout(idleT); const n = +(S.settings && S.settings.overlayIdle) || 0; if (n > 0) idleT = setTimeout(() => { try { sk.overlay.close(); } catch (_) {} }, n * 1000); };
+  ['keydown', 'mousemove', 'mousedown', 'wheel'].forEach(ev => document.addEventListener(ev, armIdle, true));
+  sk.on('padin', () => armIdle());
+  sk.on('overlay:open', s => { open(s); armIdle(); });
+  sk.on('overlay:close', () => { clearTimeout(idleT); reset(); });
   sk.on('pads', n => { if (st) st.pads = n; });
 
   function reset() { clearTimers(); mode = 'menu'; S.screen = 'overlay'; const r = $('#screen'); r.innerHTML = ''; $('#layers').innerHTML = ''; S.osk = false; }
@@ -48,7 +52,6 @@
       ['music', '\u266A', 'Music', () => music(), 'Control SKMusic: skip, pause, volume and quick radios.'],
       ['quick', '\u{1F3AE}', 'Quick play', () => quick(), 'Switch to another game or app.'],
       ['windows', '\u{1FA9F}', 'Windows', () => windows(), 'Switch to, fit, hide or close any open window without leaving SKBox.'],
-      ['browse', '\u{1F310}', 'SKBrowse', () => sk.browse.open({ pad: 0 }).then(() => sk.overlay.close(false)), 'Open the web browser.'],
       ['players', '\u{1F465}', 'Players & controllers', () => players(false), 'See who is playing and set up Player 2.'],
       ...(st.remote && st.remote.on ? [['remote', '\u{1F4E1}', 'Remote play', () => remotePanel(), st.remote.client ? st.remote.client.name + ' is playing. Disconnect, fix the picture or change quality.' : 'Remote play is on. Nobody is connected.']] : []),
       ['vol', '\u{1F50A}', 'Volume', () => sk.sys.volume('mute'), 'Left and right change the volume. Press A to mute.'],
@@ -170,7 +173,7 @@
     const grid = el('div', 'qgrid');
     const stt = st.stats || {}; S.apps.slice().sort((x, y) => ((stt[y.id] || {}).last || 0) - ((stt[x.id] || {}).last || 0)).forEach((a, i) => {
       const t = nav(el('button', 'qt', '<small>' + esc(a.name) + '</small>')); if (a.cover) t.style.backgroundImage = 'url("' + fileUrl(a.cover) + '")'; if (i === 0) t.dataset.first = '';
-      t.onclick = () => { const go = async () => { const r = a.kind === 'bapp' ? await sk.browse.launchApp({ id: a.id, name: a.name, url: a.url, adblock: a.adblock !== false, auth: a.auth !== false, engine: a.engine || 'built', cover: a.cover, resume: a.resume !== false, ownProfile: !!a.ownProfile, muted: !!a.muted, barHidden: !!a.barHidden, windowed: !!a.windowed, dark: !!a.dark, zoom: a.zoom || 0, pad: 0 }) : await sk.launch({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: true }); if (!r.ok) toast(r.error || 'Could not start that.'); else sk.overlay.close(false); }; if (st.game) confirm('Switch games?', 'This closes ' + st.game.name + ' and starts ' + a.name + '.', 'Switch', go); else go(); };
+      t.onclick = () => { const go = async () => { const r = await sk.launch({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: true }); if (!r.ok) toast(r.error || 'Could not start that.'); else sk.overlay.close(false); }; if (st.game) confirm('Switch games?', 'This closes ' + st.game.name + ' and starts ' + a.name + '.', 'Switch', go); else go(); };
       grid.appendChild(t);
     });
     panel.appendChild(grid); ensureFocus(panel.parentNode.querySelector('.ovpanel'), grid.firstChild);

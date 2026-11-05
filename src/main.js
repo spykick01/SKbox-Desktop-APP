@@ -109,7 +109,7 @@ function autologin(wc, u) { const x = readProfiles().find(y => y.meta.u === u); 
 // ================= apps / covers =================
 ipcMain.handle('dialog:file', async (_e, kind) => {
   const filters = kind === 'image' ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] : [{ name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'lnk'] }, { name: 'All files', extensions: ['*'] }];
-  const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
+  const r = kind === 'folder' ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] }) : await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
   return r.canceled ? null : r.filePaths[0];
 });
 const newCover = ext => path.join(COVER_DIR(), crypto.randomBytes(6).toString('hex') + (ext || '.jpg'));
@@ -124,7 +124,7 @@ ipcMain.handle('cover:icon', async (_e, exe) => { try { if (!/^[a-z]:|^\\/i.test
 ipcMain.handle('cover:remove', (_e, f) => { try { if (f && path.dirname(f) === COVER_DIR()) fs.unlinkSync(f); } catch {} return true; });
 
 // ================= running a game =================
-function notify(title, body, force) { try { if (!force && store.read('settings', {}).notifications === false) return; new Notification({ title, body, silent: !!store.read('settings', {}).notifSilent }).show(); } catch {} }
+function notify(title, body, force) { try { try { plus.logNotif(title, body); } catch {} if (!force && (store.read('settings', {}).notifications === false || plus.quiet())) return; new Notification({ title, body, silent: !!store.read('settings', {}).notifSilent }).show(); } catch {} }
 let lastRemoteInput = Date.now(), remoteSince = Date.now(), lastLvl = 0, swTicks = 0, swTold = false;
 const fitArgs = () => { const s = store.read('settings', {}); return { fit: ['auto', 'stretch', 'aspect'].includes(s.remoteFit) ? s.remoteFit : 'auto', taskbar: s.remoteTaskbar !== false }; };
 const display = require('./lib/display').create({ store, isWin, notify });
@@ -140,45 +140,25 @@ const extras = require('./lib/extras').create({
   diag: () => ['Helper lines: ' + (helperInfo.diag || []).join(' | '), 'Helper error: ' + (helperInfo.error || 'none')].join('\n')
 });
 const plus = require('./lib/plus').create({
-  store, notify, lockPc: () => { if (isWin) execFile('rundll32.exe', ['user32.dll,LockWorkStation'], () => {}); },
+  store, notify, backupDir: path.join(app.getPath('userData'), 'save-backups'), desktop: app.getPath('desktop'), launch: a => launchApp(a), busy: () => !!game, running: id => !!(game && game.id === id), remote: on => setRemote(on), lockPc: () => { if (isWin) execFile('rundll32.exe', ['user32.dll,LockWorkStation'], () => {}); },
   power: w => { const p = POWER[w]; if (p && isWin) execFile(p[0], p[1], { windowsHide: true }, () => {}); },
   runDetached: cmd => { try { const t = splitArgs(cmd); if (!t.length) return; if (/\.lnk$/i.test(t[0])) { shell.openPath(t[0]); return; } const c = spawn(t[0], t.slice(1), { cwd: path.dirname(t[0]), detached: true, stdio: 'ignore', windowsHide: true }); c.on('error', () => {}); c.unref(); } catch {} },
-  copy: t => { try { require('electron').clipboard.writeText(t); } catch {} }, metrics: () => app.getAppMetrics(),
+  copy: t => { try { require('electron').clipboard.writeText(t); } catch {} }, show: p => { try { shell.showItemInFolder(p); } catch {} }, metrics: () => app.getAppMetrics(),
   gpu: async () => { const i = await app.getGPUInfo('complete'); return (i && i.auxAttributes && (i.auxAttributes.glRenderer || '')) || ''; }
 });
-ipcMain.handle('extras:do', async (_e, n, a) => { const r = await plus.run(String(n || ''), a); return r !== null ? r : extras.run(String(n || ''), a); });
-// SKBrowse: built-in browser + browser apps (src/lib/browse.js)
-const browse = require('./lib/browse').create({ store, notify, watch: (id, u, t) => { try { plus.watchNote(id, u, t); } catch {} }, later: (u, t) => plus.laterAdd(u, t), focusNative: w => { try { if (helper) helper.focus(nativeHwnd(w)); } catch {} }, lock: () => lockUI(), edge: () => EDGE(), openEdge: u => openInEdge(u), isDrm: u => browseDrm(u), appsChanged: () => send('apps:changed'), display: displayNow, comeBack: () => comeBack(), afterClose: () => { if (!game && !overlayOpen) comeBack(); }, openOsk: v => openOverlay({ osk: { value: v || '', target: 'browse' } }) });
-app.whenReady().then(() => { try { browse.loadAllExt(); } catch {} setTimeout(() => { try { browse.autoList(); } catch {} }, 20000); });
-const browseDrm = u => { try { return require('./lib/browse').DRM_HOSTS.some(d => { const h = new URL(u).hostname; return h === d || h.endsWith('.' + d); }); } catch { return false; } };
-const EDGE = () => ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'].find(f => { try { return fs.existsSync(f); } catch { return false; } }) || '';
-ipcMain.handle('browse:engines', () => ({ edge: EDGE(), stats: browse.stats(), ext: browse.extList() }));
-ipcMain.handle('browse:drmStatus', () => { try { const { components } = require('electron'); if (!components) return { ok: false, why: 'This build of SKBox does not include Widevine. Install the latest SKBox release.' }; const st = components.status(); const ids = Object.keys(st || {}); const w = ids.map(k => st[k]).find(x => /widevine/i.test(x.name || '')); return { ok: !!w && /up-to-date|installed/i.test(String(w.status)), status: w ? w.status : 'checking', version: w && w.version }; } catch (e) { return { ok: false, why: String(e.message || e) }; } });
-ipcMain.handle('browse:installExt', (_e, id) => browse.installExt(String(id || '')));
-ipcMain.handle('browse:drm', (_e, u) => browse.isDrm(String(u || '')));
-ipcMain.handle('browse:list', () => browse.updateList());
-ipcMain.handle('browse:launchApp', async (_e, a) => {
-  if (!a || !a.url) return { ok: false, error: 'No site set for this app.' };
-  const useEdge = a.engine === 'edge' && EDGE();
-  if (!useEdge) { if (game) { return { ok: false, error: game.name + ' is running. Close it first.' }; } closeOverlay(false); stepAside(); return browse.open({ app: { id: a.id, name: a.name, url: a.url, adblock: a.adblock !== false, auth: a.auth !== false, resume: a.resume !== false, muted: !!a.muted, barHidden: !!a.barHidden, windowed: !!a.windowed, dark: !!a.dark, zoom: +a.zoom || 0 }, pad: a.pad | 0 }); }
-  const prof = path.join(app.getPath('userData'), 'edge-' + String(a.id).replace(/[^\w-]/g, ''));
-  return launchApp({ id: a.id, name: a.name, exe: useEdge, args: '--app="' + a.url + '" --start-fullscreen ' + (a.ownProfile ? '' : '--user-data-dir="' + prof + '" ') + '--no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required', cover: a.cover, fs: 'off' });
+const roms = require('./lib/roms').create({
+  store, emuDir: path.join(app.getPath('userData'), 'emulators'), progress: (id, p) => send('roms:progress', { id, p }),
+  extract: (zip, dir) => new Promise((res, rej) => { if (!isWin) return rej(new Error('Windows only.')); const q = x => String(x).replace(/'/g, "''"); execFile('powershell', ['-NoProfile', '-Command', "Expand-Archive -LiteralPath '" + q(zip) + "' -DestinationPath '" + q(dir) + "' -Force"], { windowsHide: true }, e => (e ? rej(e) : res())); })
 });
-// The main SKBox window must not react to the controller while the SK menu or SKBrowse is in front.
-function lockUI() { try { const on = overlayOpen || Array.from(browse.wins).some(w => { try { return w.isVisible() && !w.isMinimized(); } catch { return false; } }); if (win && !win.isDestroyed()) win.webContents.send('input-lock', !!on); browse.setPaused(overlayOpen); if (helper && helper.ready) helper.padIn(padTest || overlayOpen || browse.anyVisible()); } catch {} }
-function openInEdge(u) {
-  const e = EDGE(); if (!e) return false; let h = 'site'; try { h = new URL(u).hostname.replace(/^www\./, ''); } catch {}
-  const prof = path.join(app.getPath('userData'), 'edge-' + h.replace(/[^\w-]/g, ''));
-  try { for (const w of Array.from(browse.wins)) { if (!w._appId) w.hide(); } } catch {}
-  launchApp({ id: 'edge_' + h, name: h, exe: e, args: '--app="' + u + '" --start-fullscreen --user-data-dir="' + prof + '" --no-first-run --no-default-browser-check --autoplay-policy=no-user-gesture-required', cover: '', fs: 'off' }); return true;
-}
-let lastBrowseOpen = 0;
-ipcMain.handle('browse:openSK', async (_e, o) => {
-  if (Date.now() - lastBrowseOpen < 1200) return { ok: true }; lastBrowseOpen = Date.now();
-  closeOverlay(false); const r = browse.open(Object.assign({}, o || {}));
-  setTimeout(() => { try { if (Array.from(browse.wins).some(w => w.isVisible())) stepAside(); else if (win && !win.isDestroyed()) comeBack(); } catch {} }, 500);
-  return r;
-});
+const gameinfo = require('./lib/gameinfo').create({ store, progress: (f, t) => send('info:progress', { found: f, total: t }) });
+// SKServers (Minecraft server hosting) and the App Store.
+const servers = require('./lib/servers').create({ store, dir: app.getPath('userData'), send, openPath: p => shell.openPath(p), copy: t => { try { require('electron').clipboard.writeText(t); } catch {} } });
+const appstore = require('./lib/appstore').create({ store, progress: p => send('store:progress', p), openExternal: u => shell.openExternal(u) });
+let serversQuitting = false;
+app.on('before-quit', e => { if (serversQuitting || !servers.anyRunning()) return; e.preventDefault(); serversQuitting = true; servers.stopAll(20000).finally(() => app.quit()); });   // let the servers save their worlds first
+ipcMain.handle('extras:do', async (_e, n, a) => { n = String(n || ''); let r = await plus.run(n, a); if (r === null) r = await roms.run(n, a); if (r === null) r = await gameinfo.run(n, a); if (r === null) r = await servers.run(n, a); if (r === null) r = await appstore.run(n, a); return r !== null ? r : extras.run(n, a); });
+// The main SKBox window must not react to the controller while the SK menu is in front.
+function lockUI() { try { if (win && !win.isDestroyed()) win.webContents.send('input-lock', !!overlayOpen); if (helper && helper.ready) helper.padIn(padTest || overlayOpen); } catch {} }
 const splitArgs = s => (String(s || '').match(/"[^"]*"|\S+/g) || []).map(x => x.replace(/^"|"$/g, ''));
 function applyCompat(exe) { // old-game fixes: Windows compatibility flags for this one program (current user only). Fullscreen optimizations stay ON so games can be streamed.
   if (!isWin) return;
@@ -303,7 +283,7 @@ async function winCleanup() {
 function restartHelper() { try { helper && helper.stop(); } catch {} helper = null; startHelper(); }
 function statsTouch(id, ms) { if (!id) return; const st = store.read('stats', {}), x = st[id] || (st[id] = { last: 0, ms: 0, n: 0 }); x.last = Date.now(); if (ms) { x.ms += ms; x.best = Math.max(x.best || 0, ms); } else x.n++; store.write('stats', st); }
 function endGame() {
-  if (!game) return; try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} try { extras.onGameEnd(game.name, Date.now() - game.startedAt); } catch {} try { const g0 = game, ms0 = Date.now() - game.startedAt; plus.onGameEnd(g0, ms0); plus.post(g0.app); plus.restoreProfile(); plus.after(g0, ms0, g0.app); plus.checkMilestones(); const nx = plus.queuePeek(); if (nx && store.read('settings', {}).queuePrompt !== false && !plus.pending()) setTimeout(() => send('queue:next', nx), 2500); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
+  if (!game) return; try { stopGameWatchers(game); } catch {} try { statsTouch(game.id, Math.max(0, Date.now() - game.startedAt)); } catch {} try { extras.onGameEnd(game.name, Date.now() - game.startedAt); } catch {} try { const g0 = game, ms0 = Date.now() - game.startedAt; plus.onGameEnd(g0, ms0); plus.post(g0.app); plus.restoreProfile(); plus.after(g0, ms0, g0.app); plus.checkMilestones(); try { if (g0.app && g0.app.saves && g0.app.saves.onClose) plus.backupSaves(g0.app, 'close'); } catch {} const nx = plus.queuePeek(); if (nx && store.read('settings', {}).queuePrompt !== false && !plus.pending()) setTimeout(() => send('queue:next', nx), 2500); } catch {} game = null; closeBackdrop(); closeOverlay(false); if (helper) helper.unwatch();
   send('game:state', null); comeBack();
 }
 ipcMain.handle('game:state', () => gameState());
@@ -312,29 +292,18 @@ ipcMain.handle('game:resume', () => { if (!game) return false; hideMusic(false);
 ipcMain.handle('game:close', () => closeGameResult());
 // A .lnk shortcut is opened through Windows, which hides the real program from SKBox (no process to follow, Cemu not recognised, no full screen).
 // So read the shortcut and start its target directly, with the shortcut's own arguments and "Start in" folder.
-// Backup for emulator windows: make the window borderless and cover its monitor (1 pixel short, so Windows treats it as a normal window
-// and Remote play can capture it). Used only when the helper did not manage it. Runs a short PowerShell script.
-const PS_FIT = `Add-Type -AssemblyName System.Windows.Forms
-Add-Type @"
-using System;using System.Runtime.InteropServices;
-public class SKW{[DllImport("user32.dll")]public static extern bool SetProcessDPIAware();
-[DllImport("user32.dll")]public static extern int GetWindowLong(IntPtr h,int i);[DllImport("user32.dll")]public static extern int SetWindowLong(IntPtr h,int i,int v);
-[DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int w,int c,uint f);[DllImport("user32.dll")]public static extern bool SetMenu(IntPtr h,IntPtr m);
-[DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int c);[DllImport("user32.dll")]public static extern bool SetForegroundWindow(IntPtr h);}
-"@
-[SKW]::SetProcessDPIAware() | Out-Null
-$h = [IntPtr][long]$env:SK_HWND; $b = [System.Windows.Forms.Screen]::FromHandle($h).Bounds
-[SKW]::ShowWindow($h, 9) | Out-Null
-$st = [SKW]::GetWindowLong($h, -16); $st = $st -band (-bnot 0xC40000)
-[SKW]::SetWindowLong($h, -16, $st) | Out-Null; [SKW]::SetMenu($h, [IntPtr]::Zero) | Out-Null
-[SKW]::SetWindowPos($h, [IntPtr]::new(-1), $b.X, $b.Y, $b.Width, $b.Height - 1, 0x0060) | Out-Null
-[SKW]::SetForegroundWindow($h) | Out-Null`;
-function psFit(hwnd, why) {
-  if (!isWin || !hwnd) return; const g = game; if (g) g.emuFit = true;
-  execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', PS_FIT], { windowsHide: true, env: Object.assign({}, process.env, { SK_HWND: String(hwnd) }) }, err => {
-    try { notify('SKBox', err ? 'Could not fit the game window. Try Extras > Emulator window style.' : why + ' If this keeps happening, reinstall SKBox so the helper updates.'); } catch {}
-  });
+const winwatch = require('./lib/winwatch');
+// Safety net for emulators: if the helper has not fitted the window shortly after the game starts, SKBox does it (and keeps it fitted).
+function startEmuFit(g) {
+  if (!g || g.emuProc || !isWin) return; const pid = g.wpid || g.pid; if (!pid) return;
+  g.emuProc = winwatch.emuFit(pid, () => { if (!g.emuNoted) { g.emuNoted = true; try { notify('SKBox', 'Fitted the emulator window so Remote play can see it.'); } catch {} } });
 }
+function startGameWatchers(g) {
+  if (!isWin || !g) return;
+  if (store.read('settings', {}).padWatch !== false) g.padProc = winwatch.padWatch(() => { try { toggleOverlay(); } catch {} });
+  if (g.mode === 'emu') g.emuTimer = setTimeout(() => { if (game === g && !g.emuFit) startEmuFit(g); }, 8000);
+}
+function stopGameWatchers(g) { if (!g) return; try { clearTimeout(g.emuTimer); } catch {} try { g.emuProc && g.emuProc.stop(); } catch {} try { g.padProc && g.padProc.stop(); } catch {} }
 function resolveLnk(p) {
   try { if (process.platform === 'win32' && /\.lnk$/i.test(p)) { const l = shell.readShortcutLink(p); if (l && l.target && /\.exe$/i.test(l.target) && fs.existsSync(l.target)) return { target: l.target, args: l.args || '', cwd: l.cwd || '' }; } } catch {}
   return null;
@@ -350,9 +319,9 @@ async function launchApp(a) {
     if (!isUrl && !fs.existsSync(target)) return { ok: false, error: 'File not found: ' + target };
     game = { id: a.id, name: a.name || path.basename(target), exe: target, cover: a.cover || '', startedAt: Date.now(), pid: 0, wpid: 0, hwnd: '', mode: emuMode(target, a) || (store.read('settings', {}).emuMax === false && gameMode(a.fs) !== 'off' ? 'autox' : gameMode(a.fs)), noWindow: false, exited: false };
     game.app = a; try { plus.queueRemove(a.id); plus.applyProfile(a); } catch {}
+    try { if (a.saves && a.saves.onLaunch) plus.backupSaves(a, 'launch'); } catch {}
     try { extras.onGameStart(); } catch {}
     statsTouch(a.id, 0);
-    if (store.read('settings', {}).closeBrowseOnGame) { try { browse.closeAll(); } catch {} }
     try { await plus.pre(a); } catch {}
     if (!isUrl && remoteLive && store.read('settings', {}).gameWindow !== 'off') prepWindowedFs(target);
     if (a.compat && !isUrl && /\.exe$/i.test(target)) applyCompat(target);
@@ -361,7 +330,7 @@ async function launchApp(a) {
     if (isUrl) await shell.openExternal(target);
     else if (/\.exe$/i.test(target)) {
       child = spawn(target, splitArgs(emuArgs(target, a.args)), { cwd: (lnkCwd && fs.existsSync(lnkCwd)) ? lnkCwd : path.dirname(target), detached: true, stdio: 'ignore' });
-      game.pid = child.pid || 0;
+      game.pid = child.pid || 0; try { startGameWatchers(game); } catch {}
       child.on('error', err => { const g = game; endGame(); win && win.webContents.send('launch-error', String(err.message || err)); });
       child.on('exit', () => { if (!game) return; game.exited = true; if (!helper || !helper.ready || game.noWindow) { if (Date.now() - game.startedAt > 15000) endGame(); } });
       child.unref();
@@ -373,6 +342,7 @@ async function launchApp(a) {
 }
 ipcMain.handle('app:launch', (_e, a) => launchApp(a));
 // Import apps: look through the Start Menu and Desktop shortcuts and offer the real programs behind them.
+ipcMain.handle('apps:launchers', () => { try { const L = require('./lib/launchers'); return { ok: true, list: [].concat(L.scanSteam(), L.scanEpic()) }; } catch (e) { return { ok: false, list: [] }; } });
 ipcMain.handle('apps:scan', () => {
   if (process.platform !== 'win32') return { ok: true, list: [] };
   const roots = [path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs'), path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'), app.getPath('desktop'), 'C:\\Users\\Public\\Desktop'];
@@ -398,16 +368,15 @@ function startHelper() {
   helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
   helper.on('ready', () => { helperInfo.error = ''; if (remoteLive) helper.remote(store.read('settings', {}).gameWindow !== 'off', fitArgs().fit, fitArgs().taskbar); if (overlayOpen) helper.padIn(true); });
   helper.on('padin', (slot, act) => {
-    try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (browse.anyVisible()) browse.padAction(act); else if (padTest) send('padtest', slot, act); } catch {}
+    try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (padTest) send('padtest', slot, act); } catch {}
   });
   helper.on('battery', (slot, type, level) => { batteries[slot] = { type, level }; try { plus.battery(slot, type, level); } catch {} send('battery', slot, type, level); });
   helper.on('pads', n => { padCount = n; send('pads', n); const pl = playersMeta(); if (n >= 2 && !pl[1] && game && !overlayOpen) openOverlay({ p2: true }); });
   helper.on('win', w => {
     if (!game) return; game.hwnd = w.hwnd; game.wpid = w.pid; send('game:state', gameState());
-    if (game.mode === 'emu' && !game.emuTimer) { const g = game; g.emuTimer = setTimeout(() => { if (game === g && !g.emuFit) psFit(g.hwnd, 'The helper did not fit the emulator window, so SKBox did it directly.'); }, 20000); }
     if (isWin && store.read('settings', {}).boost && w.pid > 0 && game.boosted !== w.pid) { game.boosted = w.pid; execFile('powershell', ['-NoProfile', '-Command', '$p = Get-Process -Id ' + (w.pid | 0) + ' -ErrorAction SilentlyContinue; if ($p) { $p.PriorityClass = "High" }'], { windowsHide: true }, () => {}); }
   });
-  helper.on('fs', t => { if (remoteLive && /^(remote|fail|exclusive|restored)/.test(String(t))) toClient({ t: 'notice', text: /^remote window/.test(t) ? 'Game window fitted.' : /^remote offset/.test(t) ? 'Game window fitted (bars pushed off-screen).' : /^fail/.test(t) ? 'Could not fit the game window. Press Fix the picture.' : 'Leaving exclusive fullscreen\u2026' }); backdropFade(); if (game) { game.fsOk = /^(already|borderless)/.test(String(t)); if (/^remote (window|offset)/.test(String(t))) game.emuFit = true; else if (/^fail/.test(String(t)) && game.mode === 'emu' && !game.emuFit) psFit(game.hwnd, 'The helper could not fit the emulator window, so SKBox did it directly.'); } send('fs', t); });
+  helper.on('fs', t => { if (remoteLive && /^(remote|fail|exclusive|restored)/.test(String(t))) toClient({ t: 'notice', text: /^remote window/.test(t) ? 'Game window fitted.' : /^remote offset/.test(t) ? 'Game window fitted (bars pushed off-screen).' : /^fail/.test(t) ? 'Could not fit the game window. Press Fix the picture.' : 'Leaving exclusive fullscreen\u2026' }); backdropFade(); if (game) { game.fsOk = /^(already|borderless)/.test(String(t)); if (/^remote (window|offset)/.test(String(t))) game.emuFit = true; else if (/^fail/.test(String(t)) && game.mode === 'emu') startEmuFit(game); } send('fs', t); });
   helper.on('gone', () => endGame());
   helper.on('nowin', () => { if (game) { game.noWindow = true; if (game.exited || !game.pid) endGame(); } });
   helper.on('error-line', l => { helperInfo.error = String(l).slice(0, 200); try { fs.appendFileSync(path.join(app.getPath('userData'), 'helper.log'), new Date().toISOString() + ' ' + l + '\n'); } catch {} });
@@ -441,7 +410,9 @@ function openOverlay(opts) {
   overlayTarget = fgTarget && Date.now() - fgTarget.at < 1500 ? fgTarget : (game && game.hwnd ? { hwnd: String(game.hwnd), fs: true } : null); fgTarget = null;
   const moveAside = !!(overlayTarget && overlayTarget.fs && overlayOpaque && helper && helper.ready);
   if (moveAside) helper.minimize(overlayTarget.hwnd);
-  const show = () => { try { w.setAlwaysOnTop(true, 'screen-saver'); w.show(); w.moveTop(); w.focus(); if (helper) helper.focus(nativeHwnd(w)); w.webContents.send('overlay:open', overlayStateObj(opts)); } catch {} };
+  const show = () => { try { w.setAlwaysOnTop(true, 'screen-saver'); w.show(); w.moveTop(); w.focus(); if (helper) helper.focus(nativeHwnd(w)); w.webContents.send('overlay:open', overlayStateObj(opts)); } catch {}
+    // a fullscreen game can keep the keyboard focus for a moment: keep asking until the menu really has it
+    [200, 600, 1200, 2200].forEach(ms => setTimeout(() => { try { if (overlayOpen && overlayWin && !overlayWin.isDestroyed() && !overlayWin.isFocused()) { overlayWin.moveTop(); overlayWin.focus(); if (helper) { helper.focus(nativeHwnd(overlayWin)); helper.padIn(true); } } } catch {} }, ms)); };
   const go = () => { if (w.webContents.isLoading()) w.webContents.once('did-finish-load', show); else show(); };
   if (moveAside) setTimeout(go, 220); else go();
 }
@@ -517,7 +488,6 @@ ipcMain.on('guest:home', e => { if (musicWin && !musicWin.isDestroyed() && e.sen
 ipcMain.on('guest:osk', (e, o) => { if (musicWin && !musicWin.isDestroyed() && e.sender === musicWin.webContents) openOverlay({ osk: { value: (o && o.value) || '', target: 'music' } }); });
 ipcMain.handle('overlay:osk-result', (_e, r) => {
   closeOverlay(false);
-  if (r && r.target === 'browse') { browse.oskResult(r); return true; }
   if (r && r.target === 'music' && musicWin && !musicWin.isDestroyed()) {
     if (!r.cancel) musicWin.webContents.executeJavaScript('(function(t,s){var e=document.activeElement;if(!e)return;if(e.isContentEditable){e.textContent=t;e.dispatchEvent(new Event("input",{bubbles:true}));}else{var pr=e.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,ds=Object.getOwnPropertyDescriptor(pr,"value");if(ds&&ds.set)ds.set.call(e,t);else e.value=t;e.dispatchEvent(new Event("input",{bubbles:true}));}if(s){e.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",code:"Enter",keyCode:13,which:13,bubbles:true}));}})(' + JSON.stringify(String(r.text || '')) + ',' + (r.send ? 'true' : 'false') + ')').catch(() => {});
     musicWin.focus(); if (helper) helper.focus(nativeHwnd(musicWin));
@@ -597,7 +567,8 @@ ipcMain.handle('wifi:disconnect', () => wifi.disconnect());
 const POWER = { shutdown: ['shutdown', ['/s', '/t', '0']], restart: ['shutdown', ['/r', '/t', '0']], logoff: ['shutdown', ['/l']], sleep: ['rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0']] };
 ipcMain.handle('sys:power', (_e, what) => { if (what === 'quit') { app.quit(); return true; } const p = POWER[what]; if (p && isWin) execFile(p[0], p[1], { windowsHide: true }, () => {}); return !!p; });
 ipcMain.handle('sys:openSettings', (_e, page) => { const ok = { bluetooth: 'ms-settings:bluetooth', sound: 'ms-settings:sound', wifi: 'ms-settings:network-wifi', devices: 'ms-settings:connecteddevices' }[page]; if (!ok) return false; stepAside(); shell.openExternal(ok); try { new Notification({ title: 'SKBox is still running', body: 'Press Ctrl+Shift+B or use the tray icon to come back.', silent: true }).show(); } catch {} return true; });
-ipcMain.handle('sys:volume', (_e, dir) => { if (!isWin) return false; const k = { up: 175, down: 174, mute: 173 }[dir]; if (!k) return false; execFile('powershell', ['-NoProfile', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]' + k + ')'], { windowsHide: true }, () => {}); return true; });
+const sysVolume = dir => { if (!isWin) return false; const k = { up: 175, down: 174, mute: 173 }[dir]; if (!k) return false; execFile('powershell', ['-NoProfile', '-Command', '(New-Object -ComObject WScript.Shell).SendKeys([char]' + k + ')'], { windowsHide: true }, () => {}); return true; };
+ipcMain.handle('sys:volume', (_e, dir) => sysVolume(dir));
 ipcMain.handle('sys:startup', (_e, on) => { if (isWin || process.platform === 'darwin') app.setLoginItemSettings({ openAtLogin: !!on }); const s = store.read('settings', {}); s.startup = !!on; store.write('settings', s); return !!on; });
 ipcMain.handle('sys:kiosk', (_e, on) => { kiosk = !!on; const s = store.read('settings', {}); s.windowed = !on; store.write('settings', s); try { win.setKiosk(kiosk); win.setFullScreen(kiosk); } catch {} return kiosk; });
 
@@ -609,6 +580,28 @@ let remoteSrc = 'screen', lastDisp = null, fixStage = 0, badCount = 0, fixBusy =
 const remoteDisplay = () => { try { if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) { lastDisp = screen.getDisplayMatching(win.getBounds()); return lastDisp; } } catch {} return lastDisp || screen.getPrimaryDisplay(); };
 setInterval(() => { try { if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) lastDisp = screen.getDisplayMatching(win.getBounds()); } catch {} }, 1500);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// ---- SKBox Companion: the phone remote ----
+let companion = null;
+function companionInit() {
+  if (companion) return companion;
+  const { Companion } = require('./lib/companion'), appsNow = () => { const a = store.read('apps', []); return (Array.isArray(a) ? a : a.apps || []).filter(x => x && x.kind !== 'bapp'); };
+  companion = new Companion({
+    webFile: path.join(__dirname, '..', 'renderer', 'companion', 'index.html'), hin,
+    state: () => ({ name: os.hostname(), game: game ? { id: game.id, name: game.name, startedAt: game.startedAt } : null, apps: appsNow().map(a => ({ id: a.id, name: a.name, cover: !!a.cover, kind: a.kind || '' })), queue: plus.queueList().map(q => ({ id: q.id, name: q.name })), power: store.read('settings', {}).companionPower === true }),
+    launch: async id => { const a = appsNow().find(x => x.id === id); if (!a) return { ok: false, error: 'That app is gone.' }; if (game) return { ok: false, error: 'A game is already running.' }; return await launchApp(a); },
+    close: () => closeGameResult(), menu: () => { try { toggleOverlay(); } catch {} },
+    queue: async (op, id) => { if (op === 'add') return plus.queueAdd(id); if (op === 'remove') return plus.queueRemove(id); if (op === 'top') { const r = plus.queueAdd(id); if (!r.ok) return r; await plus.run('queueTop', id); return { ok: true }; } return { ok: false }; },
+    volume: d => sysVolume(d), powerAllowed: () => store.read('settings', {}).companionPower === true,
+    power: w => { if (w === 'lock') plus.lockPc(); else plus.power('sleep'); },
+    coverFile: id => { const a = appsNow().find(x => x.id === id); if (!a || !a.cover) return ''; const f = path.resolve(String(a.cover).replace(/^file:\/\/\/?/i, '')); return f.startsWith(path.resolve(COVER_DIR()) + path.sep) && /\.(png|jpe?g|webp)$/i.test(f) && fs.existsSync(f) ? f : ''; },
+    onChange: () => send('companion:state', companion.state())
+  });
+  return companion;
+}
+ipcMain.handle('companion:state', () => (companion ? companion.state() : { on: false, port: 0, pin: '', ips: [], devices: [] }));
+ipcMain.handle('companion:set', async (_e, on) => { try { if (on) await companionInit().start(); else if (companion) companion.stop(); send('companion:state', companion ? companion.state() : { on: false }); return { ok: true, state: companion ? companion.state() : { on: false } }; } catch (e) { return { ok: false, error: String(e.message || e) }; } });
+ipcMain.handle('companion:pin', () => (companion ? companion.newPin() : null));
+ipcMain.handle('companion:kick', () => (companion ? companion.kickAll() : null));
 const REMOTE_DIR = () => path.join(__dirname, '..', 'renderer', 'remote');
 const rset = () => { const s = store.read('settings', {}); return { audioKbps: +s.remoteAudioKbps || 192, quality: (() => { const q = ['instant', 'smooth', 'low', 'balanced', 'high', 'sharp'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth'; return (s.remoteSmart !== false && q === 'smooth' && game && /^emu/.test(game.mode || '')) ? 'high' : q; })(), autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, fps: +s.remoteFps || 0, res: +s.remoteRes || 0, kbps: +s.remoteKbps || 0, audio: s.remoteAudio !== false, pref: ['framerate', 'resolution', 'balanced'].includes(s.remotePref) ? s.remotePref : 'framerate', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
 const remoteState = () => Object.assign(remote ? remote.state() : { on: false, port: 0, pin: '', ips: [], client: null }, { stats: remoteStats, cfg: rset(), helper: !!(helper && helper.ready), supported: isWin });
@@ -678,13 +671,14 @@ function remoteInit() {
   return remote;
 }
 ipcMain.handle('remote:state', () => remoteState());
-ipcMain.handle('remote:set', async (_e, on) => {
+const setRemote = async on => {
   if (!isWin) return { ok: false, error: 'Remote play host needs Windows.' };
   try {
     if (on) await remoteInit().start(); else { if (remote) remote.stop(); if (remoteWin && !remoteWin.isDestroyed()) { try { remoteWin.destroy(); } catch {} } remoteWin = null; remoteLoaded = null; }
     pushRemote(); return { ok: true, state: remoteState() };
   } catch (e) { return { ok: false, error: String(e.message || e) }; }
-});
+};
+ipcMain.handle('remote:set', (_e, on) => setRemote(on));
 ipcMain.handle('remote:pin', () => { if (remote && remote.on_) remote.newPin(); return remoteState(); });
 ipcMain.handle('remote:fix', () => { remoteFixFs(); return true; });
 ipcMain.handle('remote:kick', () => { if (remote) remote.endSession('Disconnected from SKBox'); return remoteState(); });
@@ -728,7 +722,7 @@ ipcMain.on('remote:input', (e, raw) => {
     case 'p': if (mapper && cfg.padMode !== 'off') mapper.frame(m); break;
   }
 });
-app.on('before-quit', () => { try { remote && remote.stop(); } catch {} });
+app.on('before-quit', () => { try { stopGameWatchers(game); } catch {} try { remote && remote.stop(); } catch {} try { companion && companion.stop(); } catch {} });
 
 // ================= tray, shortcuts, updates =================
 function setupTray() {
@@ -751,7 +745,7 @@ function setupUpdates() {
 }
 app.on('second-instance', comeBack);
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns,CalculateNativeWinOcclusion');
-app.whenReady().then(() => { try { plus.recover(false); } catch {} setTimeout(() => { try { plus.weeklyReport(); plus.checkMilestones(); } catch {} }, 25000); });
+app.whenReady().then(() => { try { const raw = store.read('apps', []), list = Array.isArray(raw) ? raw : (raw.apps || []), keep = list.filter(a => a && a.kind !== 'bapp'); if (keep.length !== list.length) { store.write('apps', Array.isArray(raw) ? keep : Object.assign({}, raw, { apps: keep })); } } catch {} try { plus.recover(false); } catch {} try { servers.autoStart(); } catch {} setTimeout(() => { try { plus.weeklyReport(); plus.checkMilestones(); } catch {} }, 25000); setInterval(() => { plus.tick().catch(() => {}); }, 30000); });
 app.whenReady().then(async () => {
   // Widevine (protected video: Netflix, Disney+, ...) comes with the castLabs Electron build. Wait for it before opening any window that might play video.
   try { const { components } = require('electron'); if (components && components.whenReady) await Promise.race([components.whenReady().catch(() => {}), new Promise(r => setTimeout(r, 30000))]); } catch (e) {}
@@ -764,10 +758,8 @@ app.whenReady().then(async () => {
   globalShortcut.register('Control+Shift+O', toggleOverlay);
   globalShortcut.register('Control+Shift+S', () => { takeShot(true); });
   const hk = (acc, fn) => { try { globalShortcut.register(acc, () => { if (store.read('settings', {}).hotkeysOn === false) return; fn(); }); } catch {} };
-  hk('Control+Alt+Shift+B', () => { closeOverlay(false); stepAside(); browse.open({}); });     // open SKBrowse
   hk('Control+Alt+Shift+M', () => extras.run('minAll'));                                   // show the desktop
   hk('Control+Alt+Shift+T', () => extras.run('taskmgr'));                                  // Task Manager
-  hk('Control+Alt+Shift+H', () => { try { for (const w of browse.wins) w.hide(); } catch {} comeBack(); });   // hide SKBrowse, back to SKBox
   extras.hotkeys(globalShortcut); display.hotkeys(globalShortcut);
 });
 app.on('will-quit', () => { globalShortcut.unregisterAll(); try { helper && helper.stop(); } catch {} });

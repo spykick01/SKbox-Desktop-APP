@@ -1,4 +1,4 @@
-// SKBox Plus: per-game profiles, play history, Continue Watching, system info, after-game actions and a few helpers.
+// SKBox Plus: per-game profiles, play history, milestones, Up next, system info, after-game actions and a few helpers.
 // Everything reads and writes through ctx.store, so it is easy to test without Electron.
 const os = require('os'), fs = require('fs'), path = require('path');
 
@@ -43,6 +43,7 @@ function create(ctx) {
     const d = log[id] || (log[id] = {}); d[k] = (d[k] || 0) + Math.max(0, ms | 0);
     const keys = Object.keys(d); if (keys.length > 120) keys.slice(0, keys.length - 120).forEach(x => delete d[x]);
     ctx.store.write('gamedays', log);
+    try { logSession(g, ms); checkGoal(); } catch {}
   }
   function report(range) {
     range = [7, 14, 30].includes(+range) ? +range : 14;
@@ -67,25 +68,6 @@ function create(ctx) {
     const r = report(7); if (!r.rangeTotal) return false; const top = r.games.find(g => g.range);
     ctx.notify('Your week in games', 'You played ' + fmt(r.rangeTotal) + ' this week' + (top ? ', mostly ' + top.name : '') + '.'); return true;
   }
-
-  // ---------- Continue Watching (SKBrowse apps) and Watch later ----------
-  function watchNote(appId, url, title) {
-    if (!appId || !/^https?:/i.test(url || '')) return; const w = ctx.store.read('watch', {}), o = w[appId] || {};
-    const t = String(title || '').trim().slice(0, 120); if (o.url === url && (!t || o.title === t)) return;
-    w[appId] = { url: String(url).slice(0, 600), title: t || o.title || '', t: now() }; ctx.store.write('watch', w);
-  }
-  function watchList() {
-    const w = ctx.store.read('watch', {}), list = [];
-    apps().forEach(a => { const x = w[a.id]; if (x && (a.kind === 'bapp' || a.kind === 'web' || a.kind === 'browse')) list.push({ id: a.id, name: a.name, cover: a.cover || '', url: x.url, title: x.title, t: x.t }); });
-    return list.sort((a, b) => b.t - a.t);
-  }
-  function watchClear(id) { if (!id) { ctx.store.write('watch', {}); return { ok: true }; } const w = ctx.store.read('watch', {}); delete w[id]; ctx.store.write('watch', w); return { ok: true }; }
-  function laterAdd(url, title) {
-    if (!/^https?:/i.test(url || '')) return { ok: false, error: 'Only web pages can be saved.' }; const l = ctx.store.read('later', []).filter(x => x.url !== url);
-    l.unshift({ url: String(url).slice(0, 600), title: String(title || url).slice(0, 120), t: now() }); ctx.store.write('later', l.slice(0, 60)); return { ok: true, n: Math.min(l.length, 60) };
-  }
-  const laterList = () => ctx.store.read('later', []);
-  function laterRemove(url) { ctx.store.write('later', ctx.store.read('later', []).filter(x => x.url !== url)); return { ok: true }; }
 
   // ---------- before / after a game ----------
   function pre(app) {   // start a helper program before the game (for example a controller mapper) and wait a few seconds for it
@@ -120,7 +102,6 @@ function create(ctx) {
     ['v5', 'Explorer', 'Play 5 different apps', 'played', 5], ['v10', 'Collector\u2019s taste', 'Play 10 different apps', 'played', 10],
     ['m4', 'Marathon', 'Play 4 hours in one day', 'bestDayH', 4], ['m8', 'Ultra marathon', 'Play 8 hours in one day', 'bestDayH', 8],
     ['c10', 'Shelf started', 'Add 10 apps', 'apps', 10], ['c25', 'Full shelf', 'Add 25 apps', 'apps', 25],
-    ['w3', 'Channel surfer', 'Watch something in 3 streaming apps', 'watchApps', 3], ['wl5', 'Plenty to watch', 'Save 5 pages with Watch later', 'later', 5],
     ['p3', 'Tuner', 'Set up game profiles for 3 games', 'profiles', 3], ['q3', 'Planner', 'Line up 3 games in Up next', 'queueMax', 3]
   ];
   function metrics() {
@@ -129,7 +110,7 @@ function create(ctx) {
     const stats = Object.values(st);
     return { launches: stats.reduce((n, x) => n + (x.n || 0), 0), hours: Math.floor(stats.reduce((n, x) => n + (x.ms || 0), 0) / 3600000), played: stats.filter(x => (x.n || 0) > 0).length,
       bestStreak: Math.max(r.streak, ms.bestStreak || 0), bestDayH: Math.floor(Math.max(0, ...Object.values(byDay)) / 3600000), apps: ap.filter(a => !a.kind).length,
-      watchApps: Object.keys(ctx.store.read('watch', {})).length, later: ctx.store.read('later', []).length, profiles: ap.filter(a => a.profile && Object.keys(a.profile).length).length, queueMax: Math.max(ms.queueMax || 0, ctx.store.read('queue', []).length) };
+      profiles: ap.filter(a => a.profile && Object.keys(a.profile).length).length, queueMax: Math.max(ms.queueMax || 0, ctx.store.read('queue', []).length) };
   }
   function milestones() {
     const m = metrics(), st = ctx.store.read('milestones', {}), done = st.done || {};
@@ -152,7 +133,110 @@ function create(ctx) {
   function queueAdd(id) { id = String(id || ''); if (!apps().some(a => a.id === id)) return { ok: false, error: 'That app is not in your Library.' }; const q = qIds().filter(x => x !== id); if (q.length >= 20) return { ok: false, error: 'Up next is full (20).' }; q.push(id); ctx.store.write('queue', q); return { ok: true, n: q.length }; }
   function queueRemove(id) { ctx.store.write('queue', qIds().filter(x => x !== String(id))); return { ok: true }; }
   function queueMove(id, dir) { const q = qIds(), i = q.indexOf(String(id)); const j = i + (dir < 0 ? -1 : 1); if (i < 0 || j < 0 || j >= q.length) return { ok: true }; [q[i], q[j]] = [q[j], q[i]]; ctx.store.write('queue', q); return { ok: true }; }
+  function queueTop(id) { const q = qIds(), i = q.indexOf(String(id)); if (i > 0) { q.splice(i, 1); q.unshift(String(id)); ctx.store.write('queue', q); } return { ok: true }; }
   const queuePeek = () => queueList()[0] || null;
+
+
+  // ---------- play sessions, history, Wrapped ----------
+  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function logSession(g, ms) {
+    const min = Math.max(0, +(S().minSession === undefined ? 2 : S().minSession)) * 60000; if (!g || !g.id || ms < min) return false;
+    const l = ctx.store.read('sessions', []); l.push({ id: g.id, n: g.name || nameOf(g.id), s: (g.startedAt || (now() - ms)), ms: ms | 0 }); ctx.store.write('sessions', l.slice(-1000)); return true;
+  }
+  const sessionsIn = days => { const all = ctx.store.read('sessions', []); if (!days) return all; const from = now() - days * 86400000; return all.filter(x => x.s >= from); };
+  function history(limit) { return { ok: true, list: ctx.store.read('sessions', []).slice().sort((a, b) => b.s - a.s).slice(0, limit || 60).map(x => ({ id: x.id, name: nameOf(x.id) || x.n, s: x.s, ms: x.ms })) }; }
+  function gameHistory(id) {
+    const all = ctx.store.read('sessions', []).filter(x => x.id === id), stats = ctx.store.read('stats', {})[id] || {}, log = (ctx.store.read('gamedays', {})[id]) || {}, t = new Date(now()), chart = [];
+    for (let i = 13; i >= 0; i--) { const x = new Date(t); x.setDate(t.getDate() - i); chart.push({ k: dayKey(x), ms: log[dayKey(x)] || 0, wd: x.getDay() }); }
+    const total = all.reduce((n, x) => n + x.ms, 0), longest = all.reduce((b, x) => (x.ms > b ? x.ms : b), 0);
+    return { ok: true, sessions: all.slice(-8).reverse().map(x => ({ s: x.s, ms: x.ms })), count: all.length, avg: all.length ? Math.round(total / all.length) : 0, longest, first: all.length ? all[0].s : 0, last: all.length ? all[all.length - 1].s : (stats.last || 0), total: stats.ms || total, launches: stats.n || all.length, chart };
+  }
+  function wrapped(period) {
+    period = ['week', 'month', 'year', 'all'].includes(period) ? period : 'month'; const days = { week: 7, month: 30, year: 365, all: 0 }[period], list = sessionsIn(days);
+    const out = { ok: true, period, sessions: list.length, total: 0, games: [], longest: null, avg: 0, favDay: '', favTime: '', busiest: null, distinct: 0, streak: 0 };
+    if (!list.length) return out;
+    const by = {}, wd = new Array(7).fill(0), tod = { morning: 0, afternoon: 0, evening: 0, night: 0 }, byDay = {};
+    list.forEach(x => { out.total += x.ms; const g = by[x.id] || (by[x.id] = { id: x.id, name: nameOf(x.id) || x.n, ms: 0, n: 0 }); g.ms += x.ms; g.n++; const d = new Date(x.s); wd[d.getDay()] += x.ms; const h = d.getHours(); tod[h >= 5 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : h >= 17 && h < 22 ? 'evening' : 'night'] += x.ms; const k = dayKey(d); byDay[k] = (byDay[k] || 0) + x.ms; if (!out.longest || x.ms > out.longest.ms) out.longest = { name: nameOf(x.id) || x.n, ms: x.ms, s: x.s }; });
+    out.games = Object.values(by).sort((a, b) => b.ms - a.ms).slice(0, 10); out.distinct = Object.keys(by).length; out.avg = Math.round(out.total / list.length);
+    out.favDay = DAYS[wd.indexOf(Math.max(...wd))]; out.favTime = Object.keys(tod).sort((a, b) => tod[b] - tod[a])[0];
+    const bk = Object.keys(byDay).sort((a, b) => byDay[b] - byDay[a])[0]; out.busiest = { k: bk, ms: byDay[bk] };
+    const keys = Object.keys(byDay).map(k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).getTime(); }).sort((a, b) => a - b); let run = 1, best = 1; for (let i = 1; i < keys.length; i++) { run = Math.round((keys[i] - keys[i - 1]) / 86400000) === 1 ? run + 1 : 1; best = Math.max(best, run); } out.streak = keys.length ? best : 0;
+    return out;
+  }
+  function wrappedText(period) { const w = wrapped(period); if (!w.sessions) return 'No play recorded yet.'; return ['SKBox Wrapped (' + { week: 'this week', month: 'last 30 days', year: 'this year', all: 'all time' }[w.period] + ')', 'Played ' + fmt(w.total) + ' in ' + w.sessions + ' sessions across ' + w.distinct + ' game' + (w.distinct === 1 ? '' : 's'), 'Longest session: ' + w.longest.name + ' (' + fmt(w.longest.ms) + ')', 'Favourite day: ' + w.favDay + ', favourite time: ' + w.favTime, 'Best streak: ' + w.streak + ' day' + (w.streak === 1 ? '' : 's')].concat(w.games.slice(0, 5).map((g, i) => (i + 1) + '. ' + g.name + ' - ' + fmt(g.ms))).join('\n'); }
+  function exportCsv() {
+    if (!ctx.desktop) return { ok: false, error: 'No Desktop folder.' }; const q = v => '"' + String(v).replace(/"/g, '""') + '"', rows = ['Game,Started,Minutes'];
+    ctx.store.read('sessions', []).forEach(x => rows.push([q(nameOf(x.id) || x.n), q(new Date(x.s).toISOString()), Math.round(x.ms / 60000)].join(',')));
+    const f = path.join(ctx.desktop, 'SKBox-play-history.csv'); fs.writeFileSync(f, rows.join('\r\n') + '\r\n'); return { ok: true, file: f, n: rows.length - 1 };
+  }
+
+  // ---------- goals, quiet hours, notification log ----------
+  const todayMs = () => { const k = dayKey(new Date(now())), log = ctx.store.read('gamedays', {}); let ms = 0; Object.values(log).forEach(g => { ms += g[k] || 0; }); return ms; };
+  function checkGoal() {
+    const s = S(), g = +s.dailyGoalH || 0, k = dayKey(new Date(now())); if (!g || s.goalDone === k) return false;
+    if (todayMs() >= g * 3600000) { s.goalDone = k; ctx.store.write('settings', s); ctx.notify('Daily goal reached', 'You played ' + fmt(todayMs()) + ' today. Nice.'); return true; } return false;
+  }
+  function streakSaver() {   // evening nudge to keep a streak alive
+    const s = S(), d = new Date(now()), k = dayKey(d); if (!s.streakSaver || d.getHours() < 20 || s.saverDone === k || todayMs() > 60000) return false;
+    const st = report(7).streak; if (st < 3) return false; s.saverDone = k; ctx.store.write('settings', s); ctx.notify('Keep your streak alive', 'You are on a ' + st + ' day streak. A short session today keeps it going.'); return true;
+  }
+  const toMin = t => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '')); return m ? (+m[1]) * 60 + (+m[2]) : -1; };
+  function quiet(date) {
+    const s = S(); if (!s.quietOn) return false; const a = toMin(s.quietFrom || '23:00'), b = toMin(s.quietTo || '07:00'), d = new Date(date || now()), n = d.getHours() * 60 + d.getMinutes(); if (a < 0 || b < 0 || a === b) return false;
+    return a < b ? (n >= a && n < b) : (n >= a || n < b);
+  }
+  function logNotif(title, body) { const l = ctx.store.read('notiflog', []); l.unshift({ t: now(), title: String(title || '').slice(0, 80), body: String(body || '').slice(0, 160) }); ctx.store.write('notiflog', l.slice(0, 50)); }
+
+  // ---------- save backups ----------
+  const SAVE_CAP = 2 * 1024 * 1024 * 1024, bdir = id => path.join(ctx.backupDir || os.tmpdir(), String(id));
+  function dirSize(p, cap) { let n = 0; const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else { try { n += fs.statSync(f).size; } catch {} } if (n > cap) throw new Error('big'); } }; try { walk(p); } catch (e) { if (e.message === 'big') return cap + 1; } return n; }
+  function saveCheck(app) {
+    const sv = app && app.saves; if (!sv || !sv.path) return 'Set the save folder first.'; const p = path.resolve(sv.path);
+    if (path.parse(p).root === p || p.split(path.sep).filter(Boolean).length < 2) return 'That folder is too broad. Pick the game\u2019s own save folder.';
+    if (!fs.existsSync(p) || !fs.statSync(p).isDirectory()) return 'Save folder not found: ' + p; return '';
+  }
+  function backupSaves(app, why) {
+    const err = saveCheck(app); if (err) return { ok: false, error: err }; why = String(why || 'manual').replace(/[^a-z-]/g, ''); const src = path.resolve(app.saves.path);
+    if (dirSize(src, SAVE_CAP) > SAVE_CAP) return { ok: false, error: 'That folder is over 2 GB, so SKBox will not back it up.' };
+    const name = now() + '_' + why, dst = path.join(bdir(app.id), name); fs.mkdirSync(dst, { recursive: true }); fs.cpSync(src, dst, { recursive: true });
+    const keep = Math.max(1, Math.min(30, +(app.saves.keep || S().backupKeep || 5))); const all = listBackups(app.id); all.filter(b => b.why !== 'before-restore').slice(keep).forEach(b => { try { fs.rmSync(path.join(bdir(app.id), b.name), { recursive: true, force: true }); } catch {} });
+    return { ok: true, name, size: dirSize(dst, SAVE_CAP) };
+  }
+  function listBackups(id) { let l = []; try { l = fs.readdirSync(bdir(id)).filter(n => /^\d+_[a-z-]+$/.test(n)); } catch {} return l.sort().reverse().map(n => ({ name: n, ts: +n.split('_')[0], why: n.split('_')[1], size: dirSize(path.join(bdir(id), n), SAVE_CAP) })); }
+  function restoreBackup(app, name) {
+    const err = saveCheck(app); if (err) return { ok: false, error: err }; if (!/^\d+_[a-z-]+$/.test(String(name))) return { ok: false, error: 'Unknown backup.' };
+    if (ctx.running && ctx.running(app.id)) return { ok: false, error: 'Close the game first.' }; const src = path.join(bdir(app.id), name); if (!fs.existsSync(src)) return { ok: false, error: 'That backup is gone.' };
+    const safe = backupSaves(app, 'before-restore'); if (!safe.ok) return safe; const dst = path.resolve(app.saves.path); fs.rmSync(dst, { recursive: true, force: true }); fs.cpSync(src, dst, { recursive: true }); return { ok: true, safety: safe.name };
+  }
+  function deleteBackup(id, name) { if (!/^\d+_[a-z-]+$/.test(String(name))) return { ok: false }; try { fs.rmSync(path.join(bdir(id), name), { recursive: true, force: true }); } catch {} return { ok: true }; }
+
+  // ---------- routines (scheduled actions) ----------
+  const RTYPES = ['launch', 'remote', 'notify', 'pick', 'sleep', 'lock'];
+  const routines = () => ctx.store.read('routines', []);
+  function routineSave(r) {
+    r = r || {}; const t = toMin(r.time); if (t < 0 || t > 1439) return { ok: false, error: 'Time must look like 19:30.' }; if (!RTYPES.includes(r.type)) return { ok: false, error: 'Unknown action.' };
+    if (r.type === 'launch' && !apps().some(a => a.id === r.app)) return { ok: false, error: 'Pick an app to launch.' };
+    const l = routines(), c = { id: r.id || 'r_' + now().toString(36) + Math.floor(Math.random() * 99), name: String(r.name || 'Routine').slice(0, 40), time: String(r.time), days: (Array.isArray(r.days) ? r.days : []).filter(d => d >= 0 && d <= 6), type: r.type, app: r.app || '', text: String(r.text || '').slice(0, 120), on: r.on !== false, last: '' };
+    const i = l.findIndex(x => x.id === c.id); if (i >= 0) { c.last = l[i].last || ''; l[i] = c; } else l.push(c); ctx.store.write('routines', l.slice(0, 30)); return { ok: true, id: c.id };
+  }
+  function routineRemove(id) { ctx.store.write('routines', routines().filter(r => r.id !== id)); return { ok: true }; }
+  function dueRoutines(date) {
+    const d = new Date(date || now()), n = d.getHours() * 60 + d.getMinutes(), k = dayKey(d);
+    return routines().filter(r => r.on !== false && r.last !== k && (!r.days.length || r.days.includes(d.getDay())) && n >= toMin(r.time) && n - toMin(r.time) <= 5);
+  }
+  async function fire(r) {
+    const ap = apps();
+    if (r.type === 'notify') ctx.notify(r.name, r.text || 'Routine'); else if (r.type === 'sleep') ctx.power('sleep'); else if (r.type === 'lock') ctx.lockPc();
+    else if (r.type === 'remote') { if (ctx.remote) await ctx.remote(r.text !== 'off'); ctx.notify(r.name, 'Remote play turned ' + (r.text === 'off' ? 'off' : 'on')); }
+    else if (r.type === 'launch') { const a = ap.find(x => x.id === r.app); if (!a) return { ok: false, error: 'App is gone.' }; if (ctx.busy && ctx.busy()) { ctx.notify(r.name, 'Skipped: a game is already running.'); return { ok: false, error: 'busy' }; } return await ctx.launch(a); }
+    else if (r.type === 'pick') { const pool = ap.filter(a => !a.kind && !(ctx.running && ctx.running(a.id))); if (pool.length) { const a = pool[Math.floor(Math.random() * pool.length)]; ctx.notify(r.name || 'Tonight\u2019s pick', a.name); } }
+    return { ok: true };
+  }
+  async function tick() {
+    const due = dueRoutines(); if (due.length) { const l = routines(); due.forEach(r => { const x = l.find(y => y.id === r.id); if (x) x.last = dayKey(new Date(now())); }); ctx.store.write('routines', l); for (const r of due) { try { await fire(r); } catch {} } }
+    try { streakSaver(); } catch {} return due.length;
+  }
+  async function routineRun(id) { const r = routines().find(x => x.id === id); if (!r) return { ok: false, error: 'Not found.' }; return (await fire(r)) || { ok: true }; }
 
   // ---------- system info ----------
   let lastCpu = null;
@@ -177,17 +261,32 @@ function create(ctx) {
         case 'resetGame': return resetGame(String(arg || ''));
         case 'resetAll': return resetAll();
         case 'summary': { const t = summaryText(arg); if (ctx.copy) ctx.copy(t); return { ok: true, text: t }; }
-        case 'watchList': return { ok: true, list: watchList(), later: laterList() };
-        case 'watchClear': return watchClear(arg ? String(arg) : '');
-        case 'laterAdd': return laterAdd(arg && arg.url, arg && arg.title);
-        case 'laterRemove': return laterRemove(String(arg || ''));
         case 'milestones': return milestones();
         case 'milestoneCheck': return { ok: true, fresh: checkMilestones() };
         case 'queue': return { ok: true, list: queueList() };
         case 'queueAdd': return queueAdd(arg);
         case 'queueRemove': return queueRemove(arg);
         case 'queueMove': return queueMove(arg && arg.id, arg && arg.dir);
+        case 'queueTop': return queueTop(String(arg || ''));
         case 'queueClear': ctx.store.write('queue', []); return { ok: true };
+        case 'copyText': if (ctx.copy) ctx.copy(String(arg || '')); return { ok: true };
+        case 'showFile': if (ctx.show) ctx.show(String(arg || '')); return { ok: true };
+        case 'history': return history(arg);
+        case 'gameHistory': return gameHistory(String(arg || ''));
+        case 'wrapped': return wrapped(arg);
+        case 'wrappedCopy': { const t = wrappedText(arg); if (ctx.copy) ctx.copy(t); return { ok: true, text: t }; }
+        case 'exportCsv': return exportCsv();
+        case 'notifLog': return { ok: true, list: ctx.store.read('notiflog', []) };
+        case 'notifClear': ctx.store.write('notiflog', []); return { ok: true };
+        case 'backupNow': { const a = apps().find(x => x.id === (arg && arg.id)); return a ? backupSaves(a, 'manual') : { ok: false, error: 'Unknown app.' }; }
+        case 'backups': return { ok: true, list: listBackups(String(arg || '')) };
+        case 'restore': { const a = apps().find(x => x.id === (arg && arg.id)); return a ? restoreBackup(a, arg.name) : { ok: false, error: 'Unknown app.' }; }
+        case 'backupDelete': return deleteBackup(String(arg && arg.id || ''), arg && arg.name);
+        case 'routines': return { ok: true, list: routines() };
+        case 'routineSave': return routineSave(arg);
+        case 'routineRemove': return routineRemove(String(arg || ''));
+        case 'routineRun': return await routineRun(String(arg || ''));
+        case 'goal': return { ok: true, goalH: +S().dailyGoalH || 0, today: todayMs() };
         case 'sysinfo': return await sysinfo();
         case 'sysCopy': { const t = sysText(await sysinfo()); if (ctx.copy) ctx.copy(t); return { ok: true, text: t }; }
         case 'cancelAfter': return { ok: cancelAfter() , error: 'Nothing is waiting to happen.' };
@@ -196,6 +295,6 @@ function create(ctx) {
     } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 160) }; }
     return null;
   }
-  return { applyProfile, restoreProfile, recover, onGameEnd, report, resetGame, resetAll, weeklyReport, watchNote, watchList, watchClear, laterAdd, laterList, laterRemove, pre, post, after, cancelAfter, pending, battery, milestones, checkMilestones, queueList, queueAdd, queueRemove, queueMove, queuePeek, sysinfo, sysText, summaryText, run, profileValues, QUALITY, PROFILE_KEYS };
+  return { applyProfile, restoreProfile, recover, onGameEnd, report, resetGame, resetAll, weeklyReport, pre, post, after, cancelAfter, pending, battery, logSession, history, gameHistory, wrapped, wrappedText, exportCsv, checkGoal, streakSaver, quiet, logNotif, backupSaves, listBackups, restoreBackup, deleteBackup, routineSave, routineRemove, dueRoutines, tick, routineRun, todayMs, milestones, checkMilestones, queueList, queueAdd, queueRemove, queueMove, queueTop, queuePeek, sysinfo, sysText, summaryText, run, profileValues, QUALITY, PROFILE_KEYS };
 }
 module.exports = { create, dayKey, QUALITY };

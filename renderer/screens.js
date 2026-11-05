@@ -5,8 +5,8 @@
   const BUILTIN = [
     { id: 'skchat', name: 'SKchat', kind: 'web', url: 'https://sksmpchat.netlify.app/chat', art: 'assets/skchat.png', grad: 'linear-gradient(160deg,#0e4a5c,#0b1020)', tag: 'Chat, calls and friends' },
     { id: 'skmusic', name: 'SKMusic', kind: 'music', url: 'https://sksmpchat.netlify.app/skmusic', art: 'assets/skmusic.png', grad: 'linear-gradient(160deg,#6b1fa0,#14081f)', tag: 'Keeps playing while you game' },
-    { id: 'skwatch', name: 'Watch', kind: 'screen', screen: 'watchhub', url: '', grad: 'linear-gradient(160deg,#b0243b,#1a0910)', tag: 'Continue watching, your streaming apps and Watch later' },
-    { id: 'skbrowse', name: 'SKBrowse', kind: 'browse', url: '', art: 'assets/skbrowse.png', grad: 'linear-gradient(160deg,#0b6e8f,#081425)', tag: 'Web, shows, ad block and extensions' }
+    { id: 'skservers', name: 'SKServers', kind: 'screen', screen: 'servers', art: 'assets/skservers.svg', grad: 'linear-gradient(160deg,#14532d,#052e16)', tag: 'Make and run Minecraft servers' },
+    { id: 'skstore', name: 'SKStore', kind: 'screen', screen: 'store', art: 'assets/skstore.svg', grad: 'linear-gradient(160deg,#1e3a8a,#0b1020)', tag: 'Featured games and apps' },
   ];
   const PACKS = [
     { id: 'west', name: 'Wild West', items: [['west_hat', 'Sunset Hat'], ['west_star', 'Sheriff Star'], ['west_shoe', 'Lucky Horseshoe'], ['west_cactus', 'Cactus'], ['west_mesa', 'Canyon'], ['west_boot', 'Boot']] },
@@ -31,10 +31,11 @@
   const avatar = (p, big) => { const u = avatarUrl(p); return '<div class="av' + (big ? ' big' : '') + '"' + (u ? ' style="background-image:url(\'' + esc(u) + '\')"></div>' : '>' + (p ? initial(p) : '+') + '</div>'); };
   let clockTimer = null, wifiTimer = null;
   const clearTimers = () => { clearInterval(clockTimer); clearInterval(wifiTimer); if (S.padTestOn) { S.padTestOn = false; sk.helper.padTest(false); K.onPadLog = null; } };
+  K.screens = K.screens || {};
   function go(name, data) {
     clearTimers(); S.screen = name; if (window.K.audio) window.K.audio.setSuspended(name === 'web'); S.backFn = null; S.startFn = null; S.bumper = null;
     const root = $('#screen'); root.innerHTML = ''; root.className = 'fade';
-    ({ boot, start, welcome, profiles, home, library, settings, addApp, web, watchhub }[name])(root, data || {});
+    (({ boot, start, welcome, profiles, home, library, settings, addApp, web, details }[name]) || K.screens[name])(root, data || {});
   }
   window.K.go = go;
 
@@ -67,7 +68,8 @@
     if (K.audio && K.audio.idle && im !== 'off') { K.audio.idle(im); const nm = (K.audio.moods().find(x => x[0] === im) || [])[1]; if (nm) saverEl.querySelector('.np').textContent = '\u266A ' + nm; }
   }
   // hide the mouse cursor after a few idle seconds (controller-first; any mouse move brings it back)
-  let curT = 0; document.addEventListener('mousemove', () => { document.body.classList.remove('nocursor'); clearTimeout(curT); if (S.settings.hideCursor !== false) curT = setTimeout(() => document.body.classList.add('nocursor'), 4000); });
+  let curT = 0; if (S.settings && S.settings.compactGrid) document.body.classList.add('compact');
+  document.addEventListener('mousemove', () => { document.body.classList.remove('nocursor'); clearTimeout(curT); if (S.settings.hideCursor !== false) curT = setTimeout(() => document.body.classList.add('nocursor'), 4000); });
   setInterval(() => { const m = +S.settings.saver || 0; if (!m || K.saverOn || S.game || !['home', 'library', 'settings', 'start'].includes(S.screen)) return; if (Date.now() - K.lastInput > m * 60000) saverShow(); }, 5000);
 
   // ---------- boot ----------
@@ -196,10 +198,11 @@
   function movePin(a, d) { const p = pinnedIds().slice(), i = p.indexOf(a.id), j = i + d; if (i < 0 || j < 0 || j >= p.length) return false; [p[i], p[j]] = [p[j], p[i]]; S.settings.pinned = p; saveSettings(); return true; }
   const fmtPlay = ms => { const m = Math.round((ms || 0) / 60000); if (m < 1) return 'Not played yet'; if (m < 60) return m + ' min played'; const h = Math.floor(m / 60); return h + ' h ' + (m % 60 ? (m % 60) + ' min ' : '') + 'played'; };
   const fmtAgo = t => { if (!t) return ''; const d = Date.now() - t, m = Math.floor(d / 60000); if (m < 2) return 'just now'; if (m < 60) return m + ' min ago'; const h = Math.floor(m / 60); if (h < 24) return h + ' h ago'; const dd = Math.floor(h / 24); return dd === 1 ? 'yesterday' : dd + ' days ago'; };
+  const refreshInfo = () => { try { sk.extras.do('infoAll').then(r => { S.infoMap = (r && r.map) || {}; }).catch(() => {}); } catch (_) {} }; refreshInfo();
   sk.on('queue:next', q => { if (!q || S.game || ['boot', 'start', 'welcome', 'profiles'].includes(S.screen)) return; const a = allApps().find(x => x.id === q.id); if (!a) return; confirm('Up next: ' + a.name, 'It is first in your Up next list. Start it now?', 'Play', () => openApp(a), false); });
-  const refreshWatch = () => { try { sk.extras.do('watchList').then(r => { S.watchMap = {}; ((r && r.list) || []).forEach(w => { S.watchMap[w.id] = w; }); }).catch(() => {}); } catch (_) {} }; refreshWatch(); sk.on('returned', refreshWatch);
-  const watchInfo = a => { const w = (S.watchMap || {})[a.id]; return w && w.title ? 'Continue: ' + w.title.slice(0, 42) : ''; };
-  const playInfo = a => { const wi = watchInfo(a); if (wi) return wi; const x = (S.stats || {})[a.id]; if (!x || (!x.ms && !x.last)) return a.kind ? '' : 'Not played yet'; return [x.ms ? fmtPlay(x.ms) : '', x.last ? 'last ' + fmtAgo(x.last) : ''].filter(Boolean).join(' \u00B7 '); };
+  const infoLine = a => { const i = (S.infoMap || {})[a.id]; return i && i.genres && i.genres.length ? i.genres.slice(0, 2).join(' / ') + (i.released ? ' \u00B7 ' + String(i.released).slice(-4) : '') : ''; };
+  const playInfo = a => { const x = (S.stats || {})[a.id]; if (!x || (!x.ms && !x.last)) return a.kind ? '' : [infoLine(a), 'Not played yet'].filter(Boolean).join(' \u00B7 '); return [infoLine(a), x.ms ? fmtPlay(x.ms) : '', x.last ? 'last ' + fmtAgo(x.last) : ''].filter(Boolean).join(' \u00B7 '); };
+  const topGenres = () => { const c = {}; Object.values(S.infoMap || {}).forEach(i => (i.genres || []).forEach(g => { c[g] = (c[g] || 0) + 1; })); return Object.keys(c).filter(g => c[g] >= 2).sort((a, b) => c[b] - c[a]).slice(0, 8); };
   function tileEl(a) {
     const t = nav(el('button', 'tile' + (a.add ? ' add' : '') + (a.lib ? ' lib' : '')));
     let art;
@@ -211,6 +214,8 @@
     else if (a.art) art = '<div class="art" style="background:' + a.grad + '"><img src="' + a.art + '" alt=""></div>';
     else art = '<div class="art" style="background:' + gradFor(a.name) + '"><span class="ltr">' + esc((a.name || '?')[0].toUpperCase()) + '</span></div>';
     if (!a.add && !a.lib && isRunning(a)) art += '<span class="badge run">\u25CF Running</span>';
+    if (!a.add && !a.lib && a.added && Date.now() - a.added < 7 * 864e5 && S.settings.newBadge !== false && !isRunning(a)) art += '<span class="badge new">NEW</span>';
+    const hs = (S.stats || {})[a.id]; if (!a.add && !a.lib && S.settings.hoursBadge && hs && hs.ms >= 3600000) art += '<span class="badge hrs">' + Math.round(hs.ms / 360000) / 10 + ' h</span>';
     t.innerHTML = art; return t;
   }
   function closeRunning() {
@@ -221,6 +226,7 @@
     }, true);
   }
   function home(root) {
+    if (!S.startDone) { S.startDone = true; if (S.settings.startScreen === 'library') { go('library'); return; } }
     hints([['A', 'Open'], ['Y', 'Options'], ['S', 'Settings']]);
     S.startFn = () => go('settings'); S.backFn = null;
     const top = el('div', 'top'), left = el('div', 'grp'), right = el('div', 'grp');
@@ -249,7 +255,7 @@
       t._onfocus = () => {
         S.lastTile = i; S.lastTileId = a.id || 'lib';
         if (a.lib) { info.innerHTML = '<h1>Library</h1><p>' + (allApps().length) + ' apps and games. Pin the ones you want on this screen.</p><div class="go"><i class="key k-A">A</i> Open</div>'; setBg(''); }
-        else { info.innerHTML = '<h1>' + esc(a.name) + '</h1><p>' + esc([a.tag || a.exe || '', playInfo(a)].filter(Boolean).join(' \u00B7 ')) + '</p><div class="go"><i class="key k-A">A</i> ' + (isRunning(a) ? 'Resume' : ['web', 'browse', 'bapp'].includes(a.kind) ? 'Open' : 'Play') + '</div>'; setBg(a.cover ? fileUrl(a.cover) : ''); }
+        else { info.innerHTML = '<h1>' + esc(a.name) + '</h1><p>' + esc([a.tag || a.exe || '', playInfo(a)].filter(Boolean).join(' \u00B7 ')) + '</p><div class="go"><i class="key k-A">A</i> ' + (isRunning(a) ? 'Resume' : a.kind === 'web' ? 'Open' : 'Play') + '</div>'; setBg(a.cover ? fileUrl(a.cover) : ''); }
       };
       t.onclick = () => a.lib ? go('library') : openApp(a);
       if (!a.lib) t._onopts = () => appMenu(a, 'home'); else t._onopts = () => toast('Press A to open your Library');
@@ -276,28 +282,29 @@
   const SORTS = [['az', 'A\u2013Z'], ['recent', 'Recently played'], ['most', 'Most played']];
   function libList() {
     const cols = S.settings.collections || {}; const hid = S.settings.hiddenApps || []; let l = allApps().filter(a => (!libQuery || a.name.toLowerCase().includes(libQuery.toLowerCase())) && (libFilter === 'hidden' ? hid.includes(a.id) : !hid.includes(a.id))); const st = S.stats || {}, g = a => st[a.id] || { last: 0, ms: 0 };
-    if (libFilter === 'pinned') l = l.filter(isPinned); else if (libFilter === 'recent') l = l.filter(a => g(a).last > Date.now() - 14 * 864e5); else if (cols[libFilter]) l = l.filter(a => cols[libFilter].includes(a.id));
+    if (libFilter === 'pinned') l = l.filter(isPinned); else if (libFilter === 'recent') l = l.filter(a => g(a).last > Date.now() - 14 * 864e5); else if (libFilter.startsWith('genre:')) { const gn = libFilter.slice(6); l = l.filter(a => ((S.infoMap || {})[a.id] || { genres: [] }).genres.includes(gn)); } else if (libFilter === 'week') l = l.filter(a => g(a).last > Date.now() - 7 * 864e5); else if (libFilter === 'never') l = l.filter(a => !a.kind && !(st[a.id] && st[a.id].n)); else if (cols[libFilter]) l = l.filter(a => cols[libFilter].includes(a.id));
     if (libSort === 'az') l.sort((x, y) => x.name.localeCompare(y.name)); else if (libSort === 'recent') l.sort((x, y) => g(y).last - g(x).last || x.name.localeCompare(y.name)); else l.sort((x, y) => g(y).ms - g(x).ms || x.name.localeCompare(y.name));
     return l;
   }
   function library(root, d) {
+    document.body.classList.toggle('compact', !!S.settings.compactGrid);
     hints([['A', 'Open'], ['X', 'Pin / Unpin'], ['Y', 'Options'], ['L', 'Sort'], ['B', 'Home']]);
     S.backFn = () => go('home'); S.startFn = () => go('settings'); if (!S.libInit) { S.libInit = true; libSort = S.settings.libSort || libSort; libFilter = S.settings.libFilter || libFilter; }
-    if (libFilter !== 'all' && libFilter !== 'pinned' && libFilter !== 'recent' && !(libFilter === 'hidden' && (S.settings.hiddenApps || []).length) && !(S.settings.collections || {})[libFilter]) libFilter = 'all';
+    if (libFilter !== 'all' && libFilter !== 'pinned' && libFilter !== 'recent' && libFilter !== 'week' && libFilter !== 'never' && !libFilter.startsWith('genre:') && !(libFilter === 'hidden' && (S.settings.hiddenApps || []).length) && !(S.settings.collections || {})[libFilter]) libFilter = 'all';
     root.innerHTML = '<div class="page lib"><h1>Library</h1></div>';
     const page = root.querySelector('.page'), bar = el('div', 'libbar');
     const sortB = nav(el('button', 'chip', '<span>Sort: ' + esc(SORTS.find(x => x[0] === libSort)[1]) + '</span>')), findB = nav(el('button', 'chip', '<span>\u{1F50D} ' + (libQuery ? esc(libQuery) : 'Search') + '</span>')), addB = nav(el('button', 'chip', '<div class="av">+</div><span>Add an app</span>'));
     const cycle = dir => { const i = SORTS.findIndex(x => x[0] === libSort); libSort = SORTS[(i + (dir || 1) + SORTS.length) % SORTS.length][0]; S.settings.libSort = libSort; saveSettings(); go('library', { focus: S.lastLibId }); };
-    const FILTERS = ['all', 'pinned', 'recent'].concat(Object.keys(S.settings.collections || {})).concat((S.settings.hiddenApps || []).length ? ['hidden'] : []), fname = f => ({ all: 'All', pinned: 'On Home', recent: 'Played lately', hidden: 'Hidden apps' }[f] || f);
+    const FILTERS = ['all', 'pinned', 'recent', 'week', 'never'].concat(Object.keys(S.settings.collections || {})).concat((S.settings.hiddenApps || []).length ? ['hidden'] : []).concat(topGenres().map(g => 'genre:' + g)), fname = f => f.startsWith('genre:') ? f.slice(6) : ({ all: 'All', pinned: 'On Home', recent: 'Played lately', hidden: 'Hidden apps', week: 'Played this week', never: 'Never played' }[f] || f);
     const filtB = nav(el('button', 'chip', '<span>Show: ' + esc(fname(libFilter)) + '</span>'));
     filtB.onclick = () => { libFilter = FILTERS[(FILTERS.indexOf(libFilter) + 1) % FILTERS.length]; S.settings.libFilter = libFilter; saveSettings(); go('library'); };
-    if (!['all', 'pinned', 'recent', 'hidden'].includes(libFilter)) filtB._onopts = () => confirm('Delete the collection \u201C' + libFilter + '\u201D?', 'Your apps stay in the Library. Only the group is removed.', 'Delete', () => { delete S.settings.collections[libFilter]; libFilter = 'all'; S.settings.libFilter = 'all'; saveSettings(); go('library'); }, true);
+    if (!['all', 'pinned', 'recent', 'hidden', 'week', 'never'].includes(libFilter) && !libFilter.startsWith('genre:')) filtB._onopts = () => confirm('Delete the collection \u201C' + libFilter + '\u201D?', 'Your apps stay in the Library. Only the group is removed.', 'Delete', () => { delete S.settings.collections[libFilter]; libFilter = 'all'; S.settings.libFilter = 'all'; saveSettings(); go('library'); }, true);
     sortB.onclick = () => cycle(1); S.bumper = a => cycle(a === 'prev' ? -1 : 1);
     findB.onclick = () => osk({ title: 'Search your library', value: libQuery, submitLabel: 'Search', onDone: v => { libQuery = (v || '').trim(); go('library'); } });
     if (libQuery) findB._onopts = () => { libQuery = ''; go('library'); };
     addB.onclick = () => go('addApp');
     const luckyB = nav(el('button', 'chip', '<span>\u{1F3B2} Surprise me</span>'));
-    luckyB.onclick = () => { const pool = libList().filter(a => !isRunning(a)); if (!pool.length) return toast('Nothing to pick from'); const a = pool[Math.floor(Math.random() * pool.length)]; confirm('How about ' + a.name + '?', playInfo(a) || 'Picked at random from what you see here.', ['web', 'browse', 'bapp'].includes(a.kind) ? 'Open' : 'Play', () => openApp(a), false); };
+    luckyB.onclick = () => { const pool = libList().filter(a => !isRunning(a)); if (!pool.length) return toast('Nothing to pick from'); const a = pool[Math.floor(Math.random() * pool.length)]; confirm('How about ' + a.name + '?', playInfo(a) || 'Picked at random from what you see here.', a.kind === 'web' ? 'Open' : 'Play', () => openApp(a), false); };
     bar.append(filtB, sortB, findB, luckyB, addB); page.appendChild(bar);
     const grid = el('div', 'libgrid'), info = el('div', 'libinfo'), list = libList(), els = [];
     if (!list.length) grid.appendChild(el('div', 'sub', libQuery ? 'Nothing matches \u201C' + esc(libQuery) + '\u201D.' : 'Nothing here yet. Press \u201CAdd an app\u201D.'));
@@ -314,21 +321,96 @@
     const want = els.find(e => e._id === (d.focus || S.lastLibId)) || els[0];
     if (want) ensureFocus(root, want); else ensureFocus(root, addB);
   }
-  // ---------- Watch hub: shows in one place ----------
-  async function watchhub(root, d) {
-    hints([['A', 'Open'], ['Y', 'Options'], ['B', 'Home']]); S.backFn = () => go('home'); S.startFn = () => go('settings');
-    root.innerHTML = '<div class="page lib"><h1>Watch</h1></div>'; const page = root.querySelector('.page'), els = [];
-    const r = (await sk.extras.do('watchList')) || { list: [], later: [] }, info = el('div', 'libinfo'), bapps = S.apps.filter(a => a.kind === 'bapp'), byId = {}; bapps.forEach(a => { byId[a.id] = a; });
-    const bar = el('div', 'libbar'), srch = nav(el('button', 'chip', '<span>\u{1F50D} Search YouTube</span>')), web = nav(el('button', 'chip', '<span>\u{1F310} Open SKBrowse</span>')), add = nav(el('button', 'chip', '<div class="av">+</div><span>Add a streaming app</span>'));
-    srch.onclick = () => osk({ title: 'Search YouTube', value: '', submitLabel: 'Search', onDone: v => { v = (v || '').trim(); if (v) sk.browse.open({ url: 'https://www.youtube.com/results?search_query=' + encodeURIComponent(v) }); } });
-    web.onclick = () => sk.browse.open({ pad: Math.max(0, K.padIndexOf(S.active)) }); add.onclick = () => go('settings', { cat: 'shows' });
-    bar.append(srch, web, add); page.appendChild(bar); els.push(srch, web, add);
-    const section = (title, items, mk) => { if (!items.length) return; page.appendChild(el('h3', '', title)); const g = el('div', 'libgrid'); items.forEach(x => { const t = mk(x); els.push(t); g.appendChild(t); }); page.appendChild(g); };
-    section('Continue watching', r.list.filter(w => byId[w.id]), w => { const a = byId[w.id], t = tileEl(a); t._id = a.id; t.insertAdjacentHTML('beforeend', '<span class="badge pin">\u25B6 ' + esc((w.title || 'Resume').slice(0, 22)) + '</span>'); t._onfocus = () => { info.innerHTML = '<b>' + esc(a.name) + '</b><span>' + esc((w.title || w.url).slice(0, 90) + ' \u00B7 ' + fmtAgo(w.t)) + '</span>'; }; t.onclick = () => openApp(a); t._onopts = () => appMenu(a, 'lib'); return t; });
-    section('Your streaming apps', bapps, a => { const t = tileEl(a); t._id = a.id; t._onfocus = () => { info.innerHTML = '<b>' + esc(a.name) + '</b><span>' + esc(watchInfo(a) || a.url || '') + '</span>'; }; t.onclick = () => openApp(a); t._onopts = () => appMenu(a, 'lib'); return t; });
-    if (r.later.length) { page.appendChild(el('h3', '', 'Watch later')); const g = el('div', 'libbar'); r.later.slice(0, 12).forEach(l => { const c = nav(el('button', 'chip', '<span>' + esc(l.title.slice(0, 38)) + '</span>')); c.onclick = () => sk.browse.open({ url: l.url }); c._onopts = () => confirm('Remove from Watch later?', l.title, 'Remove', async () => { await sk.extras.do('laterRemove', l.url); go('watchhub'); }, true); els.push(c); g.appendChild(c); }); page.appendChild(g); }
-    if (!r.list.length && !r.later.length && !bapps.length) page.appendChild(el('div', 'sub', 'Add a streaming app to get started. Settings > Streaming services adds YouTube, Twitch, Netflix and more in one tap.'));
-    page.appendChild(info); ensureFocus(root, els.find(e => e._id === d.focus) || els[0]);
+  async function findCoversFor(todo) {
+    const stop = busy('Finding covers for ' + todo.length + ' game' + (todo.length > 1 ? 's' : '') + '\u2026'); let n = 0;
+    for (const a of todo) { try { const r = await sk.cover.auto(a.name); if (r && r.ok) { a.cover = r.file; a.fit = r.fit || 'fill'; n++; } else { const ic = await sk.cover.icon(a.exe); if (ic && ic.ok) { a.cover = ic.file; a.fit = 'icon'; } } } catch (_) {} }
+    stop(); saveApps(); return n;
+  }
+  // ---------- screenshot viewer and trailer player ----------
+  function shotViewer(shots, start) {
+    let i = start || 0; const L = el('div', 'layer gview'), b = el('div', 'box'), img = el('img'), cap = el('div', 'sub'), row2 = el('div', 'btnrow'); const mkb = (t, fn) => { const x = nav(el('button', 'btn', t)); x.onclick = fn; return x; };
+    const show = () => { img.src = shots[i].full; cap.textContent = (i + 1) + ' of ' + shots.length; };
+    const prev = mkb('\u2039', () => { i = (i - 1 + shots.length) % shots.length; show(); }), next = mkb('\u203A', () => { i = (i + 1) % shots.length; show(); }), close = mkb('Close', () => K.closeLayer(L)); next.dataset.first = '';
+    row2.append(prev, next, close); b.append(img, cap, row2); L.appendChild(b); show(); K.openLayer(L, () => K.closeLayer(L));
+  }
+  function trailerPlayer(t) {
+    const L = el('div', 'layer gview'), b = el('div', 'box'), v = el('video'), row2 = el('div', 'btnrow'); v.src = t.mp4; v.autoplay = true; v.controls = false; v.playsInline = true; if (t.thumb) v.poster = t.thumb; const mkb = (x, fn) => { const y = nav(el('button', 'btn', x)); y.onclick = fn; return y; };
+    const pp = mkb('Pause', () => { if (v.paused) { v.play(); pp.textContent = 'Pause'; } else { v.pause(); pp.textContent = 'Play'; } }), back = mkb('\u23EA 10s', () => { v.currentTime = Math.max(0, v.currentTime - 10); }), fwd = mkb('10s \u23E9', () => { v.currentTime += 10; }), full = mkb('Full screen', () => { try { v.requestFullscreen(); } catch (_) {} }), close = mkb('Close', () => { try { v.pause(); } catch (_) {} K.closeLayer(L); }); pp.dataset.first = '';
+    v.onerror = () => toast('That trailer would not play'); row2.append(back, pp, fwd, full, close); b.append(v, row2); L.appendChild(b); K.openLayer(L, () => { try { v.pause(); } catch (_) {} K.closeLayer(L); });
+  }
+  // ---------- game details ----------
+  async function details(root, d) {
+    const a = allApps().find(x => x.id === d.id); if (!a) { go('library'); return; }
+    hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go(d.from || 'library', { focus: a.id });
+    root.innerHTML = '<div class="page"><h1>' + esc(a.name) + '</h1></div>'; const page = root.querySelector('.page'), pane = el('div', 'pane'); pane.style.cssText = 'overflow-y:auto;flex:1;min-height:0;max-width:64rem;padding-bottom:4vh;scrollbar-width:none'; page.appendChild(pane);
+    const h = await sk.extras.do('gameHistory', a.id), fh = ms => { const m = Math.round((ms || 0) / 60000); return m < 1 ? '0 min' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; }, rows = [];
+    const add = (t, s2, r, fn) => { const x = row(t, s2, r, fn); pane.appendChild(x); rows.push(x); return x; };
+    if (a.cover) { const im = el('div', 'dcover'); im.style.cssText = 'height:16vh;width:11vh;border-radius:1rem;background:url(' + fileUrl(a.cover) + ') center/cover;margin:0 0 1rem;box-shadow:0 .6rem 1.6rem rgba(0,0,0,.4)'; pane.appendChild(im); }
+    add('Play', isRunning(a) ? 'Running now' : (/^[a-z][a-z0-9+.-]*:\/\//i.test(a.exe || '') ? (a.src || 'Launcher') : (a.exe || '')), '\u25B6', () => openApp(a));
+    const infoBox = el('div'); pane.appendChild(infoBox);
+    const loadInfo = async force => {
+      infoBox.innerHTML = ''; if (S.settings.gameInfoAuto === false && !force) { infoBox.appendChild(row('Game info', 'Description, screenshots and a trailer. Sends the game\u2019s name to Steam or Wikipedia.', 'Get it', () => loadInfo(true))); return; }
+      infoBox.appendChild(el('div', 'sub', 'Looking up game info\u2026')); const r = await sk.extras.do('infoGet', { id: a.id, force: !!force }); if (!infoBox.isConnected) return; infoBox.innerHTML = '';
+      if (!r || !r.ok) { infoBox.appendChild(row('Game info', (r && r.error) || 'Could not load it', 'Retry', () => loadInfo(true))); return; }
+      if (r.none) { infoBox.appendChild(row('Game info', 'No match found for this title', 'Try again', () => loadInfo(true))); return; }
+      const i = r.info; S.infoMap = S.infoMap || {}; S.infoMap[a.id] = { genres: i.genres, released: i.released, score: i.score };
+      if (i.header) { const im = el('div', 'ghero'); im.style.backgroundImage = 'url("' + i.header + '")'; infoBox.appendChild(im); }
+      if (i.genres.length || i.tags.length) { const c = el('div', 'gchips'); i.genres.concat(i.tags).forEach(g => c.appendChild(el('span', 'gchip', esc(g)))); infoBox.appendChild(c); }
+      if (i.summary) infoBox.appendChild(el('p', 'gsum', esc(i.summary)));
+      if (i.developers.length) infoBox.appendChild(row('Developer', '', i.developers.join(', '), null)); if (i.publishers.length && i.publishers.join() !== i.developers.join()) infoBox.appendChild(row('Publisher', '', i.publishers.join(', '), null));
+      if (i.released) infoBox.appendChild(row('Released', '', i.released, null)); if (i.score) infoBox.appendChild(row('Metacritic', '', String(i.score), null));
+      if (i.trailer) infoBox.appendChild(row('Watch the trailer', i.trailer.name, '\u25B6', () => trailerPlayer(i.trailer)));
+      if (i.screenshots.length > 1 || (i.screenshots.length && i.source === 'steam')) { const st = el('div', 'gshots'); i.screenshots.forEach((sh, k) => { const th = nav(el('button', 'gshot')); th.style.backgroundImage = 'url("' + (sh.thumb || sh.full) + '")'; th.onclick = () => shotViewer(i.screenshots, k); st.appendChild(th); }); infoBox.appendChild(st); }
+      if (i.about && i.about.length > i.summary.length + 40) infoBox.appendChild(row('Read the full description', '', '\u2192', () => confirm(i.title, i.about, 'Close', () => {}, false)));
+      infoBox.appendChild(row('Refresh game info', 'Info from ' + (i.source === 'steam' ? 'the Steam store' : 'Wikipedia'), '\u21BB', () => loadInfo(true)));
+    };
+    loadInfo(false);
+    pane.appendChild(el('h3', '', 'Your time here'));
+    [['Total time', fh(h.total)], ['Launches', String(h.launches || 0)], ['Last played', h.last ? fmtAgo(h.last) : 'Never'], ['Average session', h.count ? fh(h.avg) : '\u2013'], ['Longest session', h.count ? fh(h.longest) : '\u2013'], ['First played', h.first ? new Date(h.first).toLocaleDateString() : '\u2013']].forEach(([t, v]) => pane.appendChild(row(t, '', v, null)));
+    const top = Math.max.apply(null, (h.chart || []).map(c => c.ms).concat([1])), ch = el('div', 'pchart'), lb = el('div', 'pcl'), cw = el('div', 'pwrap');
+    (h.chart || []).forEach(c => { const b = el('i'); b.style.height = Math.max(2, Math.round(c.ms / top * 100)) + '%'; b.title = fh(c.ms); ch.appendChild(b); lb.appendChild(el('span', '', ['S', 'M', 'T', 'W', 'T', 'F', 'S'][c.wd])); }); cw.append(ch, lb); pane.appendChild(cw);
+    if ((h.sessions || []).length) { pane.appendChild(el('h3', '', 'Recent sessions')); h.sessions.forEach(x => pane.appendChild(row(new Date(x.s).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }), '', fh(x.ms), null))); }
+    pane.appendChild(el('h3', '', 'Manage'));
+    add('Notes', a.notes ? a.notes.slice(0, 90) : 'Tips, where you stopped, anything', '\u270E', () => osk({ title: 'Notes for ' + a.name, value: a.notes || '', submitLabel: 'Save', onDone: v => { a.notes = (v || '').slice(0, 400); saveApps(); go('details', { id: a.id, from: d.from }); }, onCancel: () => go('details', { id: a.id, from: d.from }) }));
+    add('Add to Up next', '', '+', async () => { const r = await sk.extras.do('queueAdd', a.id); toast(r && r.ok ? 'Lined up' : ((r && r.error) || 'Could not add')); });
+    add(isPinned(a) ? 'Unpin from Home' : 'Pin to Home', '', '\u2192', () => { setPinned(a, !isPinned(a)); go('details', { id: a.id, from: d.from }); });
+    if (!a.kind) { add('Game profile', a.profile && Object.keys(a.profile).length ? 'Custom settings while this game runs' : 'Quality, brightness, close method and more', '\u2192', () => profileMenu(a, () => go('details', { id: a.id, from: d.from })));
+      add('Save backups', a.saves && a.saves.path ? 'Folder set' : 'Back up and restore this game\u2019s saves', '\u2192', () => savesMenu(a, () => go('details', { id: a.id, from: d.from })));
+      add('Edit app', '', '\u2192', () => go('addApp', { app: a })); }
+    add('Reset this game\u2019s stats', 'Play time and launch count go back to zero', '\u2192', () => confirm('Reset ' + a.name + '?', 'Its play time and launches go back to zero.', 'Reset', async () => { await sk.extras.do('resetGame', a.id); S.stats = (await sk.store.get('stats', {})) || {}; go('details', { id: a.id, from: d.from }); }, true));
+    ensureFocus(root, rows[0]);
+  }
+  // ---------- save backups for one game ----------
+  function savesMenu(a, back) {
+    const sv = a.saves = a.saves || {}, redo = () => { saveApps(); savesMenu(a, back); }, bk = () => { if (back) back(); };
+    menu('Save backups: ' + a.name, [
+      { label: 'Save folder: ' + (sv.path ? sv.path.split(/[\\/]/).slice(-2).join('/') : 'Not set (tap to choose)'), fn: async () => { if (sv.path) { delete sv.path; return redo(); } const f = await sk.pickFile('folder'); if (f) sv.path = f; redo(); } },
+      { label: 'Back up now', fn: async () => { const stop = busy('Backing up\u2026'); const r = await sk.extras.do('backupNow', { id: a.id }); stop(); toast(r && r.ok ? 'Backed up (' + Math.round((r.size || 0) / 1048576) + ' MB)' : ((r && r.error) || 'That did not work')); savesMenu(a, back); } },
+      { label: 'Restore\u2026', fn: async () => { const r = await sk.extras.do('backups', a.id), list = (r && r.list) || []; if (!list.length) { toast('No backups yet'); return savesMenu(a, back); }
+        menu('Restore which backup?', list.map(b => ({ label: new Date(b.ts).toLocaleString() + ' \u00B7 ' + b.why + ' \u00B7 ' + Math.round(b.size / 1048576) + ' MB', fn: () => confirm('Restore this backup?', 'Your current save is backed up first, then replaced. Close the game before restoring.', 'Restore', async () => { const x = await sk.extras.do('restore', { id: a.id, name: b.name }); toast(x && x.ok ? 'Restored' : ((x && x.error) || 'That did not work')); savesMenu(a, back); }, true) })).concat([{ label: 'Back', fn: () => savesMenu(a, back) }])); } },
+      { label: 'Keep the newest: ' + (sv.keep || S.settings.backupKeep || 5), fn: () => { const o = [3, 5, 10, 20]; sv.keep = o[(o.indexOf(+sv.keep || +S.settings.backupKeep || 5) + 1) % o.length]; redo(); } },
+      { label: 'Back up before it starts: ' + (sv.onLaunch ? 'On' : 'Off'), fn: () => { sv.onLaunch = !sv.onLaunch; redo(); } },
+      { label: 'Back up after it closes: ' + (sv.onClose ? 'On' : 'Off'), fn: () => { sv.onClose = !sv.onClose; redo(); } },
+      { label: 'Done', fn: bk }
+    ]);
+  }
+  // ---------- routines ----------
+  const RT = { launch: 'Start an app', remote: 'Remote play on or off', notify: 'Show a reminder', pick: 'Pick tonight\u2019s game', sleep: 'Put the PC to sleep', lock: 'Lock the PC' };
+  const dayLabel = d => { d = d || []; const j = d.slice().sort().join(); return !d.length || d.length === 7 ? 'Every day' : j === '1,2,3,4,5' ? 'Weekdays' : j === '0,6' ? 'Weekends' : d.map(x => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][x]).join(' '); };
+  function routineMenu(r, back) {
+    const bk = () => { if (back) back(); }, save = async () => { const x = await sk.extras.do('routineSave', r); if (x && x.ok) { r.id = x.id; return true; } toast((x && x.error) || 'Check the routine'); return false; }, redo = async () => { await save(); routineMenu(r, back); };
+    const types = Object.keys(RT), sets = [[], [1, 2, 3, 4, 5], [0, 6]], ap = S.apps.find(x => x.id === r.app), it = [
+      { label: 'Name: ' + r.name, fn: () => osk({ title: 'Routine name', value: r.name || '', submitLabel: 'Save', onDone: v => { r.name = (v || '').trim() || r.name; redo(); }, onCancel: () => routineMenu(r, back) }) },
+      { label: 'Time: ' + r.time, fn: () => osk({ title: 'Time, 24 hour (like 19:30)', value: r.time, submitLabel: 'Save', onDone: v => { r.time = (v || '').trim(); redo(); }, onCancel: () => routineMenu(r, back) }) },
+      { label: 'Days: ' + dayLabel(r.days), fn: () => { const i = sets.findIndex(x => x.slice().sort().join() === (r.days || []).slice().sort().join()); r.days = sets[(i + 1) % sets.length]; redo(); } },
+      { label: 'It will: ' + RT[r.type], fn: () => { r.type = types[(types.indexOf(r.type) + 1) % types.length]; redo(); } }];
+    if (r.type === 'launch') it.push({ label: 'App: ' + (ap ? ap.name : 'Choose one'), fn: () => menu('Start which app?', S.apps.filter(x => !x.kind).map(x => ({ label: x.name, fn: () => { r.app = x.id; redo(); } })).concat([{ label: 'Back', fn: () => routineMenu(r, back) }])) });
+    if (r.type === 'notify') it.push({ label: 'Message: ' + (r.text || 'None'), fn: () => osk({ title: 'Message', value: r.text || '', submitLabel: 'Save', onDone: v => { r.text = (v || '').slice(0, 120); redo(); }, onCancel: () => routineMenu(r, back) }) });
+    if (r.type === 'remote') it.push({ label: 'Remote play: ' + (r.text === 'off' ? 'Turn off' : 'Turn on'), fn: () => { r.text = r.text === 'off' ? 'on' : 'off'; redo(); } });
+    it.push({ label: r.on === false ? 'Turned off (tap to turn on)' : 'Turned on (tap to turn off)', fn: () => { r.on = r.on === false; redo(); } });
+    it.push({ label: 'Run it now', fn: async () => { if (!(await save())) return routineMenu(r, back); const x = await sk.extras.do('routineRun', r.id); toast(x && x.ok ? 'Done' : ((x && x.error) || 'That did not work')); routineMenu(r, back); } });
+    if (r.id) it.push({ label: 'Delete', fn: () => confirm('Delete this routine?', r.name, 'Delete', async () => { await sk.extras.do('routineRemove', r.id); bk(); }, true) });
+    it.push({ label: 'Done', fn: async () => { await save(); bk(); } }); menu('Routine: ' + (r.name || 'New'), it);
   }
   // ---------- per-game profile: settings that apply only while this game runs ----------
   function profileMenu(a, back) {
@@ -348,7 +430,7 @@
     ]);
   }
   function appMenu(a, ctx) {
-    const run = isRunning(a), it = [{ label: run ? 'Resume' : (['web', 'browse', 'bapp'].includes(a.kind) ? 'Open' : 'Play'), fn: () => openApp(a) }];
+    const run = isRunning(a), it = [{ label: run ? 'Resume' : (a.kind === 'web' ? 'Open' : 'Play'), fn: () => openApp(a) }];
     const back = () => ctx === 'lib' ? go('library', { focus: a.id }) : go('home');
     if (run) it.push({ label: 'Close game', fn: closeRunning });
     if (isPinned(a)) { it.push({ label: 'Unpin from Home', fn: () => { setPinned(a, false); back(); } }); if (ctx === 'home') { it.push({ label: 'Move left', fn: () => { movePin(a, -1); S.lastTileId = a.id; go('home'); } }); it.push({ label: 'Move right', fn: () => { movePin(a, 1); S.lastTileId = a.id; go('home'); } }); } }
@@ -362,12 +444,15 @@
     inCols.forEach(c => it.push({ label: 'Remove from ' + c, fn: () => { cols[c] = cols[c].filter(x => x !== a.id); S.settings.collections = cols; saveSettings(); back(); } }));
     const hidList = S.settings.hiddenApps || [], isHid = hidList.includes(a.id);
     it.push({ label: isHid ? 'Show in Library again' : 'Hide from Library', fn: () => { S.settings.hiddenApps = isHid ? hidList.filter(x => x !== a.id) : hidList.concat([a.id]); saveSettings(); toast(isHid ? a.name + ' is back in the Library' : a.name + ' is hidden. Library > Show > Hidden apps brings it back'); go(ctx === 'lib' ? 'library' : 'home'); } });
-    if (!a.kind || a.kind === 'bapp' || a.kind === 'web') it.push({ label: 'Add to Up next', fn: async () => { const r = await sk.extras.do('queueAdd', a.id); toast(r && r.ok ? a.name + ' is lined up (' + r.n + ')' : ((r && r.error) || 'Could not add')); back(); } });
+    if (!a.kind || a.kind === 'web') it.push({ label: 'Add to Up next', fn: async () => { const r = await sk.extras.do('queueAdd', a.id); toast(r && r.ok ? a.name + ' is lined up (' + r.n + ')' : ((r && r.error) || 'Could not add')); back(); } });
+    if (!a.kind) it.push({ label: 'Details\u2026', fn: () => go('details', { id: a.id, from: ctx === 'lib' ? 'library' : 'home' }) });
     if (!a.kind) it.push({ label: 'Game profile\u2026', fn: () => profileMenu(a, back) });
-    if (!a.kind || a.kind === 'bapp') it.push({ label: 'Duplicate', fn: () => { const c = JSON.parse(JSON.stringify(a)); c.id = (a.kind === 'bapp' ? 'bapp_' : 'app_') + Date.now().toString(36); c.name = a.name + ' (copy)'; S.apps.push(c); saveApps(); toast(c.name + ' added'); back(); } });
-    if (a.kind === 'bapp') {
-      it.push({ label: 'Edit browser app\u2026', fn: () => bappMenu(a, back) });
-    } else if (!a.kind) {
+    if (!a.kind) it.push({ label: 'Save backups\u2026', fn: () => savesMenu(a, back) });
+    if (!a.kind || a.kind === 'web') it.push({ label: 'Play next', fn: async () => { const r = await sk.extras.do('queueAdd', a.id); if (r && r.ok) await sk.extras.do('queueTop', a.id); toast(r && r.ok ? a.name + ' is next in Up next' : ((r && r.error) || 'Could not add')); back(); } });
+    if (!a.kind) it.push({ label: 'Rename\u2026', fn: () => osk({ title: 'Rename', value: a.name, submitLabel: 'Save', onDone: v => { v = (v || '').trim(); if (v) { a.name = v; saveApps(); toast('Renamed'); } back(); }, onCancel: () => back() }) });
+    if (!a.kind && a.exe && !/^[a-z][a-z0-9+.-]*:\/\//i.test(a.exe)) { it.push({ label: 'Copy path', fn: async () => { await sk.extras.do('copyText', a.exe); toast('Path copied'); back(); } }); it.push({ label: 'Open its folder', fn: async () => { await sk.extras.do('showFile', a.exe); back(); } }); }
+    if (!a.kind) it.push({ label: 'Duplicate', fn: () => { const c = JSON.parse(JSON.stringify(a)); c.id = 'app_' + Date.now().toString(36); c.name = a.name + ' (copy)'; S.apps.push(c); saveApps(); toast(c.name + ' added'); back(); } });
+    if (!a.kind) {
       it.push({ label: 'Change cover art', fn: () => findCover(a, () => { saveApps(); back(); }) });
       it.push({ label: 'Edit name and path', fn: () => go('addApp', { app: a }) });
       it.push({ label: 'Remove', fn: () => confirm('Remove ' + a.name + '?', 'This only removes it from SKBox. Your files are not touched.', 'Remove', () => { S.apps = S.apps.filter(x => x.id !== a.id); setPinned(a, false); if (a.cover) sk.cover.remove(a.cover); saveApps(); back(); }, true) });
@@ -407,11 +492,6 @@
     if (a.kind) { sk.stats.touch(a.id); (S.stats = S.stats || {})[a.id] = Object.assign({ ms: 0, n: 0 }, S.stats[a.id], { last: Date.now() }); }
     if (a.kind === 'screen') { go(a.screen); return; }
     if (a.kind === 'music') { sk.music.open(activeUser()); return; }
-    if (a.kind === 'browse') { sk.browse.open({ pad: Math.max(0, K.padIndexOf(S.active)) }); return; }
-    if (a.kind === 'bapp') {
-      const go2 = async rep => { const stop = busy('Opening ' + a.name + '\u2026'); const r = await sk.browse.launchApp({ id: a.id, name: a.name, url: a.url, adblock: a.adblock !== false, auth: a.auth !== false, engine: a.engine || 'built', cover: a.cover, resume: a.resume !== false, ownProfile: !!a.ownProfile, muted: !!a.muted, barHidden: !!a.barHidden, windowed: !!a.windowed, dark: !!a.dark, zoom: a.zoom || 0, pad: Math.max(0, K.padIndexOf(S.active)) }); setTimeout(stop, 600); if (r && r.ok === false) toast(r.error || 'Could not open it'); };
-      if (S.game && S.game.id !== a.id && a.engine === 'edge') confirm('Switch?', S.game.name + ' is running. Close it and open ' + a.name + '?', 'Switch', () => go2()); else if (S.game && S.game.id === a.id) sk.game.resume(); else go2(); return;
-    }
     if (a.kind === 'web') { go('web', { app: a }); return; }
     const payload = replace => ({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: !!replace });
     const run = async replace => { const stop = busy('Launching ' + a.name + '\u2026'); const r = await sk.launch(payload(replace)); setTimeout(stop, 700); if (!r.ok) toast(r.error || 'Could not launch.'); };
@@ -498,7 +578,7 @@
     save.onclick = async () => {
       if (!d.exe.trim()) { toast('Add a path or link first'); return; }
       d.name = (d.name || niceName(d.exe)).trim();
-      const finish = () => { if (!editing) S.apps.push(d); saveApps(); toast(editing ? 'Saved' : d.name + ' added to your Library. Press X to pin it to Home.'); go('library', { focus: d.id }); };
+      const finish = () => { if (!editing) { d.added = Date.now(); S.apps.push(d); } saveApps(); toast(editing ? 'Saved' : d.name + ' added to your Library. Press X to pin it to Home.'); go('library', { focus: d.id }); };
       if (d.cover) { finish(); return; }
       const stop = busy('Finding cover art for ' + d.name + '\u2026'); const r = await sk.cover.auto(d.name);
       if (r.ok) { d.cover = r.file; d.fit = r.fit || 'fill'; stop(); finish(); return; }
@@ -531,70 +611,17 @@
   }
 
 
-  // ---------- browser apps: one website as its own app ----------
-  const bapps = () => S.apps.filter(a => a.kind === 'bapp');
-  async function bappCover(d) { const r = await sk.browse.favicon(d.url); if (r && r.ok) { if (d.cover && d.cover !== r.file) sk.cover.remove(d.cover); d.cover = r.file; d.fit = 'icon'; d.coverAuto = true; return true; } return false; }
-  async function createBapp(done) {
-    osk({ title: 'Website address (for example youtube.com)', value: '', submitLabel: 'Next', onDone: async v0 => {
-      let v = String(v0 || '').trim(); if (!v) return; if (!/^https?:\/\//i.test(v)) v = 'https://' + v.replace(/^\/+/, '');
-      let u; try { u = new URL(v); if (!u.hostname.includes('.')) throw 0; } catch (_) { toast('That does not look like a web address'); return; }
-      const stop = busy('Looking at the site\u2026'); const info = await sk.browse.info(u.href).catch(() => ({})); const drm = await sk.browse.drm(u.href); const eng = await sk.browse.engines(); stop();
-      const host = u.hostname.replace(/^www\./, ''), guess = ((info && info.title) || '').split(/\s[|\u2013\u2014\-\u00B7:]\s/)[0].trim().slice(0, 28) || host.split('.')[0].replace(/^./, c => c.toUpperCase());
-      osk({ title: 'Name for this app', value: guess, submitLabel: 'Next', onDone: name => {
-        name = (name || '').trim().slice(0, 28) || guess;
-        const d = { id: 'bapp_' + Date.now().toString(36), kind: 'bapp', name, url: u.origin + (u.pathname === '/' ? '/' : u.pathname) + u.search, adblock: true, engine: 'built', auth: true, cover: '', fit: '', coverAuto: true };
-        const finish = async () => { const stop2 = busy('Getting the site icon\u2026'); await bappCover(d); stop2(); S.apps.push(d); saveApps(); toast(name + ' added to your Library. Press X to pin it to Home.'); done && done(d); };
-        const askEngine = () => { if (drm) d.adblock = d.adblock; finish(); };
-        menu('Ad blocker for ' + name, [{ label: 'On (recommended)', fn: askEngine }, { label: 'Off for this app', fn: () => { d.adblock = false; askEngine(); } }]);
-      } });
-    } });
-  }
-  function bappMenu(a, back) {
-    const redo = () => { saveApps(); back && back(); };
-    menu(a.name + ' (' + new URL(a.url).hostname + ')', [
-      { label: 'Ad blocker: ' + (a.adblock !== false ? 'On' : 'Off') + ' (tap to change)', fn: () => { a.adblock = a.adblock === false; redo(); toast('Ad blocker ' + (a.adblock !== false ? 'on' : 'off') + ' for ' + a.name); } },
-      { label: 'Resume where I left off: ' + (a.resume !== false ? 'On' : 'Off'), fn: () => { a.resume = a.resume === false; redo(); } },
-      { label: 'Start muted: ' + (a.muted ? 'On' : 'Off'), fn: () => { a.muted = !a.muted; redo(); } },
-      { label: 'Start with the bar hidden: ' + (a.barHidden ? 'On' : 'Off') + ' (F10 shows it)', fn: () => { a.barHidden = !a.barHidden; redo(); } },
-      { label: 'Open in a window instead of fullscreen: ' + (a.windowed ? 'On' : 'Off'), fn: () => { a.windowed = !a.windowed; redo(); } },
-      { label: 'Dark pages: ' + (a.dark ? 'On' : 'Off'), fn: () => { a.dark = !a.dark; redo(); } },
-      { label: 'Page zoom: ' + (a.zoom || 100) + '% (tap to change)', fn: () => { const L = [100, 110, 125, 150, 175]; a.zoom = L[(L.indexOf(a.zoom || 100) + 1) % L.length]; redo(); } },
-      { label: 'Rename', fn: () => osk({ title: 'Name', value: a.name, submitLabel: 'Save', onDone: v => { v = (v || '').trim().slice(0, 28); if (v) { a.name = v; redo(); } } }) },
-      { label: 'Cover: use the site icon (auto)', fn: async () => { const stop = busy('Getting the site icon\u2026'); const ok = await bappCover(a); stop(); toast(ok ? 'Icon updated' : 'Could not get the site icon'); redo(); } },
-      { label: 'Cover: pick other art\u2026', fn: () => findCover(a, () => { a.coverAuto = false; redo(); }) },
-      { label: 'Use my own Chrome/Edge profile: ' + (a.ownProfile ? 'On' : 'Off') + ' (needed for extensions like VidAngel)', fn: () => { a.ownProfile = !a.ownProfile; if (a.ownProfile) a.engine = 'edge'; redo(); } },
-      { label: 'Engine: ' + (a.engine === 'edge' ? 'Edge window (plays Netflix etc.)' : 'SKBrowse') + ' (tap to change)', fn: async () => { const e = await sk.browse.engines(); if (!e.edge) { toast('Edge or Chrome was not found on this PC'); return; } a.engine = a.engine === 'edge' ? 'built' : 'edge'; redo(); toast('Now opens in ' + (a.engine === 'edge' ? 'an Edge window' : 'SKBrowse')); } },
-      { label: 'Allow sign-in pages (Google, Microsoft\u2026): ' + (a.auth !== false ? 'On' : 'Off'), fn: () => { a.auth = a.auth === false; redo(); } },
-      { label: 'Clear this app\u2019s logins and cache', fn: () => confirm('Clear ' + a.name + ' data?', 'You will be signed out of this site.', 'Clear', async () => { await sk.browse.clearApp(a.id); toast('Cleared'); }, true) },
-      { label: 'Remove', fn: () => confirm('Remove ' + a.name + '?', 'Only the app is removed. Its saved logins stay until you clear them.', 'Remove', () => { S.apps = S.apps.filter(x => x.id !== a.id); setPinned(a, false); if (a.cover) sk.cover.remove(a.cover); saveApps(); back && back(); }, true) }
-    ]);
-  }
-
-
-  // ---------- BIG: Streaming services hub. One tap adds a service as a browser app; each one resumes where you left off. ----------
-  const SERVICES = [
-    ['YouTube', 'https://www.youtube.com/', 'Free', 0], ['Twitch', 'https://www.twitch.tv/', 'Free', 0], ['Kick', 'https://kick.com/', 'Free', 0], ['Pluto TV', 'https://pluto.tv/', 'Free live TV', 0], ['Tubi', 'https://tubitv.com/', 'Free movies', 0],
-    ['Plex', 'https://watch.plex.tv/', 'Free', 0], ['Rumble', 'https://rumble.com/', 'Free', 0], ['Vimeo', 'https://vimeo.com/watch', 'Free', 0], ['Dailymotion', 'https://www.dailymotion.com/', 'Free', 0], ['Roku Channel', 'https://therokuchannel.roku.com/', 'Free', 0],
-    ['SoundCloud', 'https://soundcloud.com/', 'Music', 0], ['Crunchyroll', 'https://www.crunchyroll.com/', 'Anime', 1], ['Netflix', 'https://www.netflix.com/browse', 'Subscription', 1], ['Disney+', 'https://www.disneyplus.com/', 'Subscription', 1], ['Hulu', 'https://www.hulu.com/', 'Subscription', 1],
-    ['Max', 'https://www.max.com/', 'Subscription', 1], ['Prime Video', 'https://www.primevideo.com/', 'Subscription', 1], ['Peacock', 'https://www.peacocktv.com/', 'Subscription', 1], ['Paramount+', 'https://www.paramountplus.com/', 'Subscription', 1], ['Apple TV+', 'https://tv.apple.com/', 'Subscription', 1], ['YouTube TV', 'https://tv.youtube.com/', 'Live TV', 1], ['Spotify', 'https://open.spotify.com/', 'Music', 1],
-    ['VidAngel', 'https://www.vidangel.com/', 'Opens in your own Chrome or Edge, where the VidAngel extension lives', 2]
-  ];
-  const svHas = u => { try { const h = new URL(u).hostname; return S.apps.find(a => a.kind === 'bapp' && new URL(a.url).hostname === h); } catch (_) { return null; } };
-  async function addService(sv, eng) {
-    const u = new URL(sv[1]), d = { id: 'bapp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kind: 'bapp', name: sv[0], tag: sv[2] + ' \u00B7 ' + u.hostname, url: sv[1], adblock: !sv[3], engine: sv[3] === 2 && eng && eng.edge ? 'edge' : 'built', ownProfile: sv[3] === 2, auth: true, resume: true, cover: '', fit: '', coverAuto: true };
-    await bappCover(d); S.apps.push(d); saveApps(); return d;
-  }
-
   // ---------- settings ----------
   const NEWS = [
-    ['Watch hub, Milestones, Up next', 'A Watch tile in the Library with everything for shows. 23 Milestones to unlock (Settings > Milestones). Up next lines up games and asks what to play when one closes.'],
+    ['SKServers and SKStore', 'Library > SKServers makes and runs Minecraft servers with a plugin and mod store (Modrinth, SpigotMC). Library > SKStore has featured games and apps: Steam, Epic free games and winget installs.'],
+    ['Game library, game info, phone companion', 'Settings > Game library adds your ROMs by system with emulators. Details shows descriptions, screenshots and trailers. Settings > Phone companion turns your phone into a remote and trackpad.'],
+    ['Details, backups, routines, Wrapped, Steam & Epic', 'Y on a game: Details and Save backups. Settings: Routines, History & Wrapped, Notifications. Import apps finds your Steam and Epic games.'],
+    ['Cemu and menu fixes', 'SKBox now keeps emulator windows borderless and streamable by itself, and a background watcher opens the SK menu from the controller while a game runs (Xbox / PS button, or hold Back + Start).'],
+    ['Milestones and Up next', 'Settings > Milestones has badges to unlock. Up next lines up games and asks what to play when one closes.'],
+    ['SKBrowse removed', 'The built-in browser, browser apps, extensions and the streaming hub are gone.'],
     ['Playtime dashboard', 'Settings > Play stats now has a chart, your streak, a ranking with bars and a 7, 14 or 30 day view.'],
-    ['Continue watching', 'Settings > Continue watching lists every streaming app with the show you were on, plus pages saved with Watch later in SKBrowse. Home and Library show \u201CContinue: title\u201D.'],
     ['Game profiles', 'Press Y on a game > Game profile: its own Remote play quality, brightness, close method, time limit, a program to start before and after it, and an action when you stop playing.'],
     ['Cemu fullscreen fix', 'Emulators no longer use their own exclusive fullscreen, so Remote play can see them. Extras > Emulator window style changes it back.'],
-    ['VidAngel in SKBrowse', 'A compatibility layer lets Chrome extensions that message their website or rewrite requests run inside SKBrowse.'],
-    ['Streaming services hub', 'Settings > Streaming services adds YouTube, Twitch, Netflix, Disney+ and more as apps in one tap. Each one remembers where you were.'],
-    ['SKBrowse', 'A built-in browser with tabs, ad block and Chrome Web Store extensions. Settings > SKBrowse & browser apps turns any website into its own app, locked to that site.'],
     ['Cemu and other emulators', 'Start in a clean, full-screen window with the menu bar hidden, even when Remote play is off.'],
     ['Windows without leaving SKBox', 'The SK menu has a Windows page: switch to, fit, hide or close any window with the controller.'],
     ['Player controllers', 'Each controller now belongs to one player: Player 1\u2019s controller cannot use Player 2\u2019s things and the other way round. The highlight turns orange with a P2 tag when Player 2 is moving. Change who is who in Settings > Controllers, or press Y on a player chip on Home.'],
@@ -617,21 +644,26 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['shows', '\u{1F37F}', 'Streaming services'], ['browser', '\u{1F310}', 'SKBrowse & browser apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['watching', '\u25B6', 'Continue watching'], ['queue', '\u23ED', 'Up next'], ['milestones', '\u{1F3C6}', 'Milestones'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['queue', '\u23ED', 'Up next'], ['roms', '\u{1F579}', 'Game library'], ['companion', '\u{1F4F1}', 'Phone companion'], ['routines', '\u23F0', 'Routines'], ['history', '\u{1F4C5}', 'History & Wrapped'], ['notifs', '\u{1F514}', 'Notifications'], ['milestones', '\u{1F3C6}', 'Milestones'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
     const split = el('div', 'split'), menuE = el('div', 'menu'), pane = el('div', 'pane');
     split.append(menuE, pane); root.querySelector('.page').appendChild(split);
-    let sel = d.cat || (CATS.some(c => c[0] === S.settings.lastCat) ? S.settings.lastCat : 'wifi'), firstEl = null;
+    const KW = { extras: 'goal streak quiet hours idle start screen emulator cemu fullscreen reminder break limit tiles badge backup', stats: 'play time chart', history: 'wrapped sessions csv export', routines: 'schedule timer automatic', notifs: 'notification log', queue: 'playlist next', milestones: 'badges achievements', apps: 'add games', import: 'steam epic scan', sysinfo: 'cpu memory ram disk', display: 'theme startup', power: 'sleep shutdown restart lock', remote: 'stream' };
+    const q = (S.settingsQ || '').toLowerCase().trim(), cats = q ? CATS.filter(([id, ic, name]) => (name + ' ' + (KW[id] || '')).toLowerCase().includes(q)) : CATS;
+    let sel = d.cat || (cats.some(c => c[0] === S.settings.lastCat) ? S.settings.lastCat : (cats[0] ? cats[0][0] : 'wifi')), firstEl = null;
+    if (!cats.some(c => c[0] === sel) && cats[0]) sel = cats[0][0];
     const items = {};
-    CATS.forEach(([id, ic, name]) => {
+    const sb = nav(el('button', 'mi', '<span>\u{1F50D}</span>' + (q ? 'Searching: ' + esc(q) : 'Search settings'))); sb.onclick = () => osk({ title: 'Search settings', value: S.settingsQ || '', submitLabel: 'Search', onDone: v => { S.settingsQ = (v || '').trim(); go('settings', {}); }, onCancel: () => {} }); menuE.appendChild(sb);
+    if (q) { const cl = nav(el('button', 'mi', '<span>\u2715</span>Clear search')); cl.onclick = () => { S.settingsQ = ''; go('settings', {}); }; menuE.appendChild(cl); if (!cats.length) menuE.appendChild(el('div', 'sub', 'Nothing matches.')); }
+    cats.forEach(([id, ic, name]) => {
       const m = nav(el('button', 'mi', '<span>' + ic + '</span>' + name)); items[id] = m; if (id === sel) { m.classList.add('sel'); firstEl = m; }
       m._onfocus = () => { if (sel !== id || !pane.firstChild) { sel = id; if (S.settings.lastCat !== id) { S.settings.lastCat = id; saveSettings(); } Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); panel(id, pane); } };
       m.onclick = () => { const f = pane.querySelector('[data-nav]'); if (f) focus(f); };
       menuE.appendChild(m);
     });
-    firstEl.dataset.first = ''; panel(sel, pane); ensureFocus(root, firstEl);
+    if (!firstEl) firstEl = sb; firstEl.dataset.first = ''; if (cats.length) panel(sel, pane); ensureFocus(root, firstEl);
   }
   const row = (title, sub, right, fn) => { const b = nav(el('button', 'item', '<div>' + esc(title) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div><div class="r">' + (right || '') + '</div>')); if (fn) b.onclick = fn; return b; };
   // a row that cycles through choices when you press A
@@ -676,12 +708,8 @@
       h('Apps'); sub('Add a game or program by its file path. SKBox finds cover art for you.');
       pane.appendChild(row('Add an app', '', '+', () => go('addApp')));
       S.apps.forEach(a => { pane.appendChild(row(a.name, a.exe + (isPinned(a) ? ' \u00B7 on Home' : ''), 'Edit', () => go('addApp', { app: a }))); });
-      pane.appendChild(row('Find missing cover art', 'Looks up covers for every app that has none', '\u2192', async () => {
-        const todo = S.apps.filter(a => !a.kind && !a.cover); if (!todo.length) return toast('Every app already has a cover');
-        const stop = busy('Finding covers for ' + todo.length + ' app' + (todo.length > 1 ? 's' : '') + '\u2026'); let n = 0;
-        for (const a of todo) { try { const r = await sk.cover.auto(a.name); if (r && r.ok) { a.cover = r.file; a.fit = r.fit || 'fill'; n++; } else { const ic = await sk.cover.icon(a.exe); if (ic && ic.ok) { a.cover = ic.file; a.fit = 'icon'; } } } catch (_) {} }
-        stop(); saveApps(); toast(n + ' of ' + todo.length + ' covers found'); go('settings', { cat: 'apps' });
-      }));
+      pane.appendChild(row('Fetch game info for all games', 'Descriptions, genres and trailers. Also lets the Library filter by genre.', '\u2192', async () => { const stop = busy('Looking up your games\u2026'); const r = await sk.extras.do('infoFetchAll'); stop(); refreshInfo(); toast(r && r.ok ? r.found + ' of ' + r.tried + ' games found' : ((r && r.error) || 'That did not work')); }));
+      pane.appendChild(row('Find missing cover art', 'Looks up covers for every app that has none', '\u2192', async () => { const todo = S.apps.filter(a => !a.kind && !a.cover); if (!todo.length) return toast('Every app already has a cover'); const n = await findCoversFor(todo); toast(n + ' of ' + todo.length + ' covers found'); go('settings', { cat: 'apps' }); }));
       pane.appendChild(row('Open Library', 'Pin or unpin apps on the Home screen', '\u2192', () => go('library')));
       if (!S.apps.length) pane.appendChild(el('div', 'sub', 'No apps yet.'));
     } else if (id === 'cozy') {
@@ -734,80 +762,17 @@
 
 
     } else if (id === 'import') {
-      h('Import apps'); sub('Looks through your Start Menu and Desktop shortcuts and adds the real programs behind them. Emulators such as Cemu are listed first.');
+      h('Import apps'); sub('Looks through your Start Menu and Desktop shortcuts, and your Steam and Epic Games libraries. Emulators such as Cemu are listed first. Steam and Epic games start through their launcher.');
       const info = el('div', 'sub', 'Looking for apps\u2026'); pane.appendChild(info);
-      const bar = el('div', 'btnrow'), box = el('div'), sel = new Set(); let list = [];
+      const bar = el('div', 'btnrow'), box = el('div'), sel = new Set(); let list = [], launcherList = [];
       const mkb = (label, fn) => { const b = nav(el('button', 'btn', label)); b.onclick = fn; bar.appendChild(b); return b; };
       const have = e => S.apps.some(a => String(a.exe || '').toLowerCase() === e.target.toLowerCase());
-      const addBtn = mkb('Add selected (0)', async () => { if (!sel.size) { toast('Tap apps in the list to select them'); return; } let n = 0; for (const i of sel) { const e = list[i]; if (!e || have(e)) continue; S.apps.push({ id: 'app_' + Date.now().toString(36) + n, name: e.name, exe: e.target, args: e.args || '', cover: '' }); n++; } saveApps(); sel.clear(); toast(n + ' apps added. Use Find cover art on a tile to give it a picture.'); draw(); });
-      mkb('Select all', () => { list.forEach((e, i) => { if (!have(e)) sel.add(i); }); draw(); }); mkb('Select emulators', () => { sel.clear(); list.forEach((e, i) => { if (e.emu && !have(e)) sel.add(i); }); draw(); }); mkb('Select none', () => { sel.clear(); draw(); });
+      const addBtn = mkb('Add selected (0)', async () => { if (!sel.size) { toast('Tap apps in the list to select them'); return; } let n = 0; for (const i of sel) { const e = list[i]; if (!e || have(e)) continue; S.apps.push({ id: 'app_' + Date.now().toString(36) + n, name: e.name, exe: e.target, args: e.args || '', cover: '', added: Date.now(), src: e.src || '' }); n++; } saveApps(); sel.clear(); toast(n + ' apps added. Use Find cover art on a tile to give it a picture.'); draw(); });
+      mkb('Select all', () => { list.forEach((e, i) => { if (!have(e)) sel.add(i); }); draw(); }); mkb('Select emulators', () => { sel.clear(); list.forEach((e, i) => { if (e.emu && !have(e)) sel.add(i); }); draw(); }); mkb('Select Steam & Epic', () => { sel.clear(); list.forEach((e, i) => { if (e.src && !have(e)) sel.add(i); }); draw(); }); mkb('Select none', () => { sel.clear(); draw(); });
       pane.appendChild(bar); pane.appendChild(box);
-      const draw = () => { addBtn.textContent = 'Add selected (' + sel.size + ')'; box.innerHTML = ''; list.forEach((e, i) => { const h2 = have(e); box.appendChild(row((e.emu ? '\u2605 ' : '') + e.name, e.target + (e.args ? ' ' + e.args : ''), h2 ? 'Added \u2713' : (sel.has(i) ? '\u2611' : '\u2610'), () => { if (h2) return; if (sel.has(i)) sel.delete(i); else sel.add(i); draw(); })); }); };
-      sk.apps.scan().then(r => { if (!pane.isConnected) return; list = (r && r.list) || []; info.textContent = list.length ? list.length + ' programs found. Tap to select, then Add selected.' : 'Nothing found. This only works on Windows with Start Menu shortcuts.'; draw(); });
-    } else if (id === 'shows') {
-      h('Streaming services'); sub('Tap a service to add it to your Library as an app. Apps remember where you left off. Protected services (Netflix and others) play inside SKBrowse.');
-      const eng0 = { edge: '' }; sk.browse.engines().then(e => { eng0.edge = e.edge; });
-      pane.appendChild(row('Add all free services', 'YouTube, Twitch, Kick, Pluto TV, Tubi, Plex, Rumble, Vimeo, Dailymotion, Roku Channel, SoundCloud', '+', async () => {
-        const stop = busy('Adding services\u2026'); let n = 0; for (const sv of SERVICES.filter(x => !x[3])) if (!svHas(sv[1])) { await addService(sv, eng0); n++; } stop(); toast(n ? n + ' services added. Press X on one to pin it to Home.' : 'They are all added already'); go('settings', { cat: 'shows' });
-      }));
-      [['Free and music', x => !x[3]], ['Subscription and protected video', x => x[3] === 1], ['Needs a Chrome extension (VidAngel)', x => x[3] === 2]].forEach(([title, f]) => {
-        pane.appendChild(el('h3', '', title));
-        SERVICES.filter(f).forEach(sv => { const have = svHas(sv[1]);
-          pane.appendChild(row(sv[0], sv[2] + '', have ? 'Added \u2713' : 'Add', () => {
-            if (have) { menu(sv[0], [{ label: 'Open', fn: () => openApp(have) }, { label: 'Pin to Home', fn: () => { setPinned(have, true); toast(sv[0] + ' pinned to Home'); } }, { label: 'Edit\u2026', fn: () => bappMenu(have, () => go('settings', { cat: 'shows' })) }]); return; }
-            (async () => { const e = await sk.browse.engines(); const stop = busy('Adding ' + sv[0] + '\u2026'); const d = await addService(sv, e); stop(); toast(sv[0] + ' added. Press X to pin it to Home.'); go('settings', { cat: 'shows', focus: d.id }); })();
-          })); });
-      });
-    } else if (id === 'browser') {
-      h('SKBrowse & browser apps'); sub('SKBrowse is a full browser with tabs, an ad blocker and Chrome extensions. Browser apps turn one website into its own app.');
-      const sv = (k, v) => { S.settings[k] = v; saveSettings(); };
-      const pad = () => Math.max(0, K.padIndexOf(S.active));
-      pane.appendChild(el('h3', '', 'SKBrowse'));
-      pane.appendChild(row('Open SKBrowse', 'Tabs, bookmarks, history and extensions. Start button opens its menu', '\u2192', () => sk.browse.open({ pad: pad() })));
-      pane.appendChild(row('Open the Chrome Web Store', 'Browse extensions, then press Add to SKBrowse in the bar', '\u2192', () => sk.browse.open({ pad: pad(), url: 'https://chromewebstore.google.com/' })));
-      const drmRow = row('Protected video (Netflix, Disney+, Hulu, Max\u2026)', 'Checking\u2026', '', null); pane.appendChild(drmRow);
-      sk.browse.drmStatus().then(r => { if (!drmRow.isConnected) return; drmRow.querySelector('small').textContent = r.ok ? 'Ready. Widevine ' + (r.version || '') + ' is installed' : (r.why || 'Widevine is ' + (r.status || 'still downloading') + '. Restart SKBox if this stays like this'); });
-      pane.appendChild(el('div', 'sub', 'VidAngel and other extensions that talk to their website or rewrite requests now work through a built-in compatibility layer. Install the extension from the Web Store inside SKBrowse, then use vidangel.com in the same SKBrowse window. If it still refuses, Settings > Streaming services has VidAngel in your own Chrome or Edge profile.'));
-      const ad = row('Ad blocker', 'Blocks ad and tracker hosts, hides ad boxes, skips YouTube ads', '', null); pane.appendChild(ad);
-      pane.appendChild(toggle('Ad blocker on', 'The default for SKBrowse. Browser apps have their own switch', S.settings.sbAdblock !== false, v => sv('sbAdblock', v)));
-      const lst = row('Update the filter list', 'Downloads a larger ad and tracker list', '\u2193', async () => { toast('Downloading\u2026'); const r = await sk.browse.updateList(); toast(r.ok ? r.n + ' hosts blocked (' + r.added + ' new)' : r.error || 'Could not update'); });
-      pane.appendChild(lst);
-      sk.browse.engines().then(e => { if (!ad.isConnected) return; ad.querySelector('.r').textContent = e.stats.hosts + ' hosts'; });
-      pane.appendChild(toggle('Dark pages', 'Turns bright websites dark', !!S.settings.sbDark, v => sv('sbDark', v)));
-      pane.appendChild(toggle('Hide cookie banners', 'Removes consent pop-ups', S.settings.sbCookies !== false, v => sv('sbCookies', v)));
-      pane.appendChild(toggle('Strip tracking from links', 'Removes utm_, fbclid, gclid and similar', S.settings.sbClean !== false, v => sv('sbClean', v)));
-      pane.appendChild(toggle('Send Do Not Track', 'Asks sites not to track you', S.settings.sbDnt !== false, v => sv('sbDnt', v)));
-      pane.appendChild(toggle('Block permission pop-ups', 'Location, notifications, camera and mic requests are refused', S.settings.sbPerms !== false, v => sv('sbPerms', v)));
-      pane.appendChild(toggle('Always use https', 'Upgrades http links', !!S.settings.sbHttpsAll, v => sv('sbHttpsAll', v)));
-      pane.appendChild(toggle('Skip intro, recap and next-episode buttons', 'Clicks them for you while you watch', S.settings.sbSkipIntro !== false, v => sv('sbSkipIntro', v)));
-      pane.appendChild(toggle('Hide the mouse over videos', 'Disappears after 3 seconds', S.settings.sbHideCursor !== false, v => sv('sbHideCursor', v)));
-      pane.appendChild(toggle('Video speed keys', '[ slower, ] faster, \\ normal', S.settings.sbSpeedKeys !== false, v => sv('sbSpeedKeys', v)));
-      pane.appendChild(toggle('Clock in the bar', '', S.settings.sbClock !== false, v => sv('sbClock', v)));
-      pane.appendChild(toggle('Reopen my tabs next time', 'SKBrowse restores the tabs you had', !!S.settings.sbRestore, v => sv('sbRestore', v)));
-      pane.appendChild(toggle('Forget cookies when SKBrowse closes', 'Signs you out each time', !!S.settings.sbClearExit, v => sv('sbClearExit', v)));
-      pane.appendChild(toggle('Upgrade typed addresses to https', 'youtube.com opens as https://youtube.com', S.settings.sbHttps !== false, v => sv('sbHttps', v)));
-      pane.appendChild(toggle('Open SKBrowse fullscreen', 'Off gives a normal window', S.settings.sbFullscreen !== false, v => sv('sbFullscreen', v)));
-      pane.appendChild(toggle('Remember history', 'Sites you visited, shown in the History page', S.settings.sbHistory !== false, v => sv('sbHistory', v)));
-      pane.appendChild(toggle('Closing the last tab leaves SKBrowse', 'Off opens a new tab instead', S.settings.sbCloseLast === 'exit', v => sv('sbCloseLast', v ? 'exit' : 'home')));
-      pane.appendChild(cyc('Search engine', 'Used when you type words instead of an address', [['google', 'Google'], ['duckduckgo', 'DuckDuckGo'], ['bing', 'Bing'], ['brave', 'Brave'], ['youtube', 'YouTube']], () => S.settings.sbSearch || 'google', v => sv('sbSearch', v)));
-      pane.appendChild(cyc('Page zoom', 'Default size of web pages', [100, 110, 125, 150, 175, 200].map(n => [String(n), n + '%']), () => String(S.settings.sbZoom || 100), v => sv('sbZoom', +v)));
-      pane.appendChild(row('Home page', (S.settings.sbHome || 'A new-tab page with shortcuts'), '\u2192', () => osk({ title: 'Home page (empty = new-tab page)', value: S.settings.sbHome || '', submitLabel: 'Save', onDone: v => { sv('sbHome', (v || '').trim()); go('settings', { cat: 'browser' }); } })));
-      pane.appendChild(toggle('Update the filter list by itself', 'About once a week, in the background', S.settings.sbAutoList !== false, v => sv('sbAutoList', v)));
-      pane.appendChild(el('h3', '', 'Tidy up'));
-      [['Clear cookies', 'cookies', 'Signs you out of sites in SKBrowse'], ['Clear the cache', 'cache', 'Frees space'], ['Clear history', 'history', 'The History page'], ['Clear bookmarks', 'bookmarks', 'All of them'], ['Clear the downloads list', 'downloads', 'The list only, not the files']].forEach(([t, k, d0]) => pane.appendChild(row(t, d0, '', () => confirm(t + '?', d0 + '.', 'Clear', async () => { await sk.browse.clear(k); toast('Done'); }, true))));
-      pane.appendChild(row('Open the Downloads folder', '', '\u2192', () => sk.browse.openDownloads()));
-      pane.appendChild(row('Export bookmarks to the Desktop', 'A standard bookmarks file other browsers can import', '\u2192', async () => { const r = await sk.browse.exportBookmarks(); toast(r.ok ? r.n + ' bookmarks exported' : 'Could not export'); }));
-      pane.appendChild(row('Reset SKBrowse options', 'Puts every SKBrowse switch back to its default', '', () => confirm('Reset SKBrowse options?', 'Your bookmarks, history and apps stay.', 'Reset', async () => { await sk.browse.resetOpts(); S.settings = (await sk.store.get('settings', {})) || S.settings; toast('Reset'); go('settings', { cat: 'browser' }); })));
-      pane.appendChild(el('div', 'sub', 'Hotkeys: Ctrl+Alt+Shift+B opens SKBrowse, +H hides it and returns to SKBox, +M shows the desktop, +T opens Task Manager. In SKBrowse: Ctrl+T new tab, Ctrl+L address, Ctrl+W close tab, F10 hides the bar, [ and ] change video speed.'));
-      pane.appendChild(el('h3', '', 'Browser apps'));
-      pane.appendChild(row('Create a browser app', 'Type a website. It becomes an app that only opens that site, with its icon as the cover', '+', () => createBapp(() => go('settings', { cat: 'browser' }))));
-      const bl = bapps();
-      if (!bl.length) pane.appendChild(el('div', 'sub', 'No browser apps yet. Try youtube.com or twitch.tv.'));
-      bl.forEach(a => pane.appendChild(row(a.name, (new URL(a.url).hostname) + ' \u00B7 ads ' + (a.adblock !== false ? 'blocked' : 'allowed') + ' \u00B7 ' + (a.engine === 'edge' ? 'Edge window' : 'SKBrowse'), '\u2026', () => bappMenu(a, () => go('settings', { cat: 'browser' })))));
-      pane.appendChild(el('h3', '', 'Extensions'));
-      const ex = row('Manage extensions', 'Install from the Chrome Web Store with a link or the Add button', '\u2192', () => sk.browse.open({ pad: pad() })); pane.appendChild(ex);
-      sk.browse.engines().then(e => { if (ex.isConnected) ex.querySelector('.r').textContent = (e.ext || []).length + ' installed'; });
-      pane.appendChild(el('div', 'sub', 'Open SKBrowse > Start > Extensions to install, turn off or remove them. SKBrowse runs many Chrome extensions but not all of them.'));
+      const draw = () => { addBtn.textContent = 'Add selected (' + sel.size + ')'; box.innerHTML = ''; list.forEach((e, i) => { const h2 = have(e); box.appendChild(row((e.src ? '[' + e.src + '] ' : '') + (e.emu ? '\u2605 ' : '') + e.name, e.target + (e.args ? ' ' + e.args : ''), h2 ? 'Added \u2713' : (sel.has(i) ? '\u2611' : '\u2610'), () => { if (h2) return; if (sel.has(i)) sel.delete(i); else sel.add(i); draw(); })); }); };
+      sk.apps.launchers().then(r => { launcherList = (r && r.list) || []; if (!pane.isConnected) return; list = list.filter(e => !e.src).concat(launcherList); draw(); }).catch(() => {});
+      sk.apps.scan().then(r => { if (!pane.isConnected) return; list = ((r && r.list) || []).concat(launcherList); info.textContent = list.length ? list.length + ' programs found. Tap to select, then Add selected.' : 'Nothing found. This only works on Windows with Start Menu shortcuts.'; draw(); });
     } else if (id === 'windows') {
       h('Windows opened apps'); sub('Everything open on this PC. Close asks the app to close, and ends it if it will not.');
       const X = (n, a) => sk.extras.do(n, a), sv = (k, v) => { S.settings[k] = v; saveSettings(); };
@@ -943,9 +908,24 @@
       pane.appendChild(cyc('Emulator window style', 'How Cemu and other emulators go full screen', [['window', 'Windowed fullscreen (Remote play can see it)'], ['own', 'The emulator\u2019s own fullscreen']], () => S.settings.emuStyle || 'window', v => sv('emuStyle', v)));
       pane.appendChild(cyc('When I stop playing', 'Happens 45 seconds after a game closes (only after 1+ minute of play)', [['', 'Nothing'], ['lock', 'Lock the PC'], ['sleep', 'Sleep'], ['shutdown', 'Shut down']], () => S.settings.afterGame || '', v => sv('afterGame', v)));
       pane.appendChild(row('Cancel the automatic PC action', 'If one is counting down', '\u2192', async () => say(await X('cancelAfter'), 'Cancelled')));
-      pane.appendChild(toggle('Close SKBrowse windows when a game starts', 'Frees memory and stops sound from the browser', !!S.settings.closeBrowseOnGame, v => sv('closeBrowseOnGame', v)));
+      pane.appendChild(toggle('Open the SK menu from inside games', 'Xbox / PS button, or hold Back + Start, even when the game has focus', S.settings.padWatch !== false, v => sv('padWatch', v)));
+      pane.appendChild(toggle('Look up game info automatically', 'Opening Details fetches the description, screenshots and trailer. Only the game\u2019s name goes to Steam or Wikipedia.', S.settings.gameInfoAuto !== false, v => sv('gameInfoAuto', v)));
       pane.appendChild(toggle('Controller battery warning', 'A notification when a controller is almost empty', S.settings.padBatteryWarn !== false, v => sv('padBatteryWarn', v)));
       pane.appendChild(toggle('Hide the mouse cursor when idle', 'In SKBox, after a few seconds without moving it', S.settings.hideCursor !== false, v => { sv('hideCursor', v); document.body.classList.remove('nocursor'); }));
+      sec('Goals & quiet');
+      pane.appendChild(cyc('Daily play goal', 'A notification when you reach it', [['0', 'Off'], ['1', '1 hour'], ['2', '2 hours'], ['3', '3 hours'], ['4', '4 hours']], () => String(S.settings.dailyGoalH || 0), v => sv('dailyGoalH', +v)));
+      pane.appendChild(toggle('Streak saver', 'At 8 pm, a nudge if a streak of 3+ days has not been played today', !!S.settings.streakSaver, v => sv('streakSaver', v)));
+      pane.appendChild(toggle('Quiet hours', 'No notification pop-ups in this window (they still show in Notifications)', !!S.settings.quietOn, v => sv('quietOn', v)));
+      pane.appendChild(cyc('Quiet from', '', [['21:00', '9 pm'], ['22:00', '10 pm'], ['23:00', '11 pm'], ['00:00', 'Midnight']], () => S.settings.quietFrom || '23:00', v => sv('quietFrom', v)));
+      pane.appendChild(cyc('Quiet until', '', [['06:00', '6 am'], ['07:00', '7 am'], ['08:00', '8 am'], ['09:00', '9 am']], () => S.settings.quietTo || '07:00', v => sv('quietTo', v)));
+      pane.appendChild(cyc('Shortest session to record', 'Shorter ones are left out of History', [['1', '1 minute'], ['2', '2 minutes'], ['5', '5 minutes'], ['10', '10 minutes']], () => String(S.settings.minSession === undefined ? 2 : S.settings.minSession), v => sv('minSession', +v)));
+      sec('Look & feel');
+      pane.appendChild(cyc('Start on', 'What opens after you pick your profile', [['home', 'Home'], ['library', 'Library']], () => S.settings.startScreen || 'home', v => sv('startScreen', v)));
+      pane.appendChild(cyc('Close the SK menu when idle', 'Closes itself after no input for a while', [['0', 'Never'], ['30', '30 seconds'], ['60', '1 minute'], ['120', '2 minutes']], () => String(S.settings.overlayIdle || 0), v => sv('overlayIdle', +v)));
+      pane.appendChild(toggle('Smaller tiles in the Library', 'Fits more games on screen', !!S.settings.compactGrid, v => { sv('compactGrid', v); document.body.classList.toggle('compact', v); }));
+      pane.appendChild(toggle('Show hours played on tiles', 'A small badge after the first hour', !!S.settings.hoursBadge, v => sv('hoursBadge', v)));
+      pane.appendChild(toggle('NEW badge on recently added apps', 'For a week after you add them', S.settings.newBadge !== false, v => sv('newBadge', v)));
+      pane.appendChild(cyc('Save backups to keep', 'The default for every game, changeable per game', [['3', '3'], ['5', '5'], ['10', '10'], ['20', '20']], () => String(S.settings.backupKeep || 5), v => sv('backupKeep', +v)));
       sec('Helpers');
       pane.appendChild(toggle('Hotkeys', 'Master switch for every Ctrl+Alt+Shift hotkey', S.settings.hotkeysOn !== false, v => sv('hotkeysOn', v)));
       pane.appendChild(row('Hotkey list', '', '\u2192', () => confirm('Hotkeys', 'Ctrl+Alt+Shift with:  F fit the game window  \u00B7  K close the game  \u00B7  Up / Down brightness  \u00B7  D dimmer  \u00B7  N night filter.  Ctrl+Shift+S takes a screenshot.', 'OK', () => {}, false)));
@@ -983,21 +963,10 @@
       pane.appendChild(cyc('Show the last', 'Days in the chart and the ranking', [['7', '7 days'], ['14', '14 days'], ['30', '30 days']], () => String(S.settings.statRange || 14), v => { S.settings.statRange = +v; saveSettings(); load(); }));
       pane.appendChild(box); load();
       sec('Tools');
+      if (+S.settings.dailyGoalH) sk.extras.do('goal').then(g => { if (g && g.goalH) { const w = row('Daily goal', 'Set in Extras & QOL', fh(g.today) + ' of ' + g.goalH + ' h', null); const gb = el('div', 'gbar'); gb.innerHTML = '<i style="width:' + Math.min(100, Math.round(g.today / (g.goalH * 3600000) * 100)) + '%"></i>'; w.firstChild.appendChild(gb); pane.insertBefore(w, box); } });
       pane.appendChild(row('Copy this summary', 'Handy to paste to a friend', '\u2192', async () => { const r = await X('summary', +S.settings.statRange || 14); toast(r && r.ok ? 'Copied' : 'That did not work'); }));
       pane.appendChild(toggle('Monday play report', 'A short notification about last week', S.settings.weeklyReport !== false, v => { S.settings.weeklyReport = v; saveSettings(); }));
       pane.appendChild(row('Reset all play stats', 'Play time, launches and history', '\u2192', () => confirm('Reset all play stats?', 'This cannot be undone.', 'Reset', async () => { await X('resetAll'); S.stats = {}; toast('Stats reset'); load(); }, true)));
-    } else if (id === 'watching') {
-      h('Continue watching'); sub('Pick a show up where you left it. SKBox remembers the last page of each streaming app, and anything you save with Watch later in SKBrowse (Start menu in SKBrowse).');
-      const X = (n, a) => sk.extras.do(n, a), box = el('div'); pane.appendChild(box);
-      const load = async () => {
-        const r = await X('watchList'); if (!box.isConnected) return; box.innerHTML = ''; refreshWatch();
-        if (!(r.list || []).length && !(r.later || []).length) { box.appendChild(el('div', 'sub', 'Nothing yet. Open a streaming app and watch something. It shows up here.')); return; }
-        if ((r.list || []).length) { box.appendChild(el('h3', '', 'Where you left off')); r.list.forEach(w => { const ap = allApps().find(x => x.id === w.id); const rw = row(w.name, (w.title || w.url).slice(0, 70) + ' \u00B7 ' + fmtAgo(w.t), 'Continue', () => ap && openApp(ap)); rw._onopts = () => confirm('Forget ' + w.name + '?', 'It will open at its start page next time.', 'Forget', async () => { await X('watchClear', w.id); load(); }, true); box.appendChild(rw); }); }
-        if ((r.later || []).length) { box.appendChild(el('h3', '', 'Watch later')); r.later.forEach(l => { let host = ''; try { host = new URL(l.url).hostname.replace(/^www\./, ''); } catch (_) {} const rw = row(l.title, host + ' \u00B7 ' + fmtAgo(l.t), 'Open', () => sk.browse.open({ url: l.url })); rw._onopts = () => confirm('Remove from Watch later?', l.title, 'Remove', async () => { await X('laterRemove', l.url); load(); }, true); box.appendChild(rw); }); }
-        box.appendChild(el('div', 'sub', 'Press Y on an item to remove it.'));
-        box.appendChild(row('Forget everything I was watching', '', '\u2192', () => confirm('Forget where you left off?', 'Saved Watch later pages stay.', 'Forget', async () => { await X('watchClear'); load(); }, true)));
-      };
-      load();
     } else if (id === 'milestones') {
       h('Milestones'); const box = el('div'); pane.appendChild(box);
       sk.extras.do('milestones').then(r => {
@@ -1005,6 +974,69 @@
         r.list.slice().sort((a, b) => (b.done - a.done) || ((b.cur / b.goal) - (a.cur / a.goal))).forEach(m => { const rw = row((m.done ? '\u{1F3C6} ' : '\u{1F512} ') + m.name, m.desc + (m.done && m.t ? ' \u00B7 ' + fmtAgo(m.t) : ''), m.done ? 'Unlocked' : m.cur + ' / ' + m.goal, null); if (!m.done) { const gb = el('div', 'gbar'); gb.innerHTML = '<i style="width:' + Math.round(m.cur / m.goal * 100) + '%"></i>'; rw.firstChild.appendChild(gb); } box.appendChild(rw); });
         box.appendChild(el('div', 'sub', 'A notification pops up when you unlock one.'));
       });
+    } else if (id === 'roms') {
+      h('Game library'); sub('Point SKBox at your ROM folders. It finds your games by system, finds or downloads the emulators, and adds everything ready to play, with cover art. Cemu, DuckStation and melonDS can be downloaded here. The others are found on this PC or picked by hand.');
+      const X = (n, a) => sk.extras.do(n, a), sec = t => pane.appendChild(el('h3', '', t)), emuBox = el('div'), folderBox = el('div'), resBox = el('div');
+      sec('Emulators'); pane.appendChild(emuBox); sec('ROM folders'); pane.appendChild(folderBox); sec('Your games'); pane.appendChild(resBox);
+      const loadEmus = async (r) => { r = r || await X('emus'); if (!emuBox.isConnected) return; emuBox.innerHTML = '';
+        (r.list || []).forEach(e => emuBox.appendChild(row(e.name, e.systems.join(', ') + (e.path ? ' \u00B7 ' + e.path.split(/[\\/]/).slice(-3).join('/') : ' \u00B7 not set up'), e.path ? (e.tag || 'Ready') : 'Set up', () => {
+          const it = []; if (e.canDownload) it.push({ label: e.path ? 'Update or reinstall (download)' : 'Download and install', fn: async () => { const stop = busy('Downloading ' + e.name + '\u2026'); const x = await X('emuInstall', e.id); stop(); toast(x && x.ok ? e.name + ' ' + (x.tag || '') + ' is ready' : ((x && x.error) || 'That did not work')); loadEmus(x); } });
+          it.push({ label: 'Choose the program\u2026', fn: async () => { const f = await sk.pickFile('exe'); if (f) { loadEmus(await X('emuSet', { id: e.id, path: f })); } } }); if (e.path) it.push({ label: 'Forget it', fn: async () => loadEmus(await X('emuSet', { id: e.id, path: '' })) });
+          if (!e.canDownload) it.push({ label: 'Where to get it: ' + e.site.replace(/^https?:\/\//, ''), fn: () => toast(e.site) }); it.push({ label: 'Back', fn: () => {} }); menu(e.name, it); })));
+        emuBox.appendChild(row('Look for emulators on this PC', 'Checks common folders such as C:\\Emulators, Downloads and Program Files', '\u2192', async () => { const stop = busy('Looking\u2026'); const x = await X('emuFind'); stop(); toast(x && x.found ? 'Found ' + x.found : 'Nothing new found'); loadEmus(x); })); };
+      const loadFolders = async (r) => { r = r || await X('folders'); if (!folderBox.isConnected) return; folderBox.innerHTML = ''; (r.list || []).forEach(f => { const rw = row(f.split(/[\\/]/).slice(-2).join('/'), f, 'Remove', () => confirm('Remove this folder?', 'Your games stay where they are. SKBox just stops looking here.', 'Remove', async () => loadFolders(await X('folderRemove', f)), true)); folderBox.appendChild(rw); });
+        folderBox.appendChild(row('Add a ROM folder', 'The folder with your games. Subfolders named after systems (Wii U, PS2, GameCube) help with .iso files.', '+', async () => { const f = await sk.pickFile('folder'); if (f) loadFolders(await X('folderAdd', f)); })); };
+      let entries = [], sel = new Set();
+      const drawRes = () => { if (!resBox.isConnected) return; resBox.innerHTML = '';
+        const fresh = entries.filter(e => !e.have), ready = fresh.filter(e => e.ready); resBox.appendChild(row('Scan ROM folders', entries.length ? entries.length + ' games found \u00B7 ' + fresh.length + ' new \u00B7 ' + ready.length + ' ready to add' : 'Looks through your ROM folders', '\u2192', scan));
+        if (!entries.length) return;
+        const bar = el('div', 'btnrow'), mk = (t, fn) => { const b = nav(el('button', 'btn', t)); b.onclick = fn; bar.appendChild(b); }; mk('Select all ready', () => { sel.clear(); entries.forEach((e, i) => { if (!e.have && e.ready) sel.add(i); }); drawRes(); }); mk('Select none', () => { sel.clear(); drawRes(); }); mk('Add ' + sel.size + ' game' + (sel.size === 1 ? '' : 's'), addSel); resBox.appendChild(bar);
+        entries.forEach((e, i) => { const rw = row('[' + e.systemName + '] ' + e.name, e.have ? 'Already in your Library' : (e.ready ? e.emuName + (e.options.length > 1 ? ' \u00B7 not sure which system: press A to choose' : '') : 'Set up ' + e.emuName + ' above first'), e.have ? 'Added' : (e.options.length > 1 ? 'Pick' : (sel.has(i) ? '\u2611' : (e.ready ? '\u2610' : '\u2014'))), () => {
+          if (e.have) return; if (e.options.length > 1 && !e._picked) return menu('Which system is ' + e.name + '?', e.options.map(o => ({ label: o.systemName + ' (' + o.emuName + (o.ready ? '' : ', not set up') + ')', fn: () => { Object.assign(e, o, { _picked: true }); drawRes(); } })));
+          if (!e.ready) return toast('Set up ' + e.emuName + ' first'); if (sel.has(i)) sel.delete(i); else sel.add(i); drawRes(); }); resBox.appendChild(rw); }); };
+      async function scan() { const stop = busy('Scanning\u2026'); const r = await X('scan'); stop(); if (!r || !r.ok) return toast((r && r.error) || 'That did not work'); entries = r.entries; sel = new Set(); entries.forEach((e, i) => { if (!e.have && e.ready && e.options.length === 1) sel.add(i); }); drawRes(); }
+      async function addSel() { const picks = Array.from(sel).map(i => entries[i]).filter(e => e && e.app && !e.have); if (!picks.length) return toast('Nothing selected'); const cols = Object.assign({}, S.settings.collections || {}); const added = [];
+        picks.forEach(e => { if (S.apps.some(a => a.id === e.app.id)) return; e.app.system = e.systemName; S.apps.push(e.app); added.push(e.app); const c = cols[e.systemName] || (cols[e.systemName] = []); if (!c.includes(e.app.id)) c.push(e.app.id); });
+        S.settings.collections = cols; saveSettings(); saveApps(); toast(added.length + ' game' + (added.length === 1 ? '' : 's') + ' added. Finding covers\u2026'); const n = await findCoversFor(added.filter(a => !a.cover)); toast(added.length + ' added, ' + n + ' covers found'); scan(); }
+      loadEmus(); loadFolders(); drawRes();
+    } else if (id === 'companion') {
+      h('Phone companion'); sub('Use your phone as a remote: start games, open the SK menu, close the running game, change volume, and use it as a trackpad and keyboard. It only works on your home Wi-Fi, only with the PIN, and it is off until you turn it on. It turns off when SKBox closes.');
+      const box = el('div'); pane.appendChild(box); let st = null;
+      const draw = () => { if (!box.isConnected) { clearInterval(clockTimer); return; } box.innerHTML = '';
+        const tg = toggle('Phone companion', st && st.on ? 'On' : 'Off', !!(st && st.on), async v => { const r = await sk.companion.set(v); if (!r || !r.ok) toast((r && r.error) || 'That did not work'); st = (r && r.state) || st; draw(); }); box.appendChild(tg);
+        if (st && st.on) { const ip = (st.ips && st.ips[0]) || '', url = 'http://' + ip + ':' + st.port;
+          box.appendChild(row('Open this on your phone', 'Same Wi-Fi as this PC', url, null)); box.appendChild(row('PIN', 'Type it on the phone', st.pin, null));
+          try { const q = qrcode(0, 'M'); q.addData(url); q.make(); const im = el('div', 'qrbox'); im.innerHTML = '<img alt="QR code" src="' + q.createDataURL(6, 2) + '"><div class="sub">Scan with your phone camera</div>'; box.appendChild(im); } catch (_) {}
+          box.appendChild(row('Phones signed in', (st.devices || []).length ? st.devices.map(d => d.name).join(', ') : 'None yet', String((st.devices || []).length), null));
+          box.appendChild(row('New PIN', 'Also signs every phone out', '\u2192', async () => { st = await sk.companion.pin(); draw(); }));
+          box.appendChild(row('Sign out all phones', '', '\u2192', async () => { st = await sk.companion.kick(); draw(); })); }
+        box.appendChild(toggle('Allow lock and sleep from the phone', 'Off by default. Shut down is never allowed.', S.settings.companionPower === true, v => { S.settings.companionPower = v; saveSettings(); })); };
+      sk.companion.state().then(r => { st = r; draw(); }); clockTimer = setInterval(async () => { st = await sk.companion.state(); if (box.isConnected && !(document.activeElement && document.activeElement.tagName === 'INPUT')) draw(); }, 4000);
+    } else if (id === 'routines') {
+      h('Routines'); sub('Do something at a set time: start a game, turn Remote play on, show a reminder, pick tonight\u2019s game, or put the PC to sleep. SKBox must be running.');
+      const box = el('div'), back = () => go('settings', { cat: 'routines' }); pane.appendChild(box);
+      sk.extras.do('routines').then(r => { if (!box.isConnected) return; const list = (r && r.list) || [];
+        if (!list.length) box.appendChild(el('div', 'sub', 'No routines yet.'));
+        list.forEach(x => box.appendChild(row(x.name, dayLabel(x.days) + ' at ' + x.time + ' \u00B7 ' + RT[x.type], x.on === false ? 'Off' : 'On', () => routineMenu(JSON.parse(JSON.stringify(x)), back))));
+        box.appendChild(row('Add a routine', '', '+', () => routineMenu({ name: 'New routine', time: '19:00', days: [], type: 'notify', text: 'Time to play!' }, back))); });
+    } else if (id === 'history') {
+      h('History & Wrapped'); const X = (n, a) => sk.extras.do(n, a), box = el('div'), PER = [['week', 'This week'], ['month', 'Last 30 days'], ['year', 'This year'], ['all', 'All time']], fh = ms => { const m = Math.round((ms || 0) / 60000); return m < 1 ? '0 min' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
+      const per = () => S.settings.wrapPeriod || 'month';
+      pane.appendChild(cyc('Period', 'What Wrapped looks at', PER, per, v => { S.settings.wrapPeriod = v; saveSettings(); load(); })); pane.appendChild(box);
+      const load = async () => { const w = await X('wrapped', per()), hs = await X('history', 30); if (!box.isConnected) return; box.innerHTML = '';
+        if (!w || !w.sessions) box.appendChild(el('div', 'sub', 'Nothing in this period yet. Play something and it shows up here.'));
+        else { box.appendChild(row('Time played', w.sessions + ' sessions \u00B7 ' + w.distinct + ' game' + (w.distinct === 1 ? '' : 's'), fh(w.total), null)); box.appendChild(row('Average session', '', fh(w.avg), null)); box.appendChild(row('Longest session', w.longest.name, fh(w.longest.ms), null)); box.appendChild(row('Favourite day', '', w.favDay, null)); box.appendChild(row('Favourite time', '', w.favTime, null)); box.appendChild(row('Best streak', 'Days in a row', w.streak + (w.streak === 1 ? ' day' : ' days'), null));
+          box.appendChild(el('h3', '', 'Top games')); const mx = w.games[0].ms || 1; w.games.forEach((g, i) => { const rw = row((i + 1) + '. ' + g.name, g.n + ' session' + (g.n === 1 ? '' : 's'), fh(g.ms), null); const gb = el('div', 'gbar'); gb.innerHTML = '<i style="width:' + Math.round(g.ms / mx * 100) + '%"></i>'; rw.firstChild.appendChild(gb); box.appendChild(rw); }); }
+        if (hs && hs.list.length) { box.appendChild(el('h3', '', 'Recent sessions')); hs.list.forEach(x => box.appendChild(row(x.name, new Date(x.s).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }), fh(x.ms), null))); } };
+      load();
+      pane.appendChild(el('h3', '', 'Share'));
+      pane.appendChild(row('Copy Wrapped summary', 'Handy to paste to a friend', '\u2192', async () => { const r = await X('wrappedCopy', per()); toast(r && r.ok ? 'Copied' : 'That did not work'); }));
+      pane.appendChild(row('Export history to the Desktop', 'A CSV file you can open in Excel', '\u2192', async () => { const r = await X('exportCsv'); toast(r && r.ok ? r.n + ' sessions saved to SKBox-play-history.csv' : ((r && r.error) || 'That did not work')); }));
+      pane.appendChild(el('div', 'sub', 'Sessions shorter than the minimum (Extras > Shortest session to record) are not recorded.'));
+    } else if (id === 'notifs') {
+      h('Notifications'); sub('The last 50 notifications SKBox showed, including ones hidden by quiet hours.'); const box = el('div'); pane.appendChild(box);
+      const load = async () => { const r = await sk.extras.do('notifLog'); if (!box.isConnected) return; box.innerHTML = ''; const l = (r && r.list) || []; if (!l.length) box.appendChild(el('div', 'sub', 'Nothing yet.')); l.forEach(n => box.appendChild(row(n.title, n.body, fmtAgo(n.t), null))); if (l.length) box.appendChild(row('Clear the list', '', '\u2192', async () => { await sk.extras.do('notifClear'); load(); })); };
+      load();
     } else if (id === 'queue') {
       h('Up next'); sub('Line up games and shows. When a game closes, SKBox asks if you want to start the next one. Add things with Y > Add to Up next.');
       const box = el('div'); pane.appendChild(box);
@@ -1145,6 +1177,7 @@
     }
   }
 
+  K.ui = { row, cyc, toggle, saveApps, saveSettings, openApp, setPinned, isPinned, allApps, fmtAgo, findCoversFor, gradFor };
   go('boot');
   window.K.startPads();
 })();

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"><meta name="theme-color" content="#0b0d14"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<title>SKBox Companion</title>
+<style>
+:root{--bg:#0b0d14;--card:#151926;--line:#232a3d;--txt:#eef1fa;--dim:#8a93ab;--a:#5b8cff;--bad:#ff6b6b;--ok:#3ddc97}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:16px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overscroll-behavior:none}
+#app{display:flex;flex-direction:column;height:100%;padding-top:env(safe-area-inset-top)}header{display:flex;align-items:center;gap:.6rem;padding:.8rem 1rem;border-bottom:1px solid var(--line)}header b{font-size:1.1rem;flex:1}.dot{width:.6rem;height:.6rem;border-radius:50%;background:var(--bad)}.dot.on{background:var(--ok)}
+main{flex:1;min-height:0;overflow-y:auto;padding:1rem}nav{display:flex;border-top:1px solid var(--line);background:#0e111b;padding-bottom:env(safe-area-inset-bottom)}nav button{flex:1;padding:.75rem 0 .6rem;background:none;border:0;color:var(--dim);font-size:.72rem}nav button i{display:block;font-style:normal;font-size:1.35rem}nav button.on{color:var(--a)}
+.login{max-width:22rem;margin:12vh auto;text-align:center}.login h1{margin:0 0 .3rem}.login p{color:var(--dim);margin:0 0 1.4rem}input{width:100%;padding:.9rem 1rem;border-radius:.9rem;border:1px solid var(--line);background:var(--card);color:var(--txt);font-size:1.1rem;user-select:text;-webkit-user-select:text}.pin{letter-spacing:.5em;text-align:center;font-size:1.6rem}
+.btn{display:block;width:100%;padding:.9rem;border-radius:.9rem;border:0;background:var(--a);color:#fff;font-size:1rem;font-weight:600;margin-top:.8rem}.btn.alt{background:var(--card);border:1px solid var(--line);color:var(--txt)}.btn.bad{background:#3a1f26;color:#ffb3b3}.err{color:var(--bad);min-height:1.4rem;margin-top:.6rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(7.2rem,1fr));gap:.8rem;margin-top:.8rem}.tile{aspect-ratio:2/3;border-radius:.9rem;background:var(--card) center/cover;position:relative;overflow:hidden;border:1px solid var(--line)}.tile span{position:absolute;left:0;right:0;bottom:0;padding:1.6rem .5rem .45rem;font-size:.78rem;background:linear-gradient(transparent,rgba(0,0,0,.85));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tile.run{outline:2px solid var(--ok)}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;z-index:5}.sheet>div{width:100%;background:#12162a;border-radius:1.3rem 1.3rem 0 0;padding:1.2rem 1.2rem calc(1.2rem + env(safe-area-inset-bottom))}.sheet h3{margin:0 0 .2rem}.sheet p{margin:0 0 .6rem;color:var(--dim)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:1.1rem;padding:1rem;margin-bottom:.9rem}.card h4{margin:0 0 .5rem;color:var(--dim);font-size:.75rem;text-transform:uppercase;letter-spacing:.08em}.row{display:flex;gap:.6rem}.row .btn{margin-top:0}
+.pad{height:100%;min-height:55vh;border-radius:1.2rem;border:1px dashed #33405f;background:radial-gradient(circle at 50% 40%,#161c30,#0e111b);display:flex;align-items:center;justify-content:center;color:var(--dim);touch-action:none;text-align:center;padding:1rem}.dpad{display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;max-width:15rem;margin:0 auto 1rem}.dpad button{aspect-ratio:1;border-radius:1rem;border:1px solid var(--line);background:var(--card);color:var(--txt);font-size:1.4rem}.dpad .x{visibility:hidden}.keys{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-bottom:1rem}.keys button{padding:.8rem 0;border-radius:.8rem;border:1px solid var(--line);background:var(--card);color:var(--txt)}
+.toast{position:fixed;left:50%;bottom:5.5rem;transform:translateX(-50%);background:#222a44;padding:.6rem 1rem;border-radius:2rem;font-size:.9rem;z-index:9;opacity:0;transition:opacity .2s;pointer-events:none}.toast.on{opacity:1}.hide{display:none!important}.now{font-size:1.25rem;font-weight:700}.sub{color:var(--dim);font-size:.85rem}
+</style></head><body>
+<div id="app">
+<div id="login" class="login hide"><h1>SKBox</h1><p>Enter the PIN shown in SKBox &gt; Settings &gt; Phone companion.</p><input id="pin" class="pin" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="off"><button class="btn" id="go">Connect</button><div class="err" id="err"></div></div>
+<div id="shell" class="hide" style="display:flex;flex-direction:column;height:100%">
+<header><span class="dot" id="dot"></span><b id="title">SKBox</b><span class="sub" id="clock"></span></header>
+<main id="main"></main>
+<nav><button data-t="games" class="on"><i>&#127918;</i>Games</button><button data-t="play"><i>&#9654;</i>Playing</button><button data-t="pad"><i>&#128433;</i>Trackpad</button><button data-t="keys"><i>&#9000;</i>Keys</button></nav>
+</div></div><div class="toast" id="toast"></div>
+<script>
+(function () {
+  var $ = function (s) { return document.querySelector(s); }, tok = localStorage.getItem('sk_tok') || '', tab = 'games', S = null, q = '', es = null;
+  function toast(t) { var e = $('#toast'); e.textContent = t; e.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(function () { e.classList.remove('on'); }, 1800); }
+  function buzz(n) { try { navigator.vibrate && navigator.vibrate(n || 12); } catch (e) {} }
+  function api(path, body) { return fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { 'X-SK-Token': tok, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }).then(function (r) { if (r.status === 401 && path !== '/api/login') { showLogin(); throw new Error('auth'); } return r.json(); }); }
+  function showLogin(msg) { tok = ''; localStorage.removeItem('sk_tok'); $('#shell').classList.add('hide'); $('#login').classList.remove('hide'); $('#err').textContent = msg || ''; }
+  $('#go').onclick = function () { var pin = $('#pin').value.trim(); api('/api/login', { pin: pin, name: (/iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android phone' : 'Phone') }).then(function (r) { if (r.ok) { tok = r.token; localStorage.setItem('sk_tok', tok); start(); } else $('#err').textContent = r.error || 'That did not work.'; }).catch(function () { $('#err').textContent = 'Could not reach SKBox.'; }); };
+  $('#pin').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('#go').click(); });
+  Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (b) { b.onclick = function () { tab = b.dataset.t; Array.prototype.forEach.call(document.querySelectorAll('nav button'), function (x) { x.classList.toggle('on', x === b); }); buzz(8); render(); }; });
+  function start() { $('#login').classList.add('hide'); $('#shell').classList.remove('hide'); poll(); }
+  function poll() { clearTimeout(poll.t); if (!tok) return; api('/api/state').then(function (s) { S = s; $('#dot').classList.add('on'); $('#title').textContent = s.name || 'SKBox'; if (document.activeElement && document.activeElement.id === 'srch') { return; } if (tab !== 'pad' && tab !== 'keys') render(); }).catch(function () { $('#dot').classList.remove('on'); }); poll.t = setTimeout(poll, 3000); }
+  setInterval(function () { var d = new Date(); $('#clock').textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }, 5000);
+  function el(h) { var d = document.createElement('div'); d.innerHTML = h; return d.firstChild; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function render() {
+    var m = $('#main'); if (!S) { m.innerHTML = '<div class="sub">Connecting\u2026</div>'; return; }
+    if (tab === 'games') {
+      m.innerHTML = '<input id="srch" placeholder="Search your games" value="' + esc(q) + '"><div class="grid" id="grid"></div>'; var g = $('#grid'), list = S.apps.filter(function (a) { return !q || a.name.toLowerCase().indexOf(q.toLowerCase()) >= 0; });
+      list.forEach(function (a) { var t = el('<div class="tile' + (S.game && S.game.id === a.id ? ' run' : '') + '"' + (a.cover ? ' style="background-image:url(\'/cover/' + encodeURIComponent(a.id) + '?t=' + tok + '\')"' : '') + '><span>' + esc(a.name) + '</span></div>'); t.onclick = function () { buzz(10); sheet(a); }; g.appendChild(t); });
+      if (!list.length) g.appendChild(el('<div class="sub">No games found.</div>'));
+      $('#srch').oninput = function () { q = this.value; var p = this.selectionStart; render(); var s = $('#srch'); s.focus(); try { s.setSelectionRange(p, p); } catch (e) {} };
+    } else if (tab === 'play') {
+      var gm = S.game, h = '<div class="card"><h4>Now playing</h4>' + (gm ? '<div class="now">' + esc(gm.name) + '</div><div class="sub">Started ' + Math.max(1, Math.round((Date.now() - gm.startedAt) / 60000)) + ' min ago</div><div class="row" style="margin-top:.8rem"><button class="btn alt" id="menu">SK menu</button><button class="btn bad" id="close">Close game</button></div>' : '<div class="sub">Nothing is running.</div><button class="btn alt" id="menu" style="margin-top:.8rem">Open the SK menu</button>') + '</div>';
+      h += '<div class="card"><h4>Volume</h4><div class="row"><button class="btn alt" data-v="down">\u2212</button><button class="btn alt" data-v="mute">Mute</button><button class="btn alt" data-v="up">+</button></div></div>';
+      h += '<div class="card"><h4>Up next</h4>' + (S.queue.length ? S.queue.map(function (x) { return '<div class="row" style="align-items:center;margin-bottom:.4rem"><div style="flex:1">' + esc(x.name) + '</div><button class="btn alt" style="width:auto;padding:.45rem .8rem" data-q="remove" data-id="' + esc(x.id) + '">Remove</button></div>'; }).join('') : '<div class="sub">Nothing lined up. Tap a game and choose Add to Up next.</div>') + '</div>';
+      if (S.power) h += '<div class="card"><h4>PC</h4><div class="row"><button class="btn alt" data-p="lock">Lock</button><button class="btn alt" data-p="sleep">Sleep</button></div></div>';
+      m.innerHTML = h; var mb = $('#menu'); if (mb) mb.onclick = function () { api('/api/menu', {}); buzz(); };
+      var cb = $('#close'); if (cb) cb.onclick = function () { if (confirm('Close ' + gm.name + '?')) api('/api/close', {}).then(function (r) { toast(r.ok ? 'Closing\u2026' : (r.error || 'Could not close it')); }); };
+      Array.prototype.forEach.call(m.querySelectorAll('[data-v]'), function (b) { b.onclick = function () { api('/api/volume', { dir: b.dataset.v }); buzz(8); }; });
+      Array.prototype.forEach.call(m.querySelectorAll('[data-q]'), function (b) { b.onclick = function () { api('/api/queue', { op: 'remove', id: b.dataset.id }).then(poll); }; });
+      Array.prototype.forEach.call(m.querySelectorAll('[data-p]'), function (b) { b.onclick = function () { if (confirm('Really ' + b.dataset.p + ' the PC?')) api('/api/power', { what: b.dataset.p, confirm: true }).then(function (r) { toast(r.ok ? 'Done' : (r.error || 'Not allowed')); }); }; });
+    } else if (tab === 'pad') {
+      m.innerHTML = '<div class="pad" id="tp">Drag to move the mouse<br>Tap to click \u00B7 two fingers: right click, drag to scroll<br>Double tap and hold to drag</div><div class="row" style="margin-top:.8rem"><button class="btn alt" id="lc">Left click</button><button class="btn alt" id="rc">Right click</button></div>'; trackpad($('#tp'));
+      $('#lc').onclick = function () { api('/api/click', { button: 0 }); buzz(); }; $('#rc').onclick = function () { api('/api/click', { button: 2 }); buzz(); };
+    } else {
+      m.innerHTML = '<div class="dpad"><button class="x"></button><button data-k="up">\u25B2</button><button class="x"></button><button data-k="left">\u25C0</button><button data-k="enter">OK</button><button data-k="right">\u25B6</button><button class="x"></button><button data-k="down">\u25BC</button><button class="x"></button></div><div class="keys"><button data-k="esc">Esc</button><button data-k="back">\u232B</button><button data-k="tab">Tab</button><button data-k="space">Space</button><button data-k="home">Home</button><button data-k="del">Del</button><button data-k="f11">F11</button><button data-k="f5">F5</button></div><input id="txt" placeholder="Type here, then Send" autocapitalize="off" autocomplete="off"><div class="row" style="margin-top:.6rem"><button class="btn" id="send">Send text</button><button class="btn alt" id="sendE">Send + Enter</button></div>';
+      Array.prototype.forEach.call(m.querySelectorAll('[data-k]'), function (b) { b.onclick = function () { api('/api/key', { key: b.dataset.k }); buzz(8); }; });
+      function sendT(enter) { var t = $('#txt').value; if (!t && !enter) return; api('/api/text', { text: t }).then(function () { if (enter) api('/api/key', { key: 'enter' }); $('#txt').value = ''; toast('Sent'); }); } $('#send').onclick = function () { sendT(false); }; $('#sendE').onclick = function () { sendT(true); };
+    }
+  }
+  function sheet(a) {
+    var s = el('<div class="sheet"><div><h3>' + esc(a.name) + '</h3><p>' + (S.game ? 'Another game is running.' : 'Start it on the PC.') + '</p><button class="btn" id="pl">Play</button><div class="row" style="margin-top:.6rem"><button class="btn alt" id="up">Add to Up next</button><button class="btn alt" id="pn">Play next</button></div><button class="btn alt" id="cx">Cancel</button></div></div>'); document.body.appendChild(s);
+    function done() { s.remove(); } s.onclick = function (e) { if (e.target === s) done(); }; s.querySelector('#cx').onclick = done;
+    s.querySelector('#pl').onclick = function () { done(); api('/api/launch', { id: a.id }).then(function (r) { toast(r.ok ? 'Starting ' + a.name : (r.error || 'Could not start it')); setTimeout(poll, 800); }); };
+    s.querySelector('#up').onclick = function () { done(); api('/api/queue', { op: 'add', id: a.id }).then(function (r) { toast(r.ok ? 'Lined up' : (r.error || 'Could not add')); poll(); }); };
+    s.querySelector('#pn').onclick = function () { done(); api('/api/queue', { op: 'top', id: a.id }).then(function (r) { toast(r.ok ? 'Next up' : (r.error || 'Could not add')); poll(); }); };
+  }
+  function trackpad(pad) {
+    var last = null, moved = 0, t0 = 0, fingers = 0, lastTap = 0, dragging = false, acc = { x: 0, y: 0 }, busy = false, pend = { dx: 0, dy: 0, sy: 0 };
+    function flush() { if (busy) return; if (pend.dx || pend.dy) { var d = { dx: pend.dx, dy: pend.dy }; pend.dx = pend.dy = 0; busy = true; api('/api/mouse', d).finally(function () { busy = false; flush(); }); } else if (pend.sy) { var s = pend.sy; pend.sy = 0; busy = true; api('/api/scroll', { dy: s }).finally(function () { busy = false; flush(); }); } }
+    pad.addEventListener('touchstart', function (e) { e.preventDefault(); fingers = Math.max(fingers, e.touches.length); if (e.touches.length === 1) { var now = Date.now(); if (now - lastTap < 300) { dragging = true; api('/api/hold', { button: 0, down: true }); buzz(15); } t0 = now; moved = 0; } last = { x: e.touches[0].clientX, y: e.touches[0].clientY }; acc = { x: 0, y: 0 }; }, { passive: false });
+    pad.addEventListener('touchmove', function (e) { e.preventDefault(); var t = e.touches[0], dx = t.clientX - last.x, dy = t.clientY - last.y; last = { x: t.clientX, y: t.clientY }; moved += Math.abs(dx) + Math.abs(dy);
+      if (e.touches.length >= 2) { pend.sy += Math.round(-dy * 6); } else { var sp = Math.min(3.2, 1 + Math.hypot(dx, dy) / 14); acc.x += dx * sp; acc.y += dy * sp; var ix = Math.trunc(acc.x), iy = Math.trunc(acc.y); acc.x -= ix; acc.y -= iy; pend.dx += ix; pend.dy += iy; } flush(); }, { passive: false });
+    pad.addEventListener('touchend', function (e) { e.preventDefault(); if (e.touches.length) return; var dur = Date.now() - t0; if (dragging) { dragging = false; api('/api/hold', { button: 0, down: false }); } else if (moved < 10 && dur < 280) { if (fingers >= 2) { api('/api/click', { button: 2 }); buzz(15); } else { api('/api/click', { button: 0 }); lastTap = Date.now(); buzz(10); } } fingers = 0; }, { passive: false });
+  }
+  if (tok) start(); else showLogin();
+})();
+</script></body></html>
