@@ -44,37 +44,53 @@
     head.innerHTML = '<div class="g">' + (st.game ? esc(st.game.name) : 'SKBox') + '</div><div class="t">' + (st.game ? 'Playing for ' + minutes() + ' min' : 'No game running') + ' \u00B7 ' + K.fmtTime(new Date()) + '</div>';
     [0, 1].forEach(i => { const p = S.players[i]; if (p) chips.insertAdjacentHTML('beforeend', '<div class="chip">' + avatar(p) + '<span>' + esc(p.nick || p.u) + '</span><span class="pn">P' + (i + 1) + '</span></div>'); });
     head.appendChild(chips); m.appendChild(head);
+    const qbar = el('div', 'qbar'), qb = {}; const qbtn = (key, text, fn) => { const b = nav(el('button', 'qb', text)); b.onclick = fn; qb[key] = b; qbar.appendChild(b); return b; };
+    qbtn('vol', '\u{1F50A}', () => sk.sys.volume('mute')).title = 'Mute / unmute the PC'; qb.vol._adjust = d => { sk.sys.volume(d < 0 ? 'down' : 'up'); K.snd && K.snd.play('move'); };
+    qbtn('shot', '\u{1F4F8}', () => shot()); qbtn('mic', '\u{1F3A4} Mic on', () => { sk.party.cmd('mute', { toggle: true }); }); qb.mic.style.display = 'none';
+    if (S.settings.menuQuick !== false) m.appendChild(qbar);
     if (S.settings.hud) { const hud = el('div', 'hud', 'CPU \u2026'); head.appendChild(hud); const upd = async () => { try { const p = await sk.perf.get(); hud.textContent = 'CPU ' + p.cpu + '%  \u00B7  RAM ' + (p.ramUsed / 1073741824).toFixed(1) + ' / ' + (p.ramTotal / 1073741824).toFixed(0) + ' GB'; } catch (_) {} }; upd(); timers.push(setInterval(upd, 3000)); }
-    const items = [
-      ['resume', '\u25B6', st.game ? 'Resume game' : 'Close menu', () => sk.overlay.close(), 'Back to what you were doing.'],
-      ['home', '\u2302', 'SKBox home', () => sk.overlay.home(), st.game ? 'Go to the home screen. Your game keeps running; pick Resume to come back.' : 'Go to the home screen.'],
-      ['msg', '\u{1F4AC}', 'Messages', () => messages(), 'Open SKchat to read and send messages.'],
-      ['music', '\u266A', 'Music', () => music(), 'Control SKMusic: skip, pause, volume and quick radios.'],
-      ['quick', '\u{1F3AE}', 'Quick play', () => quick(), 'Switch to another game or app.'],
-      ['windows', '\u{1FA9F}', 'Windows', () => windows(), 'Switch to, fit, hide or close any open window without leaving SKBox.'],
-      ['players', '\u{1F465}', 'Players & controllers', () => players(false), 'See who is playing and set up Player 2.'],
-      ...(st.remote && st.remote.on ? [['remote', '\u{1F4E1}', 'Remote play', () => remotePanel(), st.remote.client ? st.remote.client.name + ' is playing. Disconnect, fix the picture or change quality.' : 'Remote play is on. Nobody is connected.']] : []),
-      ['vol', '\u{1F50A}', 'Volume', () => sk.sys.volume('mute'), 'Left and right change the volume. Press A to mute.'],
-      ['shot', '\u{1F4F8}', 'Screenshot', () => shot(), 'Saves a picture to Pictures\\SKBox.'],
-      ['close', '\u2716', 'Close game', () => closeGame(), 'Quit the running game and go home.'],
-      ['power', '\u23FB', 'Power', () => power(), 'Sleep, restart or shut down.']
-    ].filter(x => x[0] !== 'close' || st.game);
+    const party = K.partyUI ? K.partyUI.state() : null, inParty = !!(party && party.status === 'in');
+    const groups = [
+      ['PLAY', [
+        ['resume', '\u25B6', st.game ? 'Resume game' : 'Close menu', () => sk.overlay.close(), 'Back to what you were doing.'],
+        ['home', '\u2302', 'SKBox home', () => sk.overlay.home(), st.game ? 'Go to the home screen. Your game keeps running; pick Resume to come back.' : 'Go to the home screen.'],
+        ['quick', '\u{1F3AE}', 'Quick play', () => quick(), 'Switch to another game or app.'],
+        ['close', '\u2716', 'Close game', () => closeGame(), 'Quit the running game and go home.']]],
+      ['SOCIAL', [
+        ['party', '\u{1F3A7}', 'Party', () => partyPanel(), 'Voice chat with friends while you play. Start a party, share the code, talk.'],
+        ['msg', '\u{1F4AC}', 'Messages', () => messages(), 'Open SKchat to read and send messages.'],
+        ['music', '\u266A', 'Music', () => music(), 'Control SKMusic: skip, pause, volume and quick radios.'],
+        ['players', '\u{1F465}', 'Players & controllers', () => players(false), 'See who is playing and set up Player 2.']]],
+      ['SYSTEM', [
+        ['windows', '\u{1FA9F}', 'Windows', () => windows(), 'Switch to, fit, hide or close any open window without leaving SKBox.'],
+        ...(st.remote && st.remote.on ? [['remote', '\u{1F4E1}', 'Remote play', () => remotePanel(), st.remote.client ? st.remote.client.name + ' is playing. Disconnect, fix the picture or change quality.' : 'Remote play is on. Nobody is connected.']] : []),
+        ['vol', '\u{1F50A}', 'Volume', () => sk.sys.volume('mute'), 'Left and right change the volume. Press A to mute.'],
+        ['shot', '\u{1F4F8}', 'Screenshot', () => shot(), 'Saves a picture to Pictures\\SKBox.'],
+        ['power', '\u23FB', 'Power', () => power(), 'Sleep, restart or shut down.']]]
+    ].map(g => [g[0], g[1].filter(x => x[0] !== 'close' || st.game)]);
+    const items = []; groups.forEach(g => { items.push(['#', g[0]]); g[1].forEach(x => items.push(x)); });
     menuItems = {};
-    items.forEach(([id, ic, label, fn, desc], i) => {
-      const b = nav(el('button', 'mi' + (id === 'close' ? ' danger' : ''), '<span>' + ic + '</span>' + esc(label))); menuItems[id] = b;
-      if (i === 0) b.dataset.first = '';
+    let first = true;
+    items.forEach(([id, ic, label, fn, desc]) => {
+      if (id === '#') { m.appendChild(el('div', 'mgrp', ic)); return; }
+      const b = nav(el('button', 'mi' + (id === 'close' ? ' danger' : ''), '<span>' + ic + '</span><em>' + esc(label) + '</em>')); menuItems[id] = b; b.dataset.id = id;
+      if (id === 'party') { const badge = el('i', 'mbadge' + (inParty ? ' on' : '')); badge.textContent = inParty ? String(party.members.length + 1) : ''; b.appendChild(badge); b._badge = badge; }
+      if (first) { b.dataset.first = ''; first = false; }
       b._onfocus = () => { if (mode === 'menu') preview(id, label, desc); };
       b.onclick = fn;
       if (id === 'vol') b._adjust = d => { sk.sys.volume(d < 0 ? 'down' : 'up'); sk.sys.volume(d < 0 ? 'down' : 'up'); K.snd && K.snd.play('move'); };
       m.appendChild(b);
     });
+    K.partyOnState = s => { const bd = menuItems.party && menuItems.party._badge; if (bd && mode === 'menu') { const on = s.status === 'in'; bd.className = 'mbadge' + (on ? ' on' : ''); bd.textContent = on ? String(s.members.length + 1) : ''; } if (qb.mic) qb.mic.classList.toggle('on', s.status === 'in' && !s.me.muted); if (qb.mic) qb.mic.style.display = s.status === 'in' ? '' : 'none'; if (qb.mic) qb.mic.textContent = s.me && s.me.muted ? '\u{1F507} Muted' : '\u{1F3A4} Mic on'; };
+    if (K.partyUI) K.partyOnState(K.partyUI.state());
     root.append(m, panel); ensureFocus(root);
     timers.push(setInterval(() => { const t = head.querySelector('.t'); if (t && st.game) t.textContent = 'Playing for ' + minutes() + ' min \u00B7 ' + K.fmtTime(new Date()); }, 30000));
   }
-  function preview(id, label, desc) { panel.innerHTML = '<h2>' + esc(label) + '</h2><p class="sub">' + esc(desc) + '</p>'; }
-  function toMenu(id) { clearTimers(); if (mode === 'menu') return; const keep = menuItems[id]; build(); if (keep) { const b = $('#screen').querySelectorAll('.mi'); b.forEach(x => { if (x.textContent.trim().endsWith(keep.textContent.trim())) focus(x); }); } }
+  function partyPanel() { subView('party', 'Party', ''); panel.innerHTML = ''; K.partyUI.render(panel, { title: 'Party' }); }
+  function preview(id, label, desc) { if (K.partyUI) K.partyUI.detach(); panel.innerHTML = '<h2>' + esc(label) + '</h2><p class="sub">' + esc(desc) + '</p>'; }
+  function toMenu(id) { clearTimers(); if (mode === 'menu') return; build(); const b = $('#screen').querySelector('.mi[data-id="' + id + '"]'); if (b) focus(b); }
   function subView(id, title, sub) {
-    mode = id; S.screen = 'overlay'; S.backFn = () => toMenu(id); S.startFn = () => toMenu(id);
+    if (K.partyUI) K.partyUI.detach(); mode = id; S.screen = 'overlay'; S.backFn = () => toMenu(id); S.startFn = () => toMenu(id);
     hints([['A', 'Select'], ['B', 'Back']]); panel.innerHTML = '<h2>' + esc(title) + '</h2>' + (sub ? '<p class="sub">' + esc(sub) + '</p>' : '');
   }
 

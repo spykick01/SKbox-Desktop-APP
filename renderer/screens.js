@@ -33,9 +33,10 @@
   const clearTimers = () => { clearInterval(clockTimer); clearInterval(wifiTimer); if (S.padTestOn) { S.padTestOn = false; sk.helper.padTest(false); K.onPadLog = null; } };
   K.screens = K.screens || {};
   function go(name, data) {
+    (K.modeTimers || []).forEach(clearInterval); K.modeTimers = [];
     clearTimers(); S.screen = name; if (window.K.audio) window.K.audio.setSuspended(name === 'web'); S.backFn = null; S.startFn = null; S.bumper = null;
     const root = $('#screen'); root.innerHTML = ''; root.className = 'fade';
-    (({ boot, start, welcome, profiles, home, library, settings, addApp, web, details }[name]) || K.screens[name])(root, data || {});
+    (({ boot, start, welcome, profiles, home, library, settings, addApp, web, details }[name]) || K.screens[name])(root, data || {}); { const M = K.modes && K.modes[S.settings.uiMode]; if (M && M.chrome && (name === 'library' || name === 'settings')) M.chrome(root, name); }
   }
   window.K.go = go;
 
@@ -81,7 +82,8 @@
       if (!Array.isArray(S.settings.pinned)) { S.settings.pinned = allApps().map(a => a.id); saveSettings(); S.migratedPins = true; }
       try { S.game = await sk.game.state(); } catch (_) { S.game = null; }
       applyTheme(); if (window.K.audio) { window.K.audio.apply(); window.K.audio.boot(); } S.profiles = await sk.auth.list();
-      await new Promise(r => setTimeout(r, 900));
+      const lsId = K.loading ? K.loading.inline(root) : 'classic';
+      await new Promise(r => setTimeout(r, lsId === 'classic' ? 900 : 1500));
       const last = S.settings.players || []; S.lastP0 = last[0] || '';
       const mem = [S.profiles.find(p => p.u === last[0]) || (last[0] === 'guest' ? { u: 'guest', guest: true } : null), S.profiles.find(p => p.u === last[1]) || null];
       if (S.settings.askWho === false && mem[0]) { S.players = mem; go('home'); mem[0].u !== 'guest' && sk.auth.refresh(mem[0].u).then(m => { if (m) { S.players[0] = m; const i = S.profiles.findIndex(p => p.u === m.u); if (i >= 0) S.profiles[i] = m; } }); return; }
@@ -90,7 +92,7 @@
   }
   function applyTheme() {
     const a = S.settings.accent || ACCENTS[0]; document.documentElement.style.setProperty('--a', a);
-    document.body.classList.toggle('calm', !!S.settings.calm);
+    document.body.classList.toggle('calm', !!S.settings.calm); ['classic', 'cinema', 'deck'].forEach(m => document.body.classList.toggle('m-' + m, (S.settings.uiMode || 'classic') === m));
     const TH = { midnight: {}, oled: { '--bg': '#000', '--panel': 'rgba(10,10,14,.9)', '--panel2': 'rgba(22,22,28,.95)' }, daylight: { '--bg': '#e9edf7', '--panel': 'rgba(255,255,255,.86)', '--panel2': 'rgba(240,243,252,.96)', '--line': 'rgba(10,15,40,.14)', '--text': '#101428', '--dim': '#4a5170' },
       sunset: { '--bg': '#1a0f24', '--panel': 'rgba(42,22,52,.86)', '--panel2': 'rgba(58,30,66,.95)', '--line': 'rgba(255,190,150,.16)', '--text': '#fff1e8', '--dim': '#c9a4b8' },
       ocean: { '--bg': '#061a2b', '--panel': 'rgba(10,36,58,.86)', '--panel2': 'rgba(14,52,80,.95)', '--line': 'rgba(140,210,255,.16)', '--text': '#eaf7ff', '--dim': '#8fb4cc' },
@@ -227,6 +229,7 @@
   }
   function home(root) {
     if (!S.startDone) { S.startDone = true; if (S.settings.startScreen === 'library') { go('library'); return; } }
+    { const M = K.modes && K.modes[S.settings.uiMode]; if (M && M.home) return M.home(root); }
     hints([['A', 'Open'], ['Y', 'Options'], ['S', 'Settings']]);
     S.startFn = () => go('settings'); S.backFn = null;
     const top = el('div', 'top'), left = el('div', 'grp'), right = el('div', 'grp');
@@ -240,13 +243,15 @@
       else if (i === 1) { const c = nav(el('button', 'chip', '<div class="av">+</div><span>Add Player 2</span>')); c.onclick = () => go('profiles', { slot: 1 }); left.appendChild(c); }
     });
     if (S.remote && S.remote.on) { const rc = nav(el('button', 'chip', '<div class="av">\u{1F4E1}</div><span>' + (S.remote.client ? esc(S.remote.client.name) + ' is playing' : 'Remote play on') + '</span>')); rc.onclick = () => go('settings', { cat: 'remote' }); left.appendChild(rc); }
+    if (K.widgets) K.widgets.chips().forEach(c => left.appendChild(c));
     const npB = nav(el('button', 'chip np', '<div class="av">\u266A</div><span id="npt">SKMusic</span>')); npB.style.display = 'none';
     npB.onclick = () => sk.music.cmd('toggle').then(() => setTimeout(tick, 400)); npB._onopts = () => sk.music.open(activeUser()); left.appendChild(npB);
+    const srchB = nav(el('button', 'ibtn', '\u{1F50D}')); srchB.onclick = () => K.spotlight && K.spotlight.open();
     const wifiB = nav(el('button', 'ibtn', '<span id="wf">\u{1F4F6}</span><span id="wfn" style="font-size:.85rem;color:var(--dim)"></span>')); wifiB.onclick = () => go('settings', { cat: 'wifi' });
     const btB = nav(el('button', 'ibtn', '<span style="font-size:.85rem">\u16D2 Bluetooth</span>')); btB.onclick = () => go('settings', { cat: 'bluetooth' });
     const pad = el('div', 'ibtn', '\u{1F3AE} <span id="padn">0</span><span id="bat" style="font-size:.8rem;color:var(--dim);margin-left:.4rem"></span>'); pad.style.cursor = 'default';
     const clk = el('div', 'clock'); const setB = nav(el('button', 'ibtn', '\u2699')); setB.onclick = () => go('settings'); const pw = nav(el('button', 'ibtn', '\u23FB')); pw.onclick = () => go('settings', { cat: 'power' });
-    const hud = el('div', 'ibtn', ''); hud.style.display = 'none'; hud.style.cursor = 'default'; right.append(hud, wifiB, btB, pad, clk, setB, pw); top.append(left, right);
+    const hud = el('div', 'ibtn', ''); hud.style.display = 'none'; hud.style.cursor = 'default'; right.append(hud, srchB, wifiB, btB, pad, clk, setB, pw); top.append(left, right);
     const wrap = el('div', 'home'), row = el('div', 'row'), info = el('div', 'info');
     wrap.append(row, info); root.append(top, wrap);
     const list = tiles(), els = [];
@@ -494,7 +499,7 @@
     if (a.kind === 'music') { sk.music.open(activeUser()); return; }
     if (a.kind === 'web') { go('web', { app: a }); return; }
     const payload = replace => ({ id: a.id, name: a.name, exe: a.exe, args: a.args, cover: a.cover, fs: a.fs || 'auto', compat: !!a.compat, replace: !!replace });
-    const run = async replace => { const stop = busy('Launching ' + a.name + '\u2026'); const r = await sk.launch(payload(replace)); setTimeout(stop, 700); if (!r.ok) toast(r.error || 'Could not launch.'); };
+    const run = async replace => { const stop = K.loading ? K.loading.show({ title: a.name, cover: a.cover ? fileUrl(a.cover) : '', grad: gradFor(a.name), what: 'Launching' }) : busy('Launching ' + a.name + '\u2026'); const r = await sk.launch(payload(replace)); setTimeout(stop, 700); if (!r.ok) toast(r.error || 'Could not launch.'); };
     if (S.game && S.game.id !== a.id) confirm('Switch games?', S.game.name + ' is running. Close it and start ' + a.name + '?', 'Switch', () => run(true));
     else if (S.game) sk.game.resume(); else run(false);
   }
@@ -613,6 +618,7 @@
 
   // ---------- settings ----------
   const NEWS = [
+    ['Voice parties, Cinema and Deck modes, Spotlight', 'SK menu > Party: voice chat with friends while you play (code or invite link, up to 8). Settings > Look & modes: Classic, Cinema or Deck, 6 loading screens, Home widgets, export your setup. Press / or Ctrl+K to search everything.'],
     ['SKServers and SKStore', 'Library > SKServers makes and runs Minecraft servers with a plugin and mod store (Modrinth, SpigotMC). Library > SKStore has featured games and apps: Steam, Epic free games and winget installs.'],
     ['Game library, game info, phone companion', 'Settings > Game library adds your ROMs by system with emulators. Details shows descriptions, screenshots and trailers. Settings > Phone companion turns your phone into a remote and trackpad.'],
     ['Details, backups, routines, Wrapped, Steam & Epic', 'Y on a game: Details and Save backups. Settings: Routines, History & Wrapped, Notifications. Import apps finds your Steam and Epic games.'],
@@ -644,7 +650,7 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['queue', '\u23ED', 'Up next'], ['roms', '\u{1F579}', 'Game library'], ['companion', '\u{1F4F1}', 'Phone companion'], ['routines', '\u23F0', 'Routines'], ['history', '\u{1F4C5}', 'History & Wrapped'], ['notifs', '\u{1F514}', 'Notifications'], ['milestones', '\u{1F3C6}', 'Milestones'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['queue', '\u23ED', 'Up next'], ['roms', '\u{1F579}', 'Game library'], ['companion', '\u{1F4F1}', 'Phone companion'], ['routines', '\u23F0', 'Routines'], ['history', '\u{1F4C5}', 'History & Wrapped'], ['notifs', '\u{1F514}', 'Notifications'], ['milestones', '\u{1F3C6}', 'Milestones'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About'], ['looks', '\u{1F3A8}', 'Look & modes'], ['party', '\u{1F3A7}', 'Party']];
   function settings(root, d) {
     hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
@@ -974,6 +980,8 @@
         r.list.slice().sort((a, b) => (b.done - a.done) || ((b.cur / b.goal) - (a.cur / a.goal))).forEach(m => { const rw = row((m.done ? '\u{1F3C6} ' : '\u{1F512} ') + m.name, m.desc + (m.done && m.t ? ' \u00B7 ' + fmtAgo(m.t) : ''), m.done ? 'Unlocked' : m.cur + ' / ' + m.goal, null); if (!m.done) { const gb = el('div', 'gbar'); gb.innerHTML = '<i style="width:' + Math.round(m.cur / m.goal * 100) + '%"></i>'; rw.firstChild.appendChild(gb); } box.appendChild(rw); });
         box.appendChild(el('div', 'sub', 'A notification pops up when you unlock one.'));
       });
+    } else if (K.settingsPages && K.settingsPages[id]) {
+      K.settingsPages[id](pane);
     } else if (id === 'roms') {
       h('Game library'); sub('Point SKBox at your ROM folders. It finds your games by system, finds or downloads the emulators, and adds everything ready to play, with cover art. Cemu, DuckStation and melonDS can be downloaded here. The others are found on this PC or picked by hand.');
       const X = (n, a) => sk.extras.do(n, a), sec = t => pane.appendChild(el('h3', '', t)), emuBox = el('div'), folderBox = el('div'), resBox = el('div');
@@ -1177,7 +1185,7 @@
     }
   }
 
-  K.ui = { row, cyc, toggle, saveApps, saveSettings, openApp, setPinned, isPinned, allApps, fmtAgo, findCoversFor, gradFor };
+  K.ui = { row, cyc, toggle, saveApps, saveSettings, openApp, setPinned, isPinned, allApps, fmtAgo, findCoversFor, gradFor, tileEl, tiles, homeApps, appMenu, playInfo, isRunning, closeRunning, avatar, activeUser, batText, CATS, applyTheme, showNews };
   go('boot');
   window.K.startPads();
 })();

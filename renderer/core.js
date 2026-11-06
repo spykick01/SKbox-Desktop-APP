@@ -69,6 +69,7 @@
     const L = layers(); const n = node || L.lastElementChild; if (!n) return;
     const prev = n._prev; n.remove(); S.osk = !!L.querySelector('.osk'); K.snd && K.snd.play('close');
     if (prev && document.body.contains(prev)) K.focus(prev); else K.ensureFocus();
+    if (K.partyLayersClosed && !L.childElementCount) K.partyLayersClosed();
   };
   K.confirm = (title, body, yes, onYes, danger) => {
     const L = K.el('div', 'layer'), b = K.el('div', 'box', '<h3>' + K.esc(title) + '</h3><p>' + K.esc(body || '') + '</p>'), row = K.el('div', 'btnrow');
