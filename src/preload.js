@@ -19,10 +19,11 @@ contextBridge.exposeInMainWorld('skbox', {
   helper: { padTest: on => inv('helper:padTest', on), status: () => inv('helper:status'), testMenu: () => inv('helper:testMenu') },
   bt: { list: () => inv('bt:run', 'list'), scan: () => inv('bt:run', 'scan'), pair: id => inv('bt:run', 'pair', id), unpair: id => inv('bt:run', 'unpair', id) },
   overlay: { state: () => inv('overlay:state'), close: r => inv('overlay:close', r), home: () => inv('overlay:home'), screenshot: () => inv('overlay:screenshot'), setPlayer: (slot, u) => inv('overlay:setPlayer', slot, u), oskResult: r => inv('overlay:osk-result', r) },
+  party: { cmd: (c, a) => inv('party:cmd', c, a), state: () => inv('party:get') },
   music: { open: u => inv('music:open', u), ensure: u => inv('music:ensure', u), status: () => inv('music:status'), cmd: (c, a) => inv('music:cmd', c, a) },
   companion: { state: () => inv('companion:state'), set: on => inv('companion:set', on), pin: () => inv('companion:pin'), kick: () => inv('companion:kick') },
   apps: { scan: () => inv('apps:scan'), launchers: () => inv('apps:launchers') },
   extras: { do: (n, a) => inv('extras:do', n, a) },
   installUpdate: () => inv('update:install'),
-  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'apps:changed', 'input-lock', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs', 'padin', 'padtest', 'battery', 'timer:fired', 'remote:state', 'queue:next', 'companion:state', 'roms:progress', 'info:progress', 'sks:log', 'sks:state', 'sks:progress', 'store:progress'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
+  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'apps:changed', 'input-lock', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs', 'padin', 'padtest', 'battery', 'timer:fired', 'remote:state', 'queue:next', 'companion:state', 'roms:progress', 'info:progress', 'party:state', 'sks:log', 'sks:state', 'sks:progress', 'store:progress'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
 });

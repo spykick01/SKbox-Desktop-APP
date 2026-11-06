@@ -108,7 +108,7 @@ function autologin(wc, u) { const x = readProfiles().find(y => y.meta.u === u); 
 
 // ================= apps / covers =================
 ipcMain.handle('dialog:file', async (_e, kind) => {
-  const filters = kind === 'image' ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] : [{ name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'lnk'] }, { name: 'All files', extensions: ['*'] }];
+  const filters = kind === 'json' ? [{ name: 'SKBox setup', extensions: ['json'] }] : kind === 'image' ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] : [{ name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'lnk'] }, { name: 'All files', extensions: ['*'] }];
   const r = kind === 'folder' ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] }) : await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
   return r.canceled ? null : r.filePaths[0];
 });
@@ -154,9 +154,14 @@ const gameinfo = require('./lib/gameinfo').create({ store, progress: (f, t) => s
 // SKServers (Minecraft server hosting) and the App Store.
 const servers = require('./lib/servers').create({ store, dir: app.getPath('userData'), send, openPath: p => shell.openPath(p), copy: t => { try { require('electron').clipboard.writeText(t); } catch {} } });
 const appstore = require('./lib/appstore').create({ store, progress: p => send('store:progress', p), openExternal: u => shell.openExternal(u) });
+const party = require('./lib/party').create({ BrowserWindow, ipcMain, preload: path.join(__dirname, 'partyPreload.js'), page: RENDERER('party/engine.html'), broadcast: (ch, p) => send(ch, p), settings: () => store.read('settings', {}),
+  notify: (t, b) => { try { if (store.read('settings', {}).partyNotify !== false && Notification.isSupported()) new Notification({ title: t, body: b }).show(); } catch {} } });
+ipcMain.handle('party:cmd', (_e, c, a) => party.cmd(String(c || ''), a)); ipcMain.handle('party:get', () => party.get());
+app.on('will-quit', () => party.close());
+const setupMod = require('./lib/setup').create({ store, version: app.getVersion(), desktop: () => app.getPath('desktop') });
 let serversQuitting = false;
 app.on('before-quit', e => { if (serversQuitting || !servers.anyRunning()) return; e.preventDefault(); serversQuitting = true; servers.stopAll(20000).finally(() => app.quit()); });   // let the servers save their worlds first
-ipcMain.handle('extras:do', async (_e, n, a) => { n = String(n || ''); let r = await plus.run(n, a); if (r === null) r = await roms.run(n, a); if (r === null) r = await gameinfo.run(n, a); if (r === null) r = await servers.run(n, a); if (r === null) r = await appstore.run(n, a); return r !== null ? r : extras.run(n, a); });
+ipcMain.handle('extras:do', async (_e, n, a) => { n = String(n || ''); let r = await plus.run(n, a); if (r === null) r = await roms.run(n, a); if (r === null) r = await gameinfo.run(n, a); if (r === null) r = await servers.run(n, a); if (r === null) r = await appstore.run(n, a); if (r === null) r = await setupMod.run(n, a); return r !== null ? r : extras.run(n, a); });
 // The main SKBox window must not react to the controller while the SK menu is in front.
 function lockUI() { try { if (win && !win.isDestroyed()) win.webContents.send('input-lock', !!overlayOpen); if (helper && helper.ready) helper.padIn(padTest || overlayOpen); } catch {} }
 const splitArgs = s => (String(s || '').match(/"[^"]*"|\S+/g) || []).map(x => x.replace(/^"|"$/g, ''));
@@ -758,6 +763,7 @@ app.whenReady().then(async () => {
   globalShortcut.register('Control+Shift+O', toggleOverlay);
   globalShortcut.register('Control+Shift+S', () => { takeShot(true); });
   const hk = (acc, fn) => { try { globalShortcut.register(acc, () => { if (store.read('settings', {}).hotkeysOn === false) return; fn(); }); } catch {} };
+  hk('Control+Alt+Shift+V', () => { party.toggleMute(); });                                // mute / unmute your party microphone
   hk('Control+Alt+Shift+M', () => extras.run('minAll'));                                   // show the desktop
   hk('Control+Alt+Shift+T', () => extras.run('taskmgr'));                                  // Task Manager
   extras.hotkeys(globalShortcut); display.hotkeys(globalShortcut);

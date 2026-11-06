@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SKParty: voice party</title>
+<style>
+:root{--a:#2dd4bf;--bg:#07080f;--p:#121528;--line:rgba(255,255,255,.1);--dim:#9aa0bd;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 70% -10%,#1b2a55 0,transparent 60%),var(--bg);color:#f3f5ff;font:16px/1.45 system-ui,Segoe UI,Roboto,sans-serif;min-height:100vh;display:flex;justify-content:center;padding:24px 14px}
+main{width:min(560px,100%)}h1{margin:.2rem 0 .1rem;font-size:1.7rem}.sub{color:var(--dim);margin:0 0 1.2rem}
+.card{background:var(--p);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px}
+input{width:100%;padding:.8rem 1rem;border-radius:12px;border:1px solid var(--line);background:#0b0d1a;color:inherit;font:inherit;margin:.3rem 0 .8rem}
+button{font:inherit;font-weight:700;color:inherit;padding:.75rem 1.1rem;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.07);cursor:pointer}button:hover{border-color:var(--a)}
+button.p{background:var(--a);color:#06101a;border-color:transparent}button.d{background:rgba(248,113,113,.15);border-color:rgba(248,113,113,.5)}button.on{background:rgba(74,222,128,.2);border-color:#4ade80}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1}
+.code{display:flex;justify-content:space-between;align-items:center;gap:12px}.code b{font:800 2rem Consolas,monospace;letter-spacing:.3em}.code small{display:block;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;font-size:.7rem}
+.m{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px solid var(--line)}.m:last-child{border:0}
+.av{width:42px;height:42px;border-radius:50%;background:#26304f;display:flex;align-items:center;justify-content:center;font-weight:800;transition:box-shadow .12s}.speak .av{box-shadow:0 0 0 3px #4ade80,0 0 16px #4ade80}
+.m .n{flex:1;font-weight:700}.m .i{color:var(--dim);font-size:.85rem}.m input[type=range]{width:110px;margin:0;padding:0}
+#err{color:#fecaca;background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.5);padding:10px 14px;border-radius:12px;margin-bottom:12px;display:none}
+#chat{max-height:160px;overflow:auto;font-size:.9rem;margin-bottom:8px}#chat .s{color:var(--dim);font-style:italic}#chat b{color:var(--a)}
+.hide{display:none}small.t{color:var(--dim)}
+</style></head><body><main>
+<h1>SKParty</h1><p class="sub">Voice chat with friends. No account needed. Use headphones.</p>
+<div id="err"></div>
+<section id="start" class="card">
+  <label>Your name<input id="name" maxlength="24" placeholder="Your name" autocomplete="nickname"></label>
+  <label>Party code<input id="code" maxlength="60" placeholder="Paste a code or invite link" autocapitalize="characters"></label>
+  <div class="row"><button class="p" id="join">Join party</button><button id="make">Start a new party</button></div>
+  <p><small class="t">Your microphone is only used while you are in a party. Voices go straight between friends.</small></p>
+</section>
+<section id="party" class="card hide">
+  <div class="code"><div><small>Party code</small><b id="pc"></b></div><div class="row" style="flex:none"><button id="copy">Copy invite</button></div></div>
+  <div class="row" style="margin:12px 0"><button id="mute">Mute</button><button id="deaf">Deafen</button><button id="lock" class="hide">Lock</button><button class="d" id="leave">Leave</button></div>
+  <div id="list"></div>
+  <p id="micnote" class="hide"><small class="t"></small></p>
+</section>
+<section id="chatc" class="card hide"><div id="chat"></div><div class="row"><input id="msg" maxlength="300" placeholder="Say something" style="margin:0;flex:3"><button id="send" style="flex:1">Send</button></div></section>
+<script src="peerjs.min.js"></script><script src="party-core.js"></script>
+<script>
+(function(){
+  const $=s=>document.getElementById(s), esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const q=new URLSearchParams(location.search), ps=(q.get('ps')||'').match(/^(localhost|127\.0\.0\.1):(\d{2,5})$/);   // test hook, local only
+  const party=SKPartyCore.create({peerOpts: ps?{host:ps[1],port:+ps[2],path:'/',secure:false,config:{iceServers:[]}}:{}});
+  const saved=(()=>{try{return localStorage.getItem('skparty-name')||''}catch(e){return ''}})(); $('name').value=saved;
+  const fromHash=()=>{const c=party.parseCode(location.hash.slice(1)||q.get('c')||''); if(c)$('code').value=c;}; fromHash(); addEventListener('hashchange',fromHash);
+  const err=t=>{$('err').style.display=t?'block':'none';$('err').textContent=t||''};
+  const name=()=>{const n=$('name').value.trim()||'Guest';try{localStorage.setItem('skparty-name',n)}catch(e){}return n};
+  async function go(fn){err('');try{await fn()}catch(e){err(e.message||'Something went wrong')}}
+  $('make').onclick=()=>go(()=>party.create(name()));
+  $('join').onclick=()=>go(()=>party.join($('code').value,name()));
+  $('leave').onclick=()=>party.leave(); $('mute').onclick=()=>party.toggleMute(); $('deaf').onclick=()=>{party.setDeaf(!party.state().me.deaf)}; $('lock').onclick=()=>party.setLock(!party.state().locked);
+  $('copy').onclick=()=>{const l=location.origin+location.pathname.replace(/[^/]*$/,'')+'#'+party.state().code;navigator.clipboard&&navigator.clipboard.writeText(l);$('copy').textContent='Copied!';setTimeout(()=>$('copy').textContent='Copy invite',1500)};
+  $('send').onclick=()=>{party.sendChat($('msg').value);$('msg').value=''}; $('msg').onkeydown=e=>{if(e.key==='Enter')$('send').click()};
+  let sig='';
+  party.on(s=>{
+    const inn=s.status==='in'; $('start').classList.toggle('hide',inn); $('party').classList.toggle('hide',!inn); $('chatc').classList.toggle('hide',!inn);
+    $('join').disabled=$('make').disabled=s.status==='connecting'; if(s.status==='idle'&&s.error)err(s.error);
+    if(!inn)return; $('pc').textContent=s.code; $('mute').textContent=s.me.muted&&!s.me.deaf?'Unmute':'Mute'; $('mute').classList.toggle('on',s.me.muted); $('deaf').textContent=s.me.deaf?'Undeafen':'Deafen'; $('deaf').classList.toggle('on',s.me.deaf); $('lock').classList.toggle('hide',!s.host); $('lock').textContent=s.locked?'Unlock':'Lock';
+    const mn=$('micnote'); mn.classList.toggle('hide',s.mic==='ok'); mn.firstChild.textContent=s.mic==='denied'?'The browser blocked your microphone. Allow it in the address bar, then leave and rejoin. You can still listen.':'No microphone found. You can still listen.';
+    const all=[Object.assign({},s.me,{mine:true})].concat(s.members); const g=all.map(m=>[m.id||'me',m.name,m.muted,m.deaf,m.connected].join(':')).join('|');
+    if(g!==sig){ sig=g; $('list').innerHTML=all.map(m=>'<div class="m" data-id="'+esc(m.mine?'me':m.id)+'"><div class="av">'+esc((m.name||'?')[0].toUpperCase())+'</div><div class="n">'+esc(m.name)+(m.mine?' (you)':'')+'</div><div class="i">'+(m.deaf?'deafened':m.muted?'muted':'')+(!m.mine&&!m.connected?' connecting...':'')+'</div>'+(m.mine?'':'<input type="range" min="0" max="100" value="'+Math.round(m.vol*100)+'" aria-label="Volume for '+esc(m.name)+'">')+'</div>').join('');
+      $('list').querySelectorAll('.m').forEach(r=>{const inp=r.querySelector('input');if(inp)inp.oninput=()=>party.setVolume(r.dataset.id,inp.value/100)}); }
+    $('list').querySelectorAll('.m').forEach(r=>{const m=r.dataset.id==='me'?s.me:s.members.find(x=>x.id===r.dataset.id);r.classList.toggle('speak',!!(m&&m.speaking))});
+    const ch=$('chat'),stick=ch.scrollTop+ch.clientHeight>=ch.scrollHeight-20; ch.innerHTML=s.chat.slice(-40).map(c=>c.sys?'<div class="s">'+esc(c.text)+'</div>':'<div><b>'+esc(c.name||'?')+'</b> '+esc(c.text)+'</div>').join(''); if(stick)ch.scrollTop=ch.scrollHeight;
+  });
+  window.__party=party; if(party.parseCode(location.hash.slice(1))&&saved)$('code').focus();
+})();
+</script></main></body></html>
