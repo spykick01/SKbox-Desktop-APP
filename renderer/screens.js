@@ -34,6 +34,7 @@
   K.screens = K.screens || {};
   function go(name, data) {
     (K.modeTimers || []).forEach(clearInterval); K.modeTimers = [];
+    if (name === 'settings' && S.screen === 'settings' && (!data || !data.cat || data.cat === S.curCat)) { const pn = document.querySelector('#screen .pane'), f = pn && pn.querySelector('.focus'); S.setKeep = pn ? { cat: S.curCat, top: pn.scrollTop, idx: f ? Array.from(pn.querySelectorAll('[data-nav]')).indexOf(f) : -1 } : null; }
     clearTimers(); S.screen = name; if (window.K.audio) window.K.audio.setSuspended(name === 'web'); S.backFn = null; S.startFn = null; S.bumper = null;
     const root = $('#screen'); root.innerHTML = ''; root.className = 'fade';
     (({ boot, start, welcome, profiles, home, library, settings, addApp, web, details }[name]) || K.screens[name])(root, data || {}); { const M = K.modes && K.modes[S.settings.uiMode]; if (M && M.chrome && (name === 'library' || name === 'settings')) M.chrome(root, name); }
@@ -92,7 +93,7 @@
   }
   function applyTheme() {
     const a = S.settings.accent || ACCENTS[0]; document.documentElement.style.setProperty('--a', a);
-    document.body.classList.toggle('calm', !!S.settings.calm); ['classic', 'cinema', 'deck'].forEach(m => document.body.classList.toggle('m-' + m, (S.settings.uiMode || 'classic') === m));
+    document.body.classList.toggle('calm', !!S.settings.calm); ['classic', 'cinema', 'deck', 'arcade', 'zen', 'wall'].forEach(m => document.body.classList.toggle('m-' + m, (S.settings.uiMode || 'classic') === m));
     const TH = { midnight: {}, oled: { '--bg': '#000', '--panel': 'rgba(10,10,14,.9)', '--panel2': 'rgba(22,22,28,.95)' }, daylight: { '--bg': '#e9edf7', '--panel': 'rgba(255,255,255,.86)', '--panel2': 'rgba(240,243,252,.96)', '--line': 'rgba(10,15,40,.14)', '--text': '#101428', '--dim': '#4a5170' },
       sunset: { '--bg': '#1a0f24', '--panel': 'rgba(42,22,52,.86)', '--panel2': 'rgba(58,30,66,.95)', '--line': 'rgba(255,190,150,.16)', '--text': '#fff1e8', '--dim': '#c9a4b8' },
       ocean: { '--bg': '#061a2b', '--panel': 'rgba(10,36,58,.86)', '--panel2': 'rgba(14,52,80,.95)', '--line': 'rgba(140,210,255,.16)', '--text': '#eaf7ff', '--dim': '#8fb4cc' },
@@ -618,6 +619,7 @@
 
   // ---------- settings ----------
   const NEWS = [
+    ['playit.gg, three more modes, tidier Settings', 'SKServers: let friends join from anywhere with playit.gg (no port forwarding), addresses hidden by default, console filter, backup on stop, notifications, duplicate server. Look & modes: Arcade, Zen and Wall. Settings is grouped and no longer jumps around.'],
     ['Voice parties, Cinema and Deck modes, Spotlight', 'SK menu > Party: voice chat with friends while you play (code or invite link, up to 8). Settings > Look & modes: Classic, Cinema or Deck, 6 loading screens, Home widgets, export your setup. Press / or Ctrl+K to search everything.'],
     ['SKServers and SKStore', 'Library > SKServers makes and runs Minecraft servers with a plugin and mod store (Modrinth, SpigotMC). Library > SKStore has featured games and apps: Steam, Epic free games and winget installs.'],
     ['Game library, game info, phone companion', 'Settings > Game library adds your ROMs by system with emulators. Details shows descriptions, screenshots and trailers. Settings > Phone companion turns your phone into a remote and trackpad.'],
@@ -656,20 +658,29 @@
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
     const split = el('div', 'split'), menuE = el('div', 'menu'), pane = el('div', 'pane');
     split.append(menuE, pane); root.querySelector('.page').appendChild(split);
-    const KW = { extras: 'goal streak quiet hours idle start screen emulator cemu fullscreen reminder break limit tiles badge backup', stats: 'play time chart', history: 'wrapped sessions csv export', routines: 'schedule timer automatic', notifs: 'notification log', queue: 'playlist next', milestones: 'badges achievements', apps: 'add games', import: 'steam epic scan', sysinfo: 'cpu memory ram disk', display: 'theme startup', power: 'sleep shutdown restart lock', remote: 'stream' };
+    const KW = { extras: 'goal streak quiet hours idle start screen emulator cemu fullscreen reminder break limit tiles badge backup', stats: 'play time chart', history: 'wrapped sessions csv export', routines: 'schedule timer automatic', notifs: 'notification log', queue: 'playlist next', milestones: 'badges achievements', apps: 'add games', import: 'steam epic scan', sysinfo: 'cpu memory ram disk', display: 'theme accent startup idle clock', power: 'sleep shutdown restart lock', remote: 'stream phone mac moonlight',
+      wifi: 'network internet wireless connect', controllers: 'gamepad pads player 1 player 2 assign', guide: 'xbox playstation button home menu', players: 'profiles accounts nickname', cozy: 'wallpaper background music ambient', bluetooth: 'headphones pair speaker', shots: 'screenshots capture pictures', sound: 'volume audio output speakers', prefs: 'tiles size compact calm animations', bright: 'brightness dimmer night filter', windows: 'close apps task manager', roms: 'roms emulators cemu dolphin games systems library', companion: 'phone qr keyboard trackpad', padtest: 'controller test buttons', new: 'changelog updates', about: 'version update', looks: 'mode theme cinema deck arcade zen wall loading screen widgets export import setup move pc', party: 'voice chat friends microphone mute call' };
+    const GROUPS = [['Connect', ['wifi', 'bluetooth', 'remote', 'companion']], ['Play', ['controllers', 'guide', 'players', 'apps', 'import', 'roms', 'windows', 'queue']], ['Look & sound', ['looks', 'display', 'cozy', 'sound', 'bright', 'prefs']], ['Social', ['party', 'history', 'milestones', 'stats']], ['Tools', ['extras', 'routines', 'notifs', 'shots']], ['System', ['sysinfo', 'padtest', 'power', 'new', 'about']]];
     const q = (S.settingsQ || '').toLowerCase().trim(), cats = q ? CATS.filter(([id, ic, name]) => (name + ' ' + (KW[id] || '')).toLowerCase().includes(q)) : CATS;
     let sel = d.cat || (cats.some(c => c[0] === S.settings.lastCat) ? S.settings.lastCat : (cats[0] ? cats[0][0] : 'wifi')), firstEl = null;
     if (!cats.some(c => c[0] === sel) && cats[0]) sel = cats[0][0];
     const items = {};
     const sb = nav(el('button', 'mi', '<span>\u{1F50D}</span>' + (q ? 'Searching: ' + esc(q) : 'Search settings'))); sb.onclick = () => osk({ title: 'Search settings', value: S.settingsQ || '', submitLabel: 'Search', onDone: v => { S.settingsQ = (v || '').trim(); go('settings', {}); }, onCancel: () => {} }); menuE.appendChild(sb);
     if (q) { const cl = nav(el('button', 'mi', '<span>\u2715</span>Clear search')); cl.onclick = () => { S.settingsQ = ''; go('settings', {}); }; menuE.appendChild(cl); if (!cats.length) menuE.appendChild(el('div', 'sub', 'Nothing matches.')); }
-    cats.forEach(([id, ic, name]) => {
+    let drawT = 0, saveT = 0; const keep = S.setKeep; S.setKeep = null; S.curCat = sel;
+    const addCat = ([id, ic, name]) => {
       const m = nav(el('button', 'mi', '<span>' + ic + '</span>' + name)); items[id] = m; if (id === sel) { m.classList.add('sel'); firstEl = m; }
-      m._onfocus = () => { if (sel !== id || !pane.firstChild) { sel = id; if (S.settings.lastCat !== id) { S.settings.lastCat = id; saveSettings(); } Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); panel(id, pane); } };
-      m.onclick = () => { const f = pane.querySelector('[data-nav]'); if (f) focus(f); };
+      m._onfocus = () => { if (sel !== id || !pane.firstChild) {
+        sel = id; S.curCat = id; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel');
+        clearTimeout(drawT); drawT = setTimeout(() => { if (pane.isConnected && sel === id) panel(id, pane); }, pane.firstChild ? 110 : 0);   // wait until the cursor rests, so scrolling the list is smooth
+        clearTimeout(saveT); saveT = setTimeout(() => { if (S.settings.lastCat !== id) { S.settings.lastCat = id; saveSettings(); } }, 900);   // and do not write to disk on every step
+      } };
+      m.onclick = () => { clearTimeout(drawT); if (sel === id && !pane.firstChild) panel(id, pane); const f = pane.querySelector('[data-nav]'); if (f) focus(f); };
       menuE.appendChild(m);
-    });
+    };
+    if (q) cats.forEach(addCat); else { const seen = new Set(); GROUPS.forEach(([gname, ids]) => { const list = ids.map(i => CATS.find(c => c[0] === i)).filter(Boolean); if (!list.length) return; menuE.appendChild(el('div', 'mgrp', gname.toUpperCase())); list.forEach(c => { seen.add(c[0]); addCat(c); }); }); const rest = CATS.filter(c => !seen.has(c[0])); if (rest.length) { menuE.appendChild(el('div', 'mgrp', 'MORE')); rest.forEach(addCat); } }
     if (!firstEl) firstEl = sb; firstEl.dataset.first = ''; if (cats.length) panel(sel, pane); ensureFocus(root, firstEl);
+    if (keep && keep.cat === sel) { pane.scrollTop = keep.top; const els = pane.querySelectorAll('[data-nav]'); if (keep.idx >= 0 && els[keep.idx]) focus(els[keep.idx]); }   // a refresh keeps your place instead of jumping to the top
   }
   const row = (title, sub, right, fn) => { const b = nav(el('button', 'item', '<div>' + esc(title) + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div><div class="r">' + (right || '') + '</div>')); if (fn) b.onclick = fn; return b; };
   // a row that cycles through choices when you press A

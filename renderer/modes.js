@@ -5,7 +5,7 @@
   const K = window.K, { sk, S, el, esc, nav, toast, hints, focus, ensureFocus, openLayer, closeLayer, confirm, menu, osk, fileUrl } = K, U = K.ui;
   const X = (n, a) => sk.extras.do(n, a);
   K.modes = {}; K.settingsPages = {};
-  const MODES = [['classic', 'Classic', 'The original SKBox: one row of big tiles.'], ['cinema', 'Cinema', 'Streaming-style: a big banner for the game you are on, shelves of posters underneath.'], ['deck', 'Deck', 'Handheld-style: a side rail, a big resume card, a tight grid and a status bar.']];
+  const MODES = [['classic', 'Classic', 'The original SKBox: one row of big tiles.'], ['cinema', 'Cinema', 'Streaming-style: a big banner for the game you are on, shelves of posters underneath.'], ['deck', 'Deck', 'Handheld-style: a side rail, a big resume card, a tight grid and a status bar.'], ['arcade', 'Arcade', 'A neon cabinet: glowing carousel, a big marquee title and scanlines.'], ['zen', 'Zen', 'Calm and minimal: a big clock and your favorites. Nothing else.'], ['wall', 'Wall', 'Everything at once: a dense wall of covers with collection tabs.']];
   const modeName = () => S.settings.uiMode || 'classic';
   const timers = fn => { K.modeTimers = K.modeTimers || []; K.modeTimers.push(fn); return fn; };
   const dests = [['home', '\u2302', 'Home'], ['library', '\u25A6', 'Library'], ['store', '\u{1F6D2}', 'Store'], ['servers', '\u{1F5A5}', 'Servers'], ['party', '\u{1F3A7}', 'Party'], ['search', '\u{1F50D}', 'Search'], ['settings', '\u2699', 'Settings']];
@@ -52,6 +52,7 @@
     c.push({ ic: '\u{1F5A5}', t: 'Open SKServers', s: 'Minecraft servers', k: 'servers minecraft host plugins', fn: () => K.go('servers') }, { ic: '\u{1F6D2}', t: 'Open SKStore', s: 'Games and apps', k: 'store shop games apps steam epic free deals', fn: () => K.go('store') });
     wd.servers.forEach(s => c.push({ ic: s.state === 'running' ? '\u23F9' : '\u25B6', t: (s.state === 'running' ? 'Stop ' : 'Start ') + s.name, s: 'Server \u00B7 ' + s.typeName + ' ' + s.version, k: 'server minecraft ' + s.name, fn: async () => { const r = await X(s.state === 'running' ? 'sksStop' : 'sksStart', { id: s.id }); if (r && r.ok === false) toast(r.error); else toast(s.state === 'running' ? 'Stopping ' + s.name : 'Starting ' + s.name); } }));
     MODES.forEach(m => { if (m[0] !== modeName()) c.push({ ic: '\u{1F3A8}', t: 'Switch to ' + m[1] + ' mode', s: 'Look', k: 'mode theme look ui design layout ' + m[1], fn: () => setMode(m[0]) }); });
+    { const games = U.allApps().filter(a => !a.kind && !(S.settings.hiddenApps || []).includes(a.id)); if (games.length > 1) c.push({ ic: '\u{1F3B2}', t: 'Surprise me: launch a random game', s: games.length + ' games to pick from', k: 'random surprise pick game lucky roulette', fn: () => { const g = games[Math.floor(Math.random() * games.length)]; toast('Launching ' + g.name); U.openApp(g); } }); }
     if (S.game) c.push({ ic: '\u2716', t: 'Close ' + S.game.name, s: 'Running game', k: 'close quit exit game', fn: () => U.closeRunning() });
     (U.CATS || []).forEach(([id, ic, name]) => c.push({ ic, t: 'Settings: ' + name, s: 'Settings', k: 'settings options ' + name, fn: () => K.go('settings', { cat: id }) }));
     return c;
@@ -130,6 +131,48 @@
       const bar = el('div', 'dbar'); K.widgets.list().forEach(w => bar.appendChild(w)); main.appendChild(bar);
       const pbtn = card.querySelector('.btn.p'); const want = els.find(t => (t._app.id || 'lib') === S.lastTileId) || pbtn || els[0]; els.forEach(t => { t._onfocus = () => { S.lastTileId = t._app.id || 'lib'; if (!t._app.lib) K.setBg(''); }; }); ensureFocus(root, want);
       K.modeTimers = K.modeTimers || []; K.modeTimers.push(setInterval(pull, 15000));
+    }
+  };
+
+  // ---------- Arcade ----------
+  K.modes.arcade = {
+    chrome(root, active) { const nb = navPills(active); nb.classList.add('arcnav'); root.insertBefore(nb, root.firstChild); root.classList.add('arc-chrome'); },
+    home(root) {
+      hints([['A', 'Play'], ['Y', 'Options'], ['S', 'Settings']]); S.startFn = () => K.go('settings'); S.backFn = null; document.body.classList.add('m-arcade'); K.setBg('');
+      const wrap = el('div', 'arc'); const top = navPills('home'); top.classList.add('arcnav'); wrap.appendChild(top);
+      const stage = el('div', 'arcstage'), name = el('div', 'arcname', ''), sub = el('div', 'arcsub', ''), coin = el('div', 'arccoin', 'PRESS A TO START'); stage.append(name, sub, coin); wrap.appendChild(stage);
+      const rowE = el('div', 'arcrow'); const list = U.tiles(); const tiles = list.map(a => { const t = posterTile(a); rowE.appendChild(t); return t; }); wrap.appendChild(rowE); const ws = el('div', 'cwid'); K.widgets.list().forEach(w2 => ws.appendChild(w2)); wrap.appendChild(ws); root.appendChild(wrap);
+      const show = a => { name.textContent = a.lib ? 'LIBRARY' : a.name; const st = (S.stats || {})[a.id] || {}; sub.textContent = a.lib ? U.allApps().length + ' GAMES AND APPS' : (U.isRunning(a) ? 'RUNNING \u00B7 PRESS A TO RESUME' : [st.ms ? 'TIME ' + fmtMs(st.ms).toUpperCase() : 'NEW GAME', st.n ? 'PLAYED ' + st.n + ' TIMES' : ''].filter(Boolean).join(' \u00B7 ')); coin.textContent = a.lib ? 'PRESS A TO BROWSE' : (U.isRunning(a) ? 'PRESS A TO RESUME' : 'PRESS A TO START'); };
+      tiles.forEach(t => { t._onfocus = () => { show(t._app); S.lastTileId = t._app.id || 'lib'; }; }); const want = tiles.find(t => (t._app.id || 'lib') === S.lastTileId) || tiles[0]; if (want) show(want._app); ensureFocus(root, want);
+      K.modeTimers = K.modeTimers || []; K.modeTimers.push(setInterval(pull, 15000));
+    }
+  };
+  // ---------- Zen ----------
+  K.modes.zen = {
+    chrome() {},
+    home(root) {
+      hints([['A', 'Open'], ['Y', 'Options'], ['S', 'Settings']]); S.startFn = () => K.go('settings'); S.backFn = null; document.body.classList.add('m-zen'); K.setBg('');
+      const z = el('div', 'zen'); const clock = el('div', 'zclock', ''), date = el('div', 'zdate', ''), row = el('div', 'zrow'), foot = el('div', 'zfoot'); z.append(clock, date, row, foot); root.appendChild(z);
+      const tick = () => { const d = new Date(); clock.textContent = clockText(); date.textContent = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); }; tick(); K.modeTimers = K.modeTimers || []; K.modeTimers.push(setInterval(tick, 10000));
+      const lp = lastPlayed(); const favs = U.homeApps().filter(a => !a.lib).slice(0, 5); const tiles = []; favs.forEach(a => { const t = posterTile(a); tiles.push(t); row.appendChild(t); });
+      if (lp) { const b = nav(el('button', 'zcont', (U.isRunning(lp) ? 'Resume ' : 'Continue ') + esc(lp.name))); b.onclick = () => U.openApp(lp); b._onopts = () => U.appMenu(lp, 'home'); foot.appendChild(b); tiles.push(b); }
+      const all = nav(el('button', 'zmore', 'All games')); all.onclick = () => K.go('library'); foot.appendChild(all); tiles.push(all); const sr = nav(el('button', 'zmore', '\u{1F50D}')); sr.onclick = () => K.spotlight.open(); foot.appendChild(sr);
+      const p = K.partyUI.state(); if (p.status === 'in') foot.appendChild(widget('party', 'zmore wdgz'));
+      ensureFocus(root, tiles[0] || all);
+    }
+  };
+  // ---------- Wall ----------
+  K.modes.wall = {
+    chrome(root, active) { root.insertBefore(navPills(active), root.firstChild); root.classList.add('cin-chrome'); },
+    home(root) {
+      hints([['A', 'Open'], ['Y', 'Options'], ['S', 'Settings']]); S.startFn = () => K.go('settings'); S.backFn = null; document.body.classList.add('m-wall'); K.setBg('');
+      const wrap = el('div', 'wallw'); wrap.appendChild(navPills('home')); const tabs = el('div', 'walltabs'), grid = el('div', 'wallgrid'), count = el('div', 'wallcount'); wrap.append(tabs, grid, count); root.appendChild(wrap);
+      const st = S.stats || {}, cols = S.settings.collections || {}, hidden = S.settings.hiddenApps || [], everything = U.allApps().filter(a => !hidden.includes(a.id) && !a.lib);
+      const sets = [['All', () => everything], ['Recent', () => everything.filter(a => (st[a.id] || {}).last).sort((x, y) => st[y.id].last - st[x.id].last).slice(0, 40)], ['Pinned', () => U.homeApps().filter(a => !a.lib)]].concat(Object.keys(cols).map(k => [k, () => everything.filter(a => (cols[k] || []).includes(a.id))]));
+      let cur = S.wallTab && sets.some(x => x[0] === S.wallTab) ? S.wallTab : 'All'; const tabEls = {};
+      const fill = () => { grid.innerHTML = ''; const list = sets.find(x => x[0] === cur)[1](); list.forEach(a => grid.appendChild(posterTile(a))); count.textContent = list.length + (list.length === 1 ? ' game' : ' games'); if (!list.length) grid.appendChild(el('p', 'sub', 'Nothing in here yet.')); Object.keys(tabEls).forEach(k => tabEls[k].classList.toggle('act', k === cur)); };
+      sets.forEach(([name]) => { const b = nav(el('button', 'wtab', esc(name))); tabEls[name] = b; b.onclick = () => { cur = name; S.wallTab = name; fill(); }; tabs.appendChild(b); });
+      fill(); const first = grid.querySelector('.tile') || tabs.firstChild; ensureFocus(root, first); K.modeTimers = K.modeTimers || []; K.modeTimers.push(setInterval(pull, 20000));
     }
   };
 

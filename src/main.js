@@ -152,16 +152,19 @@ const roms = require('./lib/roms').create({
 });
 const gameinfo = require('./lib/gameinfo').create({ store, progress: (f, t) => send('info:progress', { found: f, total: t }) });
 // SKServers (Minecraft server hosting) and the App Store.
-const servers = require('./lib/servers').create({ store, dir: app.getPath('userData'), send, openPath: p => shell.openPath(p), copy: t => { try { require('electron').clipboard.writeText(t); } catch {} } });
+let playit = null;   // made right after the servers; the servers tell it when they start and stop
+const servers = require('./lib/servers').create({ store, dir: app.getPath('userData'), send, openPath: p => shell.openPath(p), copy: t => { try { require('electron').clipboard.writeText(t); } catch {} }, onState: v => { if (playit) playit.onServer(v); },
+  notify: (t, b) => { try { if (Notification.isSupported()) new Notification({ title: t, body: b }).show(); } catch {} } });
+playit = require('./lib/playit').create({ store, dir: app.getPath('userData'), version: app.getVersion(), send, openExternal: u => shell.openExternal(u), servers: () => servers._.list().list, getServer: id => servers._.list().list.find(x => x.id === id), setFlag: (id, v) => { servers.run('sksSet', { id, playit: v }); } });
 const appstore = require('./lib/appstore').create({ store, progress: p => send('store:progress', p), openExternal: u => shell.openExternal(u) });
 const party = require('./lib/party').create({ BrowserWindow, ipcMain, preload: path.join(__dirname, 'partyPreload.js'), page: RENDERER('party/engine.html'), broadcast: (ch, p) => send(ch, p), settings: () => store.read('settings', {}),
   notify: (t, b) => { try { if (store.read('settings', {}).partyNotify !== false && Notification.isSupported()) new Notification({ title: t, body: b }).show(); } catch {} } });
 ipcMain.handle('party:cmd', (_e, c, a) => party.cmd(String(c || ''), a)); ipcMain.handle('party:get', () => party.get());
-app.on('will-quit', () => party.close());
+app.on('will-quit', () => { party.close(); try { playit.stop(); } catch {} });
 const setupMod = require('./lib/setup').create({ store, version: app.getVersion(), desktop: () => app.getPath('desktop') });
 let serversQuitting = false;
 app.on('before-quit', e => { if (serversQuitting || !servers.anyRunning()) return; e.preventDefault(); serversQuitting = true; servers.stopAll(20000).finally(() => app.quit()); });   // let the servers save their worlds first
-ipcMain.handle('extras:do', async (_e, n, a) => { n = String(n || ''); let r = await plus.run(n, a); if (r === null) r = await roms.run(n, a); if (r === null) r = await gameinfo.run(n, a); if (r === null) r = await servers.run(n, a); if (r === null) r = await appstore.run(n, a); if (r === null) r = await setupMod.run(n, a); return r !== null ? r : extras.run(n, a); });
+ipcMain.handle('extras:do', async (_e, n, a) => { n = String(n || ''); let r = await plus.run(n, a); if (r === null) r = await roms.run(n, a); if (r === null) r = await gameinfo.run(n, a); if (r === null) r = await servers.run(n, a); if (r === null) r = await playit.run(n, a); if (r === null) r = await appstore.run(n, a); if (r === null) r = await setupMod.run(n, a); return r !== null ? r : extras.run(n, a); });
 // The main SKBox window must not react to the controller while the SK menu is in front.
 function lockUI() { try { if (win && !win.isDestroyed()) win.webContents.send('input-lock', !!overlayOpen); if (helper && helper.ready) helper.padIn(padTest || overlayOpen); } catch {} }
 const splitArgs = s => (String(s || '').match(/"[^"]*"|\S+/g) || []).map(x => x.replace(/^"|"$/g, ''));

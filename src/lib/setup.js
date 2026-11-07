@@ -33,7 +33,8 @@ function create(ctx) {
     const r = load(a && a.file); if (!r.ok) return r; const d = r.j.data;
     try {   // keep a copy of the current setup first so nothing is lost
       const cur = snapshot(); fs.mkdirSync(desktop(), { recursive: true }); fs.writeFileSync(path.join(desktop(), 'SKBox-setup-BEFORE-IMPORT-' + stamp() + '.json'), JSON.stringify(cur, null, 1));
-      KEEP.forEach(k => { if (d[k] == null) return; let v = d[k]; if (k === 'settings') { const own = ctx.store.read('settings', {}); const keepOwn = {}; Object.keys(own).forEach(x => { if (SECRET.test(x)) keepOwn[x] = own[x]; }); v = Object.assign({}, scrub(v), keepOwn); } if (k === 'apps' && !Array.isArray(v)) return; ctx.store.write(k, v); });
+      KEEP.forEach(k => { if (d[k] == null) return; let v = d[k]; if (k === 'settings') { const own = ctx.store.read('settings', {}); const keepOwn = {}; Object.keys(own).forEach(x => { if (SECRET.test(x)) keepOwn[x] = own[x]; }); v = Object.assign({}, scrub(v), keepOwn); } if (k === 'apps') { if (!Array.isArray(v)) return; v = v.map(a => (a && a.cover && /^[a-z]:\\|^\//i.test(a.cover) && !fs.existsSync(a.cover)) ? Object.assign({}, a, { cover: '' }) : a); }   // covers from the other PC are not here: blank them so SKBox looks them up again
+      ctx.store.write(k, v); });
     } catch (e) { return { ok: false, error: 'The import did not work: ' + String((e && e.message) || e).slice(0, 100) }; }
     return { ok: true };
   }

@@ -147,14 +147,20 @@ function create(ctx) {
     fs.rmSync(path.join(javaRoot, String(major)), { recursive: true, force: true }); fs.renameSync(sub, path.join(javaRoot, String(major))); fs.rmSync(tmp, { recursive: true, force: true }); try { fs.unlinkSync(zip); } catch {}
     return { path: ownJava(major), major, own: true };
   }
-  async function ensureJava(major, id) { return (await findJava(major)) || await installJava(major, id); }
+  const javaBusy = {};   // major -> promise, so two servers starting together share one Java download
+  async function ensureJava(major, id) {
+    const have = await findJava(major); if (have) return have;
+    if (!javaBusy[major]) javaBusy[major] = installJava(major, id).finally(() => { delete javaBusy[major]; });
+    return javaBusy[major];
+  }
 
   // ---------- servers ----------
   const portFree = port => new Promise(res => { const s = net.createServer(); s.once('error', () => res(false)); s.once('listening', () => s.close(() => res(true))); s.listen(port, '0.0.0.0'); });
   const lanIps = () => { const o = []; const n = os.networkInterfaces(); Object.keys(n).forEach(k => (n[k] || []).forEach(a => { if (a.family === 'IPv4' && !a.internal && !/^169\.254\./.test(a.address)) o.push(a.address); })); return o; };
   const view = s => { const r = rt(s.id); return Object.assign({}, s, { state: r.state, players: Array.from(r.players), startedAt: r.startedAt || 0, error: r.err || '', progress: r.prog || null, typeName: typeOf(s).name, pluginDir: typeOf(s).dir, canPlugins: !!typeOf(s).dir, mc: s.version }); };
   const list = () => ({ ok: true, list: read().map(view), ips: lanIps(), totalMB: Math.round(os.totalmem() / 1048576), freeMB: Math.round(os.freemem() / 1048576) });
-  const emit = id => { const s = find(id); if (s) send('sks:state', view(s)); };
+  const emit = id => { const s = find(id); if (s) { const v = view(s); send('sks:state', v); if (ctx.onState) { try { ctx.onState(v); } catch (_) {} } } };
+  const note = (title, body) => { try { ctx.notify && ctx.notify(title, body); } catch (_) {} };
   const setState = (id, st, err) => { const r = rt(id); r.state = st; r.err = err || ''; emit(id); };
 
   async function createServer(a) {
@@ -187,8 +193,8 @@ function create(ctx) {
   };
   function watchLine(id, line) {
     const r = rt(id); let m;
-    if (/Done \([\d.,]+s\)! For help/.test(line)) { r.state = 'running'; r.startedAt = r.startedAt || now(); emit(id); }
-    else if ((m = /\]: ([A-Za-z0-9_.]{1,32}) joined the game/.exec(line))) { r.players.add(m[1]); emit(id); }
+    if (/Done \([\d.,]+s\)! For help/.test(line)) { const was = r.state; r.state = 'running'; r.startedAt = r.startedAt || now(); emit(id); const sv = find(id); if (was !== 'running' && sv && sv.notifyReady !== false) note(sv.name + ' is ready', 'Players can join now.'); }
+    else if ((m = /\]: ([A-Za-z0-9_.]{1,32}) joined the game/.exec(line))) { r.players.add(m[1]); emit(id); const sv = find(id); if (sv && sv.notifyJoin) note(sv.name, m[1] + ' joined'); }
     else if ((m = /\]: ([A-Za-z0-9_.]{1,32}) left the game/.exec(line))) { r.players.delete(m[1]); emit(id); }
     else if (/FAILED TO BIND TO PORT|Address already in use/i.test(line)) r.err = 'That port is already in use. Close whatever uses it or pick another port.';
     else if (/You need to agree to the EULA/i.test(line)) r.err = 'The Minecraft EULA has not been accepted.';
@@ -200,8 +206,9 @@ function create(ctx) {
     if (['starting', 'running', 'stopping', 'installing'].includes(R.state)) return { ok: false, error: 'It is already ' + R.state + '.' };
     const dir = dirOf(s); if (!fs.existsSync(path.join(dir, 'server.jar'))) return { ok: false, error: 'server.jar is missing. Use Update server software to download it again.' };
     if (!(await portFree(s.port))) return { ok: false, error: 'Port ' + s.port + ' is already in use on this PC. Another server or program has it. Change the port in Settings.' };
-    R.players = new Set(); R.startedAt = 0; setState(id, 'starting');
-    let j; try { j = await ensureJava(s.java || javaFor(s.version), id); } catch (e) { setState(id, 'crashed', 'Java is missing: ' + String((e && e.message) || e).slice(0, 160)); return { ok: false, error: R.err }; }
+    R.players = new Set(); R.startedAt = 0; const token = R.startToken = (R.startToken || 0) + 1; setState(id, 'starting');
+    let j; try { j = await ensureJava(s.java || javaFor(s.version), id); } catch (e) { if (R.startToken !== token) return { ok: true, cancelled: true }; setState(id, 'crashed', 'Java is missing: ' + String((e && e.message) || e).slice(0, 160)); return { ok: false, error: R.err }; }
+    if (R.startToken !== token) return { ok: true, cancelled: true };   // Stop was pressed while Java was still downloading
     const args = ['-Xms' + Math.min(s.ram, 1024) + 'M', '-Xmx' + s.ram + 'M', '-Dfile.encoding=UTF-8'].concat(String(s.jvm || '').split(/\s+/).filter(Boolean), ['-jar', 'server.jar', 'nogui']);
     let proc; try { proc = (ctx.spawn || cp.spawn)(j.path, args, { cwd: dir, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); } catch (e) { setState(id, 'crashed', 'Could not start Java.'); return { ok: false, error: R.err }; }
     R.proc = proc; R.stopping = false; pushLog(id, ['[SKServers] Starting ' + s.name + ' (' + typeOf(s).name + ' ' + s.version + ', ' + Math.round(s.ram / 1024 * 10) / 10 + ' GB)\u2026']);
@@ -211,7 +218,7 @@ function create(ctx) {
     proc.on('exit', code => {
       clearTimeout(R.killT); R.proc = null; R.players = new Set(); R.startedAt = 0; const wasStopping = R.stopping; R.stopping = false;
       pushLog(id, ['[SKServers] The server ' + (wasStopping ? 'stopped.' : 'closed (exit code ' + code + ').')]);
-      if (wasStopping || code === 0) { setState(id, 'stopped'); const w = R.waiters; R.waiters = []; (w || []).forEach(f => f()); return; }
+      if (wasStopping || code === 0) { setState(id, 'stopped'); const w = R.waiters; R.waiters = []; (w || []).forEach(f => f()); const sv = find(id); if (sv && sv.backupOnStop && worlds(sv).length) backup(id).then(b => { pushLog(id, ['[SKServers] ' + (b.ok ? 'Backup saved: ' + b.file : 'Backup failed: ' + b.error)]); if (!b.ok) note(sv.name, 'The automatic backup did not work.'); }); return; }
       const known = R.err; setState(id, 'crashed', known || 'The server closed unexpectedly (exit code ' + code + '). Check the console.'); const w = R.waiters; R.waiters = []; (w || []).forEach(f => f());
       const cur = find(id); const t = now(); R.restarts = R.restarts.filter(x => t - x < 600000);
       if (cur && cur.autoRestart && R.restarts.length < 3 && !known) { R.restarts.push(t); pushLog(id, ['[SKServers] Restarting in 5 seconds (' + R.restarts.length + ' of 3)\u2026']); setTimeout(() => { if (rt(id).state === 'crashed') start(id); }, ctx.restartDelay == null ? 5000 : ctx.restartDelay); }
@@ -220,7 +227,7 @@ function create(ctx) {
   }
   function killTree(proc) { try { if (process.platform === 'win32' && !ctx.spawn) cp.execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true }, () => {}); else proc.kill('SIGKILL'); } catch {} }
   function stop(id, force) {
-    const R = rt(id); if (!R.proc) return Promise.resolve({ ok: true, state: R.state });
+    const R = rt(id); if (!R.proc) { if (R.state === 'starting') { R.startToken = (R.startToken || 0) + 1; setState(id, 'stopped'); } return Promise.resolve({ ok: true, state: R.state }); }
     return new Promise(res => {
       R.waiters = (R.waiters || []).concat([() => res({ ok: true, state: 'stopped' })]);
       if (force) { R.stopping = true; killTree(R.proc); return; }
@@ -254,13 +261,13 @@ function create(ctx) {
   function setServer(id, a) {
     const s = find(id); if (!s) return { ok: false, error: 'That server is gone.' }; a = a || {}; const busy = ['starting', 'running', 'stopping'].includes(stateOf(id));
     if ((a.ram != null || a.jvm != null) && busy) return { ok: false, error: 'Stop the server first.' };
-    const r = update(id, x => { if (a.name != null && String(a.name).trim()) x.name = String(a.name).trim().slice(0, 40); if (a.ram != null) x.ram = Math.max(512, Math.min(65536, Math.round(+a.ram || x.ram))); if (a.autoStart != null) x.autoStart = !!a.autoStart; if (a.autoRestart != null) x.autoRestart = !!a.autoRestart; if (a.jvm != null) x.jvm = String(a.jvm).replace(/[^\w\s.:=+\-,\/]/g, '').slice(0, 300); });
+    const r = update(id, x => { if (a.name != null && String(a.name).trim()) x.name = String(a.name).trim().slice(0, 40); if (a.ram != null) x.ram = Math.max(512, Math.min(65536, Math.round(+a.ram || x.ram))); if (a.autoStart != null) x.autoStart = !!a.autoStart; if (a.autoRestart != null) x.autoRestart = !!a.autoRestart; if (a.backupOnStop != null) x.backupOnStop = !!a.backupOnStop; if (a.notifyReady != null) x.notifyReady = !!a.notifyReady; if (a.notifyJoin != null) x.notifyJoin = !!a.notifyJoin; if (a.playit != null) x.playit = !!a.playit; if (a.jvm != null) x.jvm = String(a.jvm).replace(/[^\w\s.:=+\-,\/]/g, '').slice(0, 300); });
     emit(id); return { ok: true, server: view(r) };
   }
   async function deleteServer(id) {
     const s = find(id); if (!s) return { ok: true }; if (rt(id).proc) return { ok: false, error: 'Stop the server first.' };
     try { fs.rmSync(dirOf(s), { recursive: true, force: true }); } catch (e) { return { ok: false, error: 'Windows would not delete the folder. Close anything using it.' }; }
-    write(read().filter(x => x.id !== id)); delete runtime[id]; send('sks:state', { id, removed: true }); return { ok: true };
+    write(read().filter(x => x.id !== id)); delete runtime[id]; send('sks:state', { id, removed: true }); if (ctx.onState) { try { ctx.onState({ id, removed: true }); } catch (_) {} } return { ok: true };
   }
   async function updateSoftware(id, v) {
     const s = find(id); if (!s) return { ok: false, error: 'That server is gone.' }; if (['starting', 'running', 'stopping', 'installing'].includes(stateOf(id))) return { ok: false, error: 'Stop the server first.' };
@@ -271,6 +278,15 @@ function create(ctx) {
       await download(j.url, tmp, { algo: j.sum ? j.algo : '', sum: j.sum, progress: (g, t) => progress(id, 'jar', t ? Math.round(g / t * 100) : 0, 'Downloading\u2026') }); fs.renameSync(tmp, path.join(dir, 'server.jar'));
       const major = javaFor(v); await ensureJava(major, id); update(id, x => { x.version = v; x.build = j.build || ''; x.java = major; }); setState(id, 'stopped'); return { ok: true, server: view(find(id)) };
     } catch (e) { setState(id, 'stopped'); return { ok: false, error: String((e && e.message) || e).slice(0, 200) }; }
+  }
+
+  async function duplicate(id) {
+    const s = find(id); if (!s) return { ok: false, error: 'That server is gone.' }; if (['starting', 'running', 'stopping', 'installing'].includes(stateOf(id))) return { ok: false, error: 'Stop the server first so its files are not changing.' };
+    const nid = 's_' + now().toString(36) + Math.random().toString(36).slice(2, 5), name = (s.name + ' copy').slice(0, 40), folder = slug(name) + '-' + nid.slice(-4); let port = s.port + 1; const used = new Set(read().map(x => x.port)); while (used.has(port) && port < 65535) port++;
+    try { fs.cpSync(dirOf(s), path.join(root, folder), { recursive: true, filter: src => !/[\\/](logs|crash-reports)([\\/]|$)/.test(src) }); } catch (e) { try { fs.rmSync(path.join(root, folder), { recursive: true, force: true }); } catch (_) {} return { ok: false, error: 'Could not copy the files: ' + String((e && e.message) || e).slice(0, 100) }; }
+    const c = Object.assign({}, s, { id: nid, name, folder, port, created: now(), autoStart: false, playit: false }); write(read().concat([c]));
+    try { const f = path.join(root, folder, 'server.properties'); fs.writeFileSync(f, setProps(fs.readFileSync(f, 'utf8'), { 'server-port': port })); } catch (_) {}
+    emit(nid); return { ok: true, id: nid, server: view(find(nid)) };
   }
 
   // ---------- backups ----------
@@ -427,6 +443,7 @@ function create(ctx) {
         case 'sksNet': return await netInfo(a);
         case 'sksOpen': return open(a);
         case 'sksJava': { const m = javaFor(String(a.version || '1.21')); const j = await findJava(m); return { ok: true, need: m, have: !!j, own: !!(j && j.own) }; }
+        case 'sksDuplicate': return await duplicate(String(a.id || a));
         case 'sksCopy': if (ctx.copy) ctx.copy(String(a.text || '').slice(0, 300)); return { ok: true };
         case 'sksPortFree': return { ok: true, free: await portFree(+a.port || 0) };
       }

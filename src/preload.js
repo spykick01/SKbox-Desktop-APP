@@ -25,5 +25,5 @@ contextBridge.exposeInMainWorld('skbox', {
   apps: { scan: () => inv('apps:scan'), launchers: () => inv('apps:launchers') },
   extras: { do: (n, a) => inv('extras:do', n, a) },
   installUpdate: () => inv('update:install'),
-  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'apps:changed', 'input-lock', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs', 'padin', 'padtest', 'battery', 'timer:fired', 'remote:state', 'queue:next', 'companion:state', 'roms:progress', 'info:progress', 'party:state', 'sks:log', 'sks:state', 'sks:progress', 'store:progress'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
+  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'apps:changed', 'input-lock', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs', 'padin', 'padtest', 'battery', 'timer:fired', 'remote:state', 'queue:next', 'companion:state', 'roms:progress', 'info:progress', 'party:state', 'playit:state', 'sks:log', 'sks:state', 'sks:progress', 'store:progress'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
 });

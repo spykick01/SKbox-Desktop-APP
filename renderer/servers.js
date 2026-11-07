@@ -10,7 +10,12 @@
   const fmtN = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'K' : String(n || 0);
   const fmtUp = t => { if (!t) return ''; const m = Math.floor((Date.now() - t) / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; };
   const stOf = s => STATE[s.state] || STATE.stopped;
-  K.sksOnState = null; K.sksOnLog = null; K.sksOnProg = null;
+  K.sksOnState = null; K.sksOnLog = null; K.sksOnProg = null; K.playitOnState = null; K.playit = null; K.sksHist = K.sksHist || [];
+  sk.on('playit:state', p => { K.playit = p; if (K.playitOnState) K.playitOnState(p); });
+  const hideOn = () => S.settings.hideAddresses !== false, DOTS = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
+  // hides IP addresses and tunnel addresses in text (used for the console while "Hide addresses" is on)
+  const maskText = t => String(t).replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{2,5})?\b/g, '\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022.\u2022\u2022\u2022').replace(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:playit\.gg|joinmc\.link|ply\.gg)(?::\d{2,5})?\b/gi, '\u2022\u2022\u2022\u2022\u2022\u2022.playit.gg');
+  K.sksMask = maskText;
   sk.on('sks:state', s => { if (!s || !s.id) return; if (s.removed) delete live[s.id]; else live[s.id] = s; if (K.sksOnState) K.sksOnState(s); });
   sk.on('sks:log', m => { if (K.sksOnLog) K.sksOnLog(m); });
   sk.on('sks:progress', m => { if (K.sksOnProg) K.sksOnProg(m); });
@@ -26,12 +31,13 @@
 
   // ---------- list ----------
   K.screens.servers = async function (root) {
-    hints([['A', 'Open'], ['B', 'Back']]); S.backFn = () => K.go('library');
+    hints([['A', 'Open'], ['Y', 'Quick actions'], ['B', 'Back']]); S.backFn = () => K.go('library');
     root.innerHTML = '<div class="page"><h1>SKServers</h1><div class="sub">Make and run Minecraft servers on this PC, with a plugin and mod store. Pick Paper for plugins, Fabric for mods.</div><div class="sgrid"></div></div>';
     const grid = root.querySelector('.sgrid'); let first = null;
     const draw = (list, ips, totalMB) => {
       if (!grid.isConnected) return; const keep = K.current() && K.current().dataset.sid; grid.innerHTML = ''; let focusEl = null;
-      list.forEach(s => { const c = nav(el('button', 'scard', card(s))); c.dataset.sid = s.id; c.onclick = () => K.go('server', { id: s.id }); grid.appendChild(c); if (s.id === keep) focusEl = c; });
+      list.forEach(s => { const c = nav(el('button', 'scard', card(s))); c.dataset.sid = s.id; c.onclick = () => K.go('server', { id: s.id });
+        c._onopts = () => { const run = ['starting', 'running'].includes(s.state), id = s.id; menu(s.name, [{ label: run ? 'Stop' : 'Start', fn: async () => { const r = await X(run ? 'sksStop' : 'sksStart', { id }); if (r && r.ok === false) say(r); } }, ...(s.state === 'running' ? [{ label: 'Open the console', fn: () => K.go('server', { id, cat: 'console' }) }] : []), { label: 'Back up the world', fn: async () => { if (run) return toast('Stop the server first'); toast('Backing up\u2026'); const r = await X('sksBackup', { id }); toast(r.ok ? 'Backup saved' : (r.error || 'That did not work')); } }, { label: 'Open its folder', fn: () => X('sksOpen', { id, what: 'folder' }) }, { label: 'Back', fn: () => {} }]); }; grid.appendChild(c); if (s.id === keep) focusEl = c; });
       const n = nav(el('button', 'scard new', '<b>+</b><small>New server</small>')); n.onclick = () => createFlow(totalMB || 8192); grid.appendChild(n);
       if (!list.length) root.querySelector('.sub').textContent = 'No servers yet. Press New server: pick the software and version, accept the Minecraft EULA, and SKBox downloads everything, even Java if you do not have it.';
       if (!first) { first = focusEl || (list[0] ? grid.firstChild : n); ensureFocus(root, first); } else if (focusEl) focus(focusEl);
@@ -87,7 +93,11 @@
 
     K.sksOnState = m => { if (m.id !== id || !pane.isConnected) return; if (m.removed) return K.go('servers'); head(); if (refs.refresh) refs.refresh(); };
     K.sksOnLog = m => { if (m.id !== id || !refs.log || !refs.log.isConnected) return; addLog(m.lines); };
-    const addLog = lines => { const lg = refs.log; const stick = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 30; lines.forEach(l => { const d2 = el('div', /ERROR|Exception|FAILED/.test(l) ? 'le' : /WARN/.test(l) ? 'lw' : l.startsWith('>') ? 'lc' : ''); d2.textContent = l; lg.appendChild(d2); }); while (lg.childElementCount > 500) lg.firstChild.remove(); if (stick) lg.scrollTop = lg.scrollHeight; };
+    const lineKind = l => /ERROR|Exception|FAILED|Can't keep up|WARN/.test(l) ? 'problems' : /joined the game|left the game|lost connection|logged in|<[^>]{1,32}>|\[Server\]|was slain|was shot|fell from|drowned|burned|died|\[SKServers\]|^>/.test(l) ? 'chat' : 'other';
+    const lineShown = l => { const f = K.sksFilter || 'all'; return f === 'all' || (f === 'chat' && ['chat', 'problems'].includes(lineKind(l))) || (f === 'problems' && lineKind(l) === 'problems'); };
+    const paintLine = l => { const d2 = el('div', /ERROR|Exception|FAILED/.test(l) ? 'le' : /WARN/.test(l) ? 'lw' : l.startsWith('>') ? 'lc' : ''); d2.textContent = hideOn() ? maskText(l) : l; return d2; };
+    const addLog = lines => { const lg = refs.log; refs.raw = (refs.raw || []).concat(lines).slice(-600); const stick = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 30; lines.forEach(l => { if (lineShown(l)) lg.appendChild(paintLine(l)); }); while (lg.childElementCount > 500) lg.firstChild.remove(); if (stick) lg.scrollTop = lg.scrollHeight; };
+    const repaintLog = () => { const lg = refs.log; if (!lg) return; lg.innerHTML = ''; (refs.raw || []).filter(lineShown).forEach(l => lg.appendChild(paintLine(l))); if (!lg.childElementCount) lg.appendChild(el('div', 'lc', 'Nothing to show with this filter.')); lg.scrollTop = lg.scrollHeight; };
     const start = async () => { const r = await X('sksStart', { id }); if (!r || !r.ok) say(r); }, stop = async () => { await X('sksStop', { id }); };
 
     function panel(cid) {
@@ -99,9 +109,42 @@
         refs.refresh = () => { const c = live[id] || s, st = stOf(c); err.textContent = c.error || ''; err.style.display = c.error ? '' : 'none'; main.textContent = c.state === 'running' || c.state === 'starting' ? 'Stop server' : (c.state === 'stopping' || c.state === 'installing' ? st[0] : 'Start server'); main.disabled = ['stopping', 'installing'].includes(c.state); again.style.display = c.state === 'running' ? '' : 'none';
           info.textContent = c.typeName + ' ' + c.version + ' \u00B7 ' + gb(c.ram) + ' \u00B7 port ' + c.port + (c.state === 'running' ? ' \u00B7 up ' + fmtUp(c.startedAt) : ''); players.textContent = c.state === 'running' ? (c.players.length ? 'Online now: ' + c.players.join(', ') : 'Nobody online yet.') : ''; };
         refs.refresh();
-        X('sksNet', { id }).then(n => { if (!addr.isConnected) return; (n.ips || []).forEach(ip => addr.appendChild(row('Friends on your Wi-Fi join with', 'Tap to copy. Minecraft > Multiplayer > Add Server', esc(ip + ':' + n.port), () => { X('sksCopy', { text: ip + ':' + n.port }); toast('Copied ' + ip + ':' + n.port); })));
+        const playitBox = addr.parentNode.insertBefore(el('div'), addr); let reveal = false; const shown = t => (hideOn() && !reveal) ? DOTS : t;
+        const copyAddr = (text, what) => { X('sksCopy', { text }); toast(hideOn() && !reveal ? 'Copied the ' + what : 'Copied ' + text); };
+        const drawPlayit = () => {
+          if (!playitBox.isConnected) return; const ps = K.playit, sv = live[id] || s; playitBox.innerHTML = ''; const R = (t, sb, right, fn) => playitBox.appendChild(row(t, sb, right, fn));
+          if (!ps) { R('Play from anywhere (playit.gg)', 'Checking\u2026', '', null); return; }
+          if (!ps.supported) { R('Play from anywhere (playit.gg)', 'Works on Windows.', '', null); return; }
+          const enable = async () => { toast('Setting up playit.gg\u2026'); const r = await X('playitEnable', { id }); K.playit = r; if (r.needsClaim) claimLayer(); else if (r.ok === false) toast(r.error); drawPlayit(); };
+          if (!sv.playit) { R('Let friends join from anywhere', 'No router setup. Uses playit.gg and a free account. Friends get one address to paste into Minecraft.', 'Turn on', enable); return; }
+          const t = (ps.tunnels || {})[id] || {};
+          if (!ps.claimed) { if (ps.phase === 'claim') R('Waiting for you on playit.gg', 'Open the link on this PC or scan the code with your phone, then approve SKBox.', 'Open', () => claimLayer()); else R('Link SKBox to playit.gg', ps.error || 'A one-time step that takes about a minute.', 'Continue', enable); R('Turn off', 'Go back to local play only', '', async () => { K.playit = await X('playitDisable', { id }); drawPlayit(); }); return; }
+          if (t.state === 'working') { R('Getting your address\u2026', 'This takes a few seconds.', '', null); return; }
+          if (t.address) {
+            R('Friends outside your home join with', 'Tap to copy, then Minecraft > Multiplayer > Add Server. No port forwarding.', esc(shown(t.address)), () => copyAddr(t.address, 'address'));
+            const live2 = sv.state === 'running' ? (ps.agent === 'running' ? 'Connected' : ps.agent === 'error' ? 'Problem: ' + (ps.agentError || 'the tunnel program stopped') : 'Connecting\u2026') : 'The tunnel opens when the server starts.'; R('Tunnel', live2, '', null);
+            if (t.error) R('Last check failed', t.error, 'Try again', async () => { K.playit = await X('playitRetry', { id }); drawPlayit(); });
+          } else R('Could not get an address', t.error || ps.error || 'Something went wrong.', 'Try again', async () => { K.playit = await X('playitRetry', { id }); if (K.playit.needsClaim || K.playit.phase === 'claim') claimLayer(); drawPlayit(); });
+          R('Turn off playit.gg for this server', 'Your address stays reserved on playit.gg if you turn it on again.', '', async () => { K.playit = await X('playitDisable', { id }); drawPlayit(); });
+        };
+        function claimLayer() {
+          const L = el('div', 'layer'), b = el('div', 'box wide'), body = el('div'); b.appendChild(body); L.appendChild(b);
+          const draw = () => { const ps = K.playit || {}; body.innerHTML = '<h3>Link SKBox to playit.gg</h3>'; if (ps.claimed) { closeLayer(L); toast('Linked. Getting your address\u2026'); return; }
+            if (!ps.claimUrl) { body.appendChild(el('p', '', ps.error ? esc(ps.error) : 'Getting your link\u2026')); } else {
+              body.appendChild(el('p', '', '1. Open the link below on this PC, or scan the code with your phone.<br>2. Sign in or make a free playit.gg account.<br>3. Press the button to approve SKBox. This page continues by itself.'));
+              try { const q = qrcode(0, 'M'); q.addData(ps.claimUrl); q.make(); const im = el('div', 'qrbox'); im.innerHTML = '<img alt="QR code" src="' + q.createDataURL(5, 2) + '"><div class="sub">' + esc(ps.claimUrl) + '</div>'; body.appendChild(im); } catch (_) {} }
+            const br = el('div', 'btnrow'); const mk = (t, fn, cls) => { const x = nav(el('button', 'btn' + (cls ? ' ' + cls : ''), t)); x.onclick = fn; br.appendChild(x); return x; };
+            if (ps.claimUrl) { mk('Open playit.gg', () => X('playitOpenClaim'), 'p'); mk('Copy link', () => { X('sksCopy', { text: ps.claimUrl }); toast('Link copied'); }); }
+            mk('Cancel', async () => { await X('playitCancelClaim'); closeLayer(L); K.playit = await X('playitStatus'); drawPlayit(); }); body.appendChild(br); ensureFocus(L, br.firstChild); };
+          const prev = K.playitOnState; K.playitOnState = p => { if (prev) prev(p); if (L.isConnected) draw(); };
+          openLayer(L, () => { closeLayer(L); }); draw();
+        }
+        K.playitOnState = p => { K.playit = p; drawPlayit(); }; X('playitStatus').then(p => { K.playit = p; drawPlayit(); });
+        const addrHead = addr.appendChild(row('Addresses', hideOn() ? 'Hidden so nobody sees your IP on stream. Tap to show them for now.' : 'Shown. Turn on "Hide addresses" in Server options to hide them.', hideOn() ? 'Show' : '', () => { if (hideOn()) { reveal = !reveal; K.go('server', { id, cat: 'overview', reveal }); } }));
+        if (d.reveal) { reveal = true; addrHead.querySelector('.r') && (addrHead.querySelector('.r').textContent = 'Hide'); }
+        X('sksNet', { id }).then(n => { if (!addr.isConnected) return; (n.ips || []).forEach(ip => addr.appendChild(row('Friends on your Wi-Fi join with', 'Tap to copy. Minecraft > Multiplayer > Add Server', esc(shown(ip + ':' + n.port)), () => copyAddr(ip + ':' + n.port, 'address'))));
           addr.appendChild(row('On this PC, join with', 'Tap to copy', 'localhost' + (n.port === 25565 ? '' : ':' + n.port), () => { X('sksCopy', { text: 'localhost' + (n.port === 25565 ? '' : ':' + n.port) }); toast('Copied'); }));
-          net.appendChild(row('Friends outside your home', 'Needs port ' + n.port + ' (TCP) forwarded on your router, or a tunnel tool. Press to look up your public address.', '\u2192', async () => { const r = await X('sksNet', { id, publicIp: true }); if (r.publicIp) { X('sksCopy', { text: r.publicIp + ':' + r.port }); toast('Public address copied: ' + r.publicIp + ':' + r.port); } else toast(r.publicIpError || 'Could not look it up'); }));
+          net.appendChild(row('Without playit.gg: your public address', 'Friends need port ' + n.port + ' (TCP) forwarded on your router. Press to look up and copy it.', '\u2192', async () => { const r = await X('sksNet', { id, publicIp: true }); if (r.publicIp) { X('sksCopy', { text: r.publicIp + ':' + r.port }); toast(hideOn() && !reveal ? 'Public address copied' : 'Public address copied: ' + r.publicIp + ':' + r.port); } else toast(r.publicIpError || 'Could not look it up'); }));
           net.appendChild(row('Windows firewall', 'The first start shows a Windows window asking about Java. Allow private networks.', '', null)); });
         add(el('div', '', '<div style="height:.8rem"></div>'));
         add(row('Update server software', 'Download the newest build for ' + s.version + ', or move to a newer Minecraft version. Make a backup first.', '\u2192', async () => {
@@ -111,15 +154,16 @@
         add(row('Open the server folder', 'Worlds, logs and settings files', '\u{1F4C2}', () => X('sksOpen', { id, what: 'folder' })));
         ensureFocus(pane);
       } else if (cid === 'console') {
-        h('Console'); sub('What the server prints. Type a command (without the slash) or use Quick commands.'); const lg = add(el('div', 'slog')); refs.log = lg; X('sksLog', { id }).then(r => { if (lg.isConnected && r.ok) { lg.innerHTML = ''; addLog(r.lines.length ? r.lines : ['Nothing yet. Start the server.']); lg.scrollTop = lg.scrollHeight; } });
-        const send = async t => { const r = await X('sksCmd', { id, text: t }); if (!r || !r.ok) say(r); };
+        h('Console'); sub('What the server prints. Type a command (without the slash) or use Quick commands.'); const lg = add(el('div', 'slog')); refs.log = lg; X('sksLog', { id }).then(r => { if (lg.isConnected && r.ok) { lg.innerHTML = ''; refs.raw = []; addLog(r.lines.length ? r.lines : ['Nothing yet. Start the server.']); lg.scrollTop = lg.scrollHeight; } });
+        const send = async t => { const r = await X('sksCmd', { id, text: t }); if (!r || !r.ok) say(r); else { K.sksHist = [t].concat(K.sksHist.filter(x => x !== t)).slice(0, 8); } };
+        add(cyc('Show', 'Filter what the console shows', [['all', 'Everything'], ['chat', 'Players & chat'], ['problems', 'Problems only']], () => K.sksFilter || 'all', v => { K.sksFilter = v; repaintLog(); }));
         add(row('Type a command', 'For example: say hello, op Steve, whitelist add Alex', '\u2328', () => osk({ title: 'Console command', value: '', canSend: true, submitLabel: 'Send', onDone: (v, snd) => { if (v && v.trim()) send(v); } })));
         const ask = (title, cmd) => osk({ title, value: '', submitLabel: 'Send', onDone: v => { if (v && v.trim()) send(cmd + ' ' + v.trim()); } });
-        add(row('Quick commands', 'Save, op, whitelist, time, weather and more', '\u26A1', () => menu('Quick commands', [
+        add(row('Quick commands', 'Recent commands, save, op, whitelist, time, weather and more', '\u26A1', () => menu('Quick commands', K.sksHist.slice(0, 5).map(c => ({ label: '\u21BB ' + c.slice(0, 40), fn: () => send(c) })).concat([
           { label: 'Save the world', fn: () => send('save-all') }, { label: 'Say something to everyone\u2026', fn: () => ask('Message', 'say') }, { label: 'List players', fn: () => send('list') },
           { label: 'Make a player an operator\u2026', fn: () => ask('Player name', 'op') }, { label: 'Remove an operator\u2026', fn: () => ask('Player name', 'deop') }, { label: 'Add to the whitelist\u2026', fn: () => ask('Player name', 'whitelist add') },
           { label: 'Whitelist on', fn: () => send('whitelist on') }, { label: 'Whitelist off', fn: () => send('whitelist off') }, { label: 'Kick a player\u2026', fn: () => ask('Player name', 'kick') }, { label: 'Ban a player\u2026', fn: () => ask('Player name', 'ban') },
-          { label: 'Time: day', fn: () => send('time set day') }, { label: 'Weather: clear', fn: () => send('weather clear') }, { label: 'Back', fn: () => {} }])));
+          { label: 'Time: day', fn: () => send('time set day') }, { label: 'Weather: clear', fn: () => send('weather clear') }, { label: 'Back', fn: () => {} }]))));
         add(row('Open the logs folder', 'Older logs and crash reports', '\u{1F4C2}', () => X('sksOpen', { id, what: 'logs' })));
         ensureFocus(pane);
       } else if (cid === 'plugins') {
@@ -163,6 +207,11 @@
         add(toggle('Start with SKBox', 'Turns this server on when SKBox opens', !!s.autoStart, v => X('sksSet', { id, autoStart: v })));
         add(toggle('Restart if it crashes', 'Up to 3 times in 10 minutes', s.autoRestart !== false, v => X('sksSet', { id, autoRestart: v })));
         add(row('Extra Java options', s.jvm ? s.jvm : 'For experts. Leave empty if unsure.', '\u2192', () => { if (can()) osk({ title: 'Java options', value: s.jvm || '', submitLabel: 'Save', onDone: async v => { await X('sksSet', { id, jvm: v || '' }); K.go('server', { id, cat: 'options' }); } }); }));
+        add(toggle('Back up when it stops', 'Saves a zip of the world every time the server stops', !!s.backupOnStop, v => X('sksSet', { id, backupOnStop: v })));
+        add(toggle('Tell me when it is ready', 'A Windows notification when the server finishes starting', s.notifyReady !== false, v => X('sksSet', { id, notifyReady: v })));
+        add(toggle('Tell me when someone joins', 'A Windows notification for each player who joins', !!s.notifyJoin, v => X('sksSet', { id, notifyJoin: v })));
+        add(toggle('Hide addresses', 'Hide IP addresses and tunnel addresses on screen and in the console. Good for streaming.', hideOn(), v => { S.settings.hideAddresses = v; U.saveSettings(); }));
+        add(row('Duplicate this server', 'Copies the world, plugins and settings to a new server on its own port', '\u29C9', async () => { if (busyNow()) return toast('Stop the server first'); toast('Copying\u2026'); const x = await X('sksDuplicate', { id }); if (!x.ok) say(x); else { toast('Copied as ' + x.server.name); K.go('server', { id: x.id, cat: 'overview' }); } }));
         add(row('Delete this server', 'Deletes the world and every file. Backups stay.', '\u{1F5D1}', () => { if (busyNow()) return toast('Stop the server first'); confirm('Delete ' + s.name + '?', 'This deletes the world, plugins and settings. Backups in the backups folder are kept.', 'Delete', async () => { const x = await X('sksDelete', { id }); if (!x.ok) say(x); else { toast('Deleted'); K.go('servers'); } }, true); }));
         ensureFocus(pane);
       }
