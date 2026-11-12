@@ -25,7 +25,8 @@
   function reset() { clearTimers(); mode = 'menu'; S.screen = 'overlay'; const r = $('#screen'); r.innerHTML = ''; $('#layers').innerHTML = ''; S.osk = false; }
   function open(s) {
     reset(); st = s; S.settings = s.settings || {}; S.players = s.players || [null, null]; S.apps = s.apps || []; S.active = 0;
-    document.documentElement.style.setProperty('--a', S.settings.accent || '#2dd4bf'); K.padFromHelper = !!s.helper;
+    { const skin = K.applySkin ? K.applySkin(S.settings) : 'glass'; if (skin === 'glass') { document.documentElement.style.setProperty('--a', S.settings.accent || '#2dd4bf'); document.documentElement.style.removeProperty('font-size'); } else document.documentElement.style.fontSize = K.skinScale !== 1 ? 'calc(clamp(13px, 2vh, 26px) * ' + K.skinScale + ')' : ''; }   // the SK menu wears the same theme
+    K.padFromHelper = !!s.helper;
     if (OPAQUE) { const b = S.settings.bg || 'dynamic'; K.setWall(b.startsWith('file:') ? fileUrl(b.slice(5)) : (b === 'dynamic' ? '' : 'assets/bg/' + b + '.jpg')); }
     if (s.opts && s.opts.osk) { oskMode(s.opts.osk); return; }
     build(); if (s.opts && s.opts.p2) { toast('Player 2 controller connected'); players(true); }

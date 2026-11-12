@@ -4,9 +4,9 @@
   'use strict';
   const K = window.K, { sk, S, el, esc, nav, toast, hints, focus, ensureFocus, openLayer, closeLayer, confirm, menu, osk, fileUrl } = K, U = K.ui;
   const X = (n, a) => sk.extras.do(n, a);
-  K.modes = {}; K.settingsPages = {};
-  const MODES = [['classic', 'Classic', 'The original SKBox: one row of big tiles.'], ['cinema', 'Cinema', 'Streaming-style: a big banner for the game you are on, shelves of posters underneath.'], ['deck', 'Deck', 'Handheld-style: a side rail, a big resume card, a tight grid and a status bar.'], ['arcade', 'Arcade', 'A neon cabinet: glowing carousel, a big marquee title and scanlines.'], ['zen', 'Zen', 'Calm and minimal: a big clock and your favorites. Nothing else.'], ['wall', 'Wall', 'Everything at once: a dense wall of covers with collection tabs.']];
-  const modeName = () => S.settings.uiMode || 'classic';
+  K.modes = {}; K.settingsPages = K.settingsPages || {};
+  const MODES = [['classic', 'Classic', 'The original SKBox: one row of big tiles.'], ['deck', 'Deck', 'Handheld-style: a side rail, a big resume card, a tight grid and a status bar.']];
+  const modeName = () => (MODES.some(m => m[0] === S.settings.uiMode) ? S.settings.uiMode : 'classic');   // anything else (older modes) counts as Classic
   const timers = fn => { K.modeTimers = K.modeTimers || []; K.modeTimers.push(fn); return fn; };
   const dests = [['home', '\u2302', 'Home'], ['library', '\u25A6', 'Library'], ['store', '\u{1F6D2}', 'Store'], ['servers', '\u{1F5A5}', 'Servers'], ['party', '\u{1F3A7}', 'Party'], ['search', '\u{1F50D}', 'Search'], ['settings', '\u2699', 'Settings']];
   const goDest = id => { if (id === 'party') openParty(); else if (id === 'search') K.spotlight.open(); else K.go(id); };
@@ -95,28 +95,6 @@
   function bgFor(a) { return a && a.cover ? fileUrl(a.cover) : ''; }
   const posterTile = a => { const t = U.tileEl(a); t._app = a; t.onclick = () => (a.lib ? K.go('library') : U.openApp(a)); t._onopts = () => (a.lib ? toast('Press A to open your Library') : U.appMenu(a, 'home')); return t; };
 
-  // ---------- Cinema ----------
-  function navPills(active) { const bar = el('div', 'cnav'), l = el('div', 'cpills'); dests.forEach(([id, ic, name]) => { const b = nav(el('button', 'pill' + (id === active ? ' act' : ''), '<i>' + ic + '</i><span>' + name + '</span>')); b.onclick = () => goDest(id); l.appendChild(b); }); bar.append(l, statusIcons()); return bar; }
-  K.modes.cinema = {
-    chrome(root, active) { const nb = navPills(active); root.insertBefore(nb, root.firstChild); root.classList.add('cin-chrome'); },
-    home(root) {
-      hints([['A', 'Open'], ['Y', 'Options'], ['S', 'Settings']]); S.startFn = () => K.go('settings'); S.backFn = null; document.body.classList.add('m-cinema');
-      const wrap = el('div', 'cin'); wrap.appendChild(navPills('home'));
-      const hero = el('div', 'chero'), title = el('h1', '', ''), meta = el('p', 'cmeta', ''), btns = el('div', 'cbtns'), ws = el('div', 'cwid'); K.widgets.list().forEach(w => ws.appendChild(w)); hero.append(title, meta, btns, ws); wrap.appendChild(hero);
-      const play = nav(el('button', 'btn p cplay', '\u25B6 Play')), opt = nav(el('button', 'btn', 'Options')); btns.append(play, opt);
-      if (S.game) { const x = nav(el('button', 'btn danger', 'Close game')); x.onclick = () => U.closeRunning(); btns.appendChild(x); }
-      const shelves = el('div', 'cshelves'); wrap.appendChild(shelves); root.appendChild(wrap);
-      const st = S.stats || {}, pinned = U.homeApps(), recent = U.allApps().filter(a => (st[a.id] || {}).last).sort((x, y) => st[y.id].last - st[x.id].last).slice(0, 12), added = S.apps.filter(a => a.added).sort((x, y) => y.added - x.added).slice(0, 12);
-      const first = []; const shelf = (name, list, extra) => { if (!list.length && !extra) return; const sh = el('section', 'cshelf'); sh.appendChild(el('h3', '', name)); const row = el('div', 'crow'); list.forEach(a => { const t = posterTile(a); first.push(t); row.appendChild(t); }); if (extra) { const t = posterTile({ lib: true, name: 'Library' }); first.push(t); row.appendChild(t); } sh.appendChild(row); shelves.appendChild(sh); };
-      shelf('Continue playing', recent); shelf('Your apps', pinned.filter(a => !a.lib), true); shelf('Recently added', added);
-      let cur = null; const show = a => { cur = a; if (a.lib) { title.textContent = 'Library'; meta.textContent = U.allApps().length + ' apps and games. Pin the ones you want on Home.'; play.textContent = '\u25B6 Open Library'; K.setBg(''); return; } title.textContent = a.name; meta.textContent = [a.tag || '', U.playInfo(a)].filter(Boolean).join(' \u00B7 '); play.textContent = U.isRunning(a) ? '\u25B6 Resume' : (a.kind === 'web' || a.kind === 'screen' ? '\u25B6 Open' : '\u25B6 Play'); K.setBg(bgFor(a)); };
-      first.forEach(t => { const f = t._onfocus; t._onfocus = () => { show(t._app); S.lastTileId = t._app.id || 'lib'; }; });
-      play.onclick = () => { if (cur) { if (cur.lib) K.go('library'); else U.openApp(cur); } }; opt.onclick = () => { if (cur && !cur.lib) U.appMenu(cur, 'home'); else toast('Pick a game first'); };
-      const want = first.find(t => (t._app.id || 'lib') === S.lastTileId) || first[0]; if (want) { show(want._app); } else { title.textContent = 'Welcome to SKBox'; meta.textContent = 'Nothing here yet. Open the Library and press X on an app to pin it, or visit the Store.'; }
-      ensureFocus(root, want || play); K.modeTimers = K.modeTimers || []; K.modeTimers.push(setInterval(pull, 15000));
-    }
-  };
-
   // ---------- Deck ----------
   function rail(active) { const r = el('div', 'drail'); r.appendChild(el('div', 'dlogo', 'SK')); dests.forEach(([id, ic, name]) => { const b = nav(el('button', 'dr' + (id === active ? ' act' : ''), '<i>' + ic + '</i><span>' + name + '</span>')); b.onclick = () => goDest(id); r.appendChild(b); }); return r; }
   K.modes.deck = {
@@ -134,48 +112,17 @@
     }
   };
 
-  // ---------- Arcade ----------
-  K.modes.arcade = {
-    chrome(root, active) { const nb = navPills(active); nb.classList.add('arcnav'); root.insertBefore(nb, root.firstChild); root.classList.add('arc-chrome'); },
-    home(root) {
-      hints([['A', 'Play'], ['Y', 'Options'], ['S', 'Settings']]); S.startFn = () => K.go('settings'); S.backFn = null; document.body.classList.add('m-arcade'); K.setBg('');
-      const wrap = el('div', 'arc'); const top = navPills('home'); top.classList.add('arcnav'); wrap.appendChild(top);
-      const stage = el('div', 'arcstage'), name = el('div', 'arcname', ''), sub = el('div', 'arcsub', ''), coin = el('div', 'arccoin', 'PRESS A TO START'); stage.append(name, sub, coin); wrap.appendChild(stage);
-      const rowE = el('div', 'arcrow'); const list = U.tiles(); const tiles = list.map(a => { const t = posterTile(a); rowE.appendChild(t); return t; }); wrap.appendChild(rowE); const ws = el('div', 'cwid'); K.widgets.list().forEach(w2 => ws.appendChild(w2)); wrap.appendChild(ws); root.appendChild(wrap);
-      const show = a => { name.textContent = a.lib ? 'LIBRARY' : a.name; const st = (S.stats || {})[a.id] || {}; sub.textContent = a.lib ? U.allApps().length + ' GAMES AND APPS' : (U.isRunning(a) ? 'RUNNING \u00B7 PRESS A TO RESUME' : [st.ms ? 'TIME ' + fmtMs(st.ms).toUpperCase() : 'NEW GAME', st.n ? 'PLAYED ' + st.n + ' TIMES' : ''].filter(Boolean).join(' \u00B7 ')); coin.textContent = a.lib ? 'PRESS A TO BROWSE' : (U.isRunning(a) ? 'PRESS A TO RESUME' : 'PRESS A TO START'); };
-      tiles.forEach(t => { t._onfocus = () => { show(t._app); S.lastTileId = t._app.id || 'lib'; }; }); const want = tiles.find(t => (t._app.id || 'lib') === S.lastTileId) || tiles[0]; if (want) show(want._app); ensureFocus(root, want);
-      K.modeTimers = K.modeTimers || []; K.modeTimers.push(setInterval(pull, 15000));
-    }
+  // ---------- Settings: Themes ----------
+  K.settingsPages.skins = pane => {
+    const { toggle, saveSettings, applyTheme } = U; const h = t => pane.appendChild(el('h2', '', t)), sub = t => pane.appendChild(el('div', 'sub', t)); const cur = K.skinId(S.settings);
+    h('Themes'); sub('A theme changes the whole look: colors, type, shapes and the background. SK Glass is the original and uses your own color theme and accent. Every other theme brings its own colors.');
+    const grid = el('div', 'skincards'); K.skins.forEach(sk => { const p = sk.pv, c = nav(el('button', 'skcard' + (cur === sk.id ? ' sel' : '')));
+      c.innerHTML = '<div class="skpv" style="background:' + p.bg + ';font-family:' + p.font.replace(/"/g, "'") + '"><div class="pvbar" style="background:' + p.panel + ';border-radius:' + p.r + ';color:' + p.text + '">SKBox</div><div class="pvrow"><i style="background:' + p.a + ';border-radius:' + p.r + '"></i><i style="background:' + p.b + ';border-radius:' + p.r + '"></i><i style="background:' + p.panel + ';border-radius:' + p.r + '"></i><i style="background:' + p.panel + ';border-radius:' + p.r + '"></i></div></div><b>' + esc(sk.name) + (cur === sk.id ? ' \u2713' : '') + '</b><small>' + esc(sk.desc) + '</small>';
+      c.onclick = () => { S.settings.skin = sk.id; saveSettings(); applyTheme(); toast(sk.name); K.go('settings', { cat: 'skins' }); }; grid.appendChild(c); }); pane.appendChild(grid);
+    pane.appendChild(toggle('Animated backgrounds and effects', 'Drifting lights, scanlines and moving grids. Turn off for a calmer look or to save power.', S.settings.skinFx !== false, v => { S.settings.skinFx = v; saveSettings(); applyTheme(); }));
+    if (cur === 'glass') sub('Colors for SK Glass: Settings > Display & brightness (color theme, accent, wallpaper).'); else sub('This theme sets its own colors, so the accent and color theme pickers are not used while it is on.');
+    ensureFocus(pane, pane.querySelector('.skcard.sel') || pane.querySelector('[data-nav]'));
   };
-  // ---------- Zen ----------
-  K.modes.zen = {
-    chrome() {},
-    home(root) {
-      hints([['A', 'Open'], ['Y', 'Options'], ['S', 'Settings']]); S.startFn = () => K.go('settings'); S.backFn = null; document.body.classList.add('m-zen'); K.setBg('');
-      const z = el('div', 'zen'); const clock = el('div', 'zclock', ''), date = el('div', 'zdate', ''), row = el('div', 'zrow'), foot = el('div', 'zfoot'); z.append(clock, date, row, foot); root.appendChild(z);
-      const tick = () => { const d = new Date(); clock.textContent = clockText(); date.textContent = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }); }; tick(); K.modeTimers = K.modeTimers || []; K.modeTimers.push(setInterval(tick, 10000));
-      const lp = lastPlayed(); const favs = U.homeApps().filter(a => !a.lib).slice(0, 5); const tiles = []; favs.forEach(a => { const t = posterTile(a); tiles.push(t); row.appendChild(t); });
-      if (lp) { const b = nav(el('button', 'zcont', (U.isRunning(lp) ? 'Resume ' : 'Continue ') + esc(lp.name))); b.onclick = () => U.openApp(lp); b._onopts = () => U.appMenu(lp, 'home'); foot.appendChild(b); tiles.push(b); }
-      const all = nav(el('button', 'zmore', 'All games')); all.onclick = () => K.go('library'); foot.appendChild(all); tiles.push(all); const sr = nav(el('button', 'zmore', '\u{1F50D}')); sr.onclick = () => K.spotlight.open(); foot.appendChild(sr);
-      const p = K.partyUI.state(); if (p.status === 'in') foot.appendChild(widget('party', 'zmore wdgz'));
-      ensureFocus(root, tiles[0] || all);
-    }
-  };
-  // ---------- Wall ----------
-  K.modes.wall = {
-    chrome(root, active) { root.insertBefore(navPills(active), root.firstChild); root.classList.add('cin-chrome'); },
-    home(root) {
-      hints([['A', 'Open'], ['Y', 'Options'], ['S', 'Settings']]); S.startFn = () => K.go('settings'); S.backFn = null; document.body.classList.add('m-wall'); K.setBg('');
-      const wrap = el('div', 'wallw'); wrap.appendChild(navPills('home')); const tabs = el('div', 'walltabs'), grid = el('div', 'wallgrid'), count = el('div', 'wallcount'); wrap.append(tabs, grid, count); root.appendChild(wrap);
-      const st = S.stats || {}, cols = S.settings.collections || {}, hidden = S.settings.hiddenApps || [], everything = U.allApps().filter(a => !hidden.includes(a.id) && !a.lib);
-      const sets = [['All', () => everything], ['Recent', () => everything.filter(a => (st[a.id] || {}).last).sort((x, y) => st[y.id].last - st[x.id].last).slice(0, 40)], ['Pinned', () => U.homeApps().filter(a => !a.lib)]].concat(Object.keys(cols).map(k => [k, () => everything.filter(a => (cols[k] || []).includes(a.id))]));
-      let cur = S.wallTab && sets.some(x => x[0] === S.wallTab) ? S.wallTab : 'All'; const tabEls = {};
-      const fill = () => { grid.innerHTML = ''; const list = sets.find(x => x[0] === cur)[1](); list.forEach(a => grid.appendChild(posterTile(a))); count.textContent = list.length + (list.length === 1 ? ' game' : ' games'); if (!list.length) grid.appendChild(el('p', 'sub', 'Nothing in here yet.')); Object.keys(tabEls).forEach(k => tabEls[k].classList.toggle('act', k === cur)); };
-      sets.forEach(([name]) => { const b = nav(el('button', 'wtab', esc(name))); tabEls[name] = b; b.onclick = () => { cur = name; S.wallTab = name; fill(); }; tabs.appendChild(b); });
-      fill(); const first = grid.querySelector('.tile') || tabs.firstChild; ensureFocus(root, first); K.modeTimers = K.modeTimers || []; K.modeTimers.push(setInterval(pull, 20000));
-    }
-  };
-
   // ---------- Settings: Look & modes ----------
   K.settingsPages.looks = pane => {
     const { row, cyc, toggle, saveSettings } = U; const h = t => pane.appendChild(el('h2', '', t)), sub = t => pane.appendChild(el('div', 'sub', t));

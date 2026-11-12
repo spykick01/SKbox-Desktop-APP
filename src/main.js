@@ -108,7 +108,7 @@ function autologin(wc, u) { const x = readProfiles().find(y => y.meta.u === u); 
 
 // ================= apps / covers =================
 ipcMain.handle('dialog:file', async (_e, kind) => {
-  const filters = kind === 'json' ? [{ name: 'SKBox setup', extensions: ['json'] }] : kind === 'image' ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] : [{ name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'lnk'] }, { name: 'All files', extensions: ['*'] }];
+  const filters = kind === 'zip' ? [{ name: 'Zip files', extensions: ['zip'] }] : kind === 'json' ? [{ name: 'SKBox setup', extensions: ['json'] }] : kind === 'image' ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] : [{ name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'lnk'] }, { name: 'All files', extensions: ['*'] }];
   const r = kind === 'folder' ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] }) : await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
   return r.canceled ? null : r.filePaths[0];
 });
@@ -153,7 +153,9 @@ const roms = require('./lib/roms').create({
 const gameinfo = require('./lib/gameinfo').create({ store, progress: (f, t) => send('info:progress', { found: f, total: t }) });
 // SKServers (Minecraft server hosting) and the App Store.
 let playit = null;   // made right after the servers; the servers tell it when they start and stop
-const servers = require('./lib/servers').create({ store, dir: app.getPath('userData'), send, openPath: p => shell.openPath(p), copy: t => { try { require('electron').clipboard.writeText(t); } catch {} }, onState: v => { if (playit) playit.onServer(v); },
+const servers = require('./lib/servers').create({ store, dir: app.getPath('userData'), send, openPath: p => shell.openPath(p), copy: t => { try { require('electron').clipboard.writeText(t); } catch {} }, desktop: () => app.getPath('desktop'),
+  resizeIcon: async f => { const img = nativeImage.createFromPath(String(f)); if (img.isEmpty()) return null; const sz = img.getSize(), side = Math.min(sz.width, sz.height), sq = img.crop({ x: Math.floor((sz.width - side) / 2), y: Math.floor((sz.height - side) / 2), width: side, height: side }); return sq.resize({ width: 64, height: 64, quality: 'best' }).toPNG(); },   // Minecraft wants a 64x64 square PNG
+  onState: v => { if (playit) playit.onServer(v); },
   notify: (t, b) => { try { if (Notification.isSupported()) new Notification({ title: t, body: b }).show(); } catch {} } });
 playit = require('./lib/playit').create({ store, dir: app.getPath('userData'), version: app.getVersion(), send, openExternal: u => shell.openExternal(u), servers: () => servers._.list().list, getServer: id => servers._.list().list.find(x => x.id === id), setFlag: (id, v) => { servers.run('sksSet', { id, playit: v }); } });
 const appstore = require('./lib/appstore').create({ store, progress: p => send('store:progress', p), openExternal: u => shell.openExternal(u) });

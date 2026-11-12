@@ -4,6 +4,9 @@
   const K = window.K, { sk, S, el, esc, nav, toast, hints, focus, ensureFocus, openLayer, closeLayer, confirm, menu, osk } = K, U = K.ui, row = U.row, toggle = U.toggle, cyc = U.cyc;
   const X = (n, a) => sk.extras.do(n, a), say = r => toast((r && r.error) || 'That did not work');
   const live = {};
+  // focus helpers: a pane that rebuilds itself must never pull the cursor out of the menu. It only puts focus back if you were already inside it.
+  const paneIdx = pane => { const c = K.current && K.current(); return c && pane.contains(c) ? Array.from(pane.querySelectorAll('[data-nav]')).indexOf(c) : -1; };
+  const paneRestore = (pane, idx) => { if (idx == null || idx < 0) return; const l = pane.querySelectorAll('[data-nav]'); if (l.length) focus(l[Math.min(idx, l.length - 1)]); };
   const STATE = { stopped: ['Stopped', 'off'], starting: ['Starting\u2026', 'warn'], running: ['Running', 'on'], stopping: ['Stopping\u2026', 'warn'], installing: ['Working\u2026', 'warn'], crashed: ['Crashed', 'bad'] };
   const gb = mb => (Math.round(mb / 102.4) / 10) + ' GB';
   const fmtSize = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
@@ -27,7 +30,7 @@
     return { set, close: () => { if (L.isConnected) closeLayer(L); } };
   }
   const withProgress = async (title, id, fn) => { const pl = progressLayer(title); K.sksOnProg = m => { if (!m || (id && m.id !== id)) return; pl.set(m.text, m.pct); }; try { return await fn(pl); } finally { K.sksOnProg = null; pl.close(); } };
-  const card = s => { const st = stOf(s); return '<div class="sdot s-' + st[1] + '"></div><b>' + esc(s.name) + '</b><small>' + esc(s.typeName + ' ' + s.version + ' \u00B7 ' + gb(s.ram)) + '</small><em>' + st[0] + (s.state === 'running' ? ' \u00B7 ' + s.players.length + ' online' : '') + '</em>'; };
+  const card = s => { const st = s.missing ? ['Folder missing', 'bad'] : stOf(s); return (s.icon ? '<img class="sicon" src="' + esc(K.fileUrl(s.icon)) + '" alt="">' : '') + '<div class="sdot s-' + st[1] + '"></div><b>' + esc(s.name) + '</b><small>' + esc(s.typeName + ' ' + s.version + ' \u00B7 ' + gb(s.ram)) + '</small><em>' + st[0] + (s.state === 'running' ? ' \u00B7 ' + s.players.length + ' online' : '') + '</em>'; };
 
   // ---------- list ----------
   K.screens.servers = async function (root) {
@@ -39,10 +42,11 @@
       list.forEach(s => { const c = nav(el('button', 'scard', card(s))); c.dataset.sid = s.id; c.onclick = () => K.go('server', { id: s.id });
         c._onopts = () => { const run = ['starting', 'running'].includes(s.state), id = s.id; menu(s.name, [{ label: run ? 'Stop' : 'Start', fn: async () => { const r = await X(run ? 'sksStop' : 'sksStart', { id }); if (r && r.ok === false) say(r); } }, ...(s.state === 'running' ? [{ label: 'Open the console', fn: () => K.go('server', { id, cat: 'console' }) }] : []), { label: 'Back up the world', fn: async () => { if (run) return toast('Stop the server first'); toast('Backing up\u2026'); const r = await X('sksBackup', { id }); toast(r.ok ? 'Backup saved' : (r.error || 'That did not work')); } }, { label: 'Open its folder', fn: () => X('sksOpen', { id, what: 'folder' }) }, { label: 'Back', fn: () => {} }]); }; grid.appendChild(c); if (s.id === keep) focusEl = c; });
       const n = nav(el('button', 'scard new', '<b>+</b><small>New server</small>')); n.onclick = () => createFlow(totalMB || 8192); grid.appendChild(n);
+      const imp = nav(el('button', 'scard new', '<b>\u2B07</b><small>Import a server</small>')); imp.onclick = () => importFlow(totalMB || 8192); grid.appendChild(imp);
       if (!list.length) root.querySelector('.sub').textContent = 'No servers yet. Press New server: pick the software and version, accept the Minecraft EULA, and SKBox downloads everything, even Java if you do not have it.';
       if (!first) { first = focusEl || (list[0] ? grid.firstChild : n); ensureFocus(root, first); } else if (focusEl) focus(focusEl);
     };
-    let last = { list: [], totalMB: 8192 };
+    let last = { list: [], totalMB: 8192 }; if (!K.sksRecovered) { K.sksRecovered = true; X('sksRecover').then(r => { if (r && r.restored) { toast('Brought back ' + r.restored + ' server' + (r.restored === 1 ? '' : 's') + ' SKBox had lost track of'); } }); }
     const load = async () => { const r = await X('sksList'); if (!r || !r.ok) return; r.list.forEach(s => { live[s.id] = s; }); last = r; draw(r.list, r.ips, r.totalMB); };
     K.sksOnState = () => { if (grid.isConnected) { draw(Object.values(live), null, last.totalMB); } }; await load();
   };
@@ -77,18 +81,54 @@
     openLayer(L, () => closeLayer(L)); draw(); loadVers();
   }
 
+  // ---------- import a server you already have ----------
+  async function importFlow(totalMB) {
+    menu('Import a server', [{ label: 'From a folder on this PC', fn: () => go2('folder') }, { label: 'From a .zip file', fn: () => go2('zip') }, { label: 'Back', fn: () => {} }]);
+    async function go2(kind) {
+      const picked = await sk.pickFile(kind); if (!picked) return;
+      const pl = progressLayer('Looking at your server\u2026'); let info; try { info = await X('sksImportPrepare', { path: picked }); } finally { pl.close(); }
+      if (!info || !info.ok) return say(info); review(info, totalMB);
+    }
+  }
+  function review(info, totalMB) {
+    const rams = [1, 2, 3, 4, 6, 8, 12, 16].filter(g => g * 1024 <= totalMB * 0.75), f = { name: info.name, type: info.type, version: info.version, ram: Math.max(1, Math.round((info.ram || 2048) / 1024)), port: info.port || 25565, mode: info.kind === 'zip' ? 'move' : 'copy', eula: !!info.eula };
+    if (!rams.includes(f.ram)) rams.push(f.ram), rams.sort((a, b) => a - b);
+    const L = el('div', 'layer'), b = el('div', 'box wide'), body = el('div'); b.appendChild(body); L.appendChild(b); const typeName = { paper: 'Paper', purpur: 'Purpur', fabric: 'Fabric', vanilla: 'Vanilla', custom: 'Other (run as it is)' };
+    const mb = n => n > 1073741824 ? (n / 1073741824).toFixed(1) + ' GB' : Math.max(1, Math.round(n / 1048576)) + ' MB';
+    function draw() {
+      if (!L.isConnected) return; const keep = K.current() && K.current().dataset.k; body.innerHTML = '<h3>Import ' + esc(info.name) + '</h3>'; const add = (k, e) => { e.dataset.k = k; body.appendChild(e); return e; };
+      const facts = ['Found: ' + (typeName[info.type] || info.type) + (info.version ? ' ' + info.version : ''), info.hasWorld ? 'a world' : 'no world yet', info.plugins.length ? info.plugins.length + (info.plugDir === 'mods' ? ' mods' : ' plugins') : '', mb(info.sizeBytes)].filter(Boolean).join(' \u00B7 '); body.appendChild(el('p', 'sub', esc(facts)));
+      (info.problems || []).forEach(t => body.appendChild(el('div', 'salert', esc(t)))); (info.warnings || []).forEach(t => body.appendChild(el('p', 'sub', esc(t))));
+      add('name', row('Name', 'What you call it here', esc(f.name), () => osk({ title: 'Server name', value: f.name, submitLabel: 'Done', onDone: v => { f.name = (v || '').trim().slice(0, 40) || f.name; draw(); } })));
+      add('type', row('Software', 'Change it if SKBox guessed wrong', esc(typeName[f.type] || f.type), () => menu('Software', Object.keys(typeName).map(k => ({ label: typeName[k] + (k === f.type ? '  \u2713' : ''), fn: () => { f.type = k; draw(); } })))));
+      add('ver', row('Minecraft version', info.needsVersion && !f.version ? 'SKBox could not tell. Pick or type it.' : 'The version this server runs', esc(f.version || 'Choose\u2026'), async () => { const r = f.type !== 'custom' ? await X('sksVersions', { type: f.type }) : null; const vs = (r && r.versions) || []; menu('Minecraft version', vs.slice(0, 30).map(v => ({ label: v, fn: () => { f.version = v; draw(); } })).concat([{ label: 'Type it in\u2026', fn: () => osk({ title: 'Minecraft version, like 1.20.4', value: f.version, submitLabel: 'Done', onDone: v => { f.version = (v || '').trim(); draw(); } }) }, { label: 'Back', fn: () => {} }])); }));
+      add('ram', cyc('Memory', 'About 1 GB per 5 players. This PC has ' + gb(totalMB) + '.', rams.map(g => [g, g + ' GB']), () => f.ram, v => { f.ram = v; }));
+      add('port', row('Port', 'It must differ from your other servers', esc(f.port), () => osk({ title: 'Port (1024 to 65535)', value: String(f.port), submitLabel: 'Done', onDone: v => { const n = parseInt(v, 10); if (n >= 1024 && n <= 65535) f.port = n; else toast('Use a number from 1024 to 65535'); draw(); } })));
+      if (info.kind === 'folder') add('mode', cyc('How', 'Copying keeps your original folder safe', [['copy', 'Copy into SKBox'], ['inplace', 'Use it where it is']], () => f.mode, v => { f.mode = v; }));
+      else body.appendChild(el('p', 'sub', 'The files from the zip are moved into SKBox.'));
+      if (!info.eula) add('eula', toggle('I accept the Minecraft EULA', 'Required by Mojang to run a server: aka.ms/MinecraftEULA', f.eula, v => { f.eula = v; }));
+      const br = el('div', 'btnrow'), go = nav(el('button', 'btn p', 'Import')), cancel = nav(el('button', 'btn', 'Cancel')); go.dataset.k = 'go'; cancel.dataset.k = 'cancel'; if (info.problems.length) go.disabled = true;
+      cancel.onclick = () => { X('sksImportCancel', { token: info.token }); closeLayer(L); };
+      go.onclick = async () => { if (!info.eula && !f.eula) return toast('Accept the Minecraft EULA first'); if (!f.version) return toast('Choose the Minecraft version first'); const r = await withProgress('Importing ' + f.name, null, () => X('sksImportCommit', { token: info.token, name: f.name, type: f.type, version: f.version, ram: f.ram * 1024, port: f.port, mode: f.mode, eula: !!(info.eula || f.eula) })); if (!r || !r.ok) return say(r); closeLayer(L); toast(r.warn || (f.name + ' is imported. Press Start.')); K.go('server', { id: r.id }); };
+      br.append(go, cancel); body.appendChild(br); const k = body.querySelector('[data-k="' + keep + '"]'); ensureFocus(L, k || body.querySelector('[data-k="name"]') || go);
+    }
+    openLayer(L, () => { X('sksImportCancel', { token: info.token }); closeLayer(L); }); draw();
+  }
+
   // ---------- one server ----------
   K.screens.server = async function (root, d) {
     const id = d.id; let s = live[id]; if (!s) { const r = await X('sksList'); (r.list || []).forEach(x => { live[x.id] = x; }); s = live[id]; } if (!s) return K.go('servers');
-    hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => K.go('servers');
+    hints([['A', 'Select'], ['B', 'Back']]);
     root.innerHTML = '<div class="page"><h1></h1></div>'; const page = root.querySelector('.page'), h1 = page.querySelector('h1');
     const split = el('div', 'split'), menuE = el('div', 'menu'), pane = el('div', 'pane'); split.append(menuE, pane); page.appendChild(split);
     const head = () => { s = live[id] || s; const st = stOf(s); h1.innerHTML = esc(s.name) + ' <span class="schip s-' + st[1] + '">' + st[0] + (s.state === 'running' ? ' \u00B7 ' + s.players.length + ' online' : '') + '</span>'; }; head();
-    const cats = [['overview', '\u23FB', 'Overview'], ['console', '\u2328', 'Console'], ['plugins', '\u{1F9E9}', s.canPlugins ? (s.pluginDir === 'mods' ? 'Mods' : 'Plugins') : 'Plugins'], ['rules', '\u2699', 'Game settings'], ['backups', '\u{1F4BE}', 'Backups'], ['options', '\u{1F6E0}', 'Server options']];
-    let sel = d.cat || 'overview', refs = {}; const items = {}; let firstEl = null;
+    const cats = [['overview', '\u23FB', 'Overview'], ['console', '\u2328', 'Console'], ['players', '\u{1F465}', 'Players'], ['plugins', '\u{1F9E9}', s.canPlugins ? (s.pluginDir === 'mods' ? 'Mods' : 'Plugins') : 'Plugins'], ['rules', '\u2699', 'Game settings'], ['backups', '\u{1F4BE}', 'Backups'], ['options', '\u{1F6E0}', 'Server options']];
+    let sel = d.cat || 'overview', refs = {}, drawT = 0; const items = {}; let firstEl = null;
     const busyNow = () => ['starting', 'running', 'stopping', 'installing'].includes((live[id] || s).state);
     cats.forEach(([cid, ic, name]) => { const m = nav(el('button', 'mi', '<span>' + ic + '</span>' + name)); items[cid] = m; if (cid === sel) { m.classList.add('sel'); firstEl = m; }
-      m._onfocus = () => { if (sel !== cid || !pane.firstChild) { sel = cid; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); panel(cid); } }; m.onclick = () => { const f = pane.querySelector('[data-nav]'); if (f) focus(f); }; menuE.appendChild(m); });
+      m._onfocus = () => { if (sel !== cid || !pane.firstChild) { sel = cid; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); clearTimeout(drawT); drawT = setTimeout(() => { if (pane.isConnected && sel === cid) panel(cid); }, pane.firstChild ? 110 : 0); } };   // draw once the cursor rests, so moving down the menu is smooth
+      m.onclick = () => { clearTimeout(drawT); if (!pane.firstChild || pane.dataset.cat !== cid) panel(cid); const f = pane.querySelector('[data-nav]'); if (f) focus(f); }; menuE.appendChild(m); });
+    S.backFn = () => { const c = K.current && K.current(); if (c && pane.contains(c) && items[sel]) { focus(items[sel]); } else K.go('servers'); };   // B inside a page goes back to the menu first
     const bk = nav(el('button', 'mi', '<span>\u2190</span>All servers')); bk.onclick = () => K.go('servers'); menuE.appendChild(bk);
 
     K.sksOnState = m => { if (m.id !== id || !pane.isConnected) return; if (m.removed) return K.go('servers'); head(); if (refs.refresh) refs.refresh(); };
@@ -101,9 +141,10 @@
     const start = async () => { const r = await X('sksStart', { id }); if (!r || !r.ok) say(r); }, stop = async () => { await X('sksStop', { id }); };
 
     function panel(cid) {
-      refs = {}; K.sksOnProg = null; pane.innerHTML = ''; const h = t => pane.appendChild(el('h2', '', t)), sub = t => pane.appendChild(el('div', 'sub', t)), add = e => { pane.appendChild(e); return e; };
+      const keepIdx = paneIdx(pane); refs = {}; K.sksOnProg = null; pane.innerHTML = ''; pane.dataset.cat = cid; const h = t => pane.appendChild(el('h2', '', t)), sub = t => pane.appendChild(el('div', 'sub', t)), add = e => { pane.appendChild(e); return e; };
       if (cid === 'overview') {
-        h('Overview'); const err = add(el('div', 'salert')), info = add(el('div', 'sub')), br = add(el('div', 'btnrow')), main = nav(el('button', 'btn p', 'Start')), again = nav(el('button', 'btn', 'Restart'));
+        h('Overview'); if ((live[id] || s).missing) { const mb2 = add(el('div', 'salert', 'SKBox cannot find this server\u2019s folder:<br>' + esc(hideOn() ? '\u2022\u2022\u2022\u2022' : (live[id] || s).path || (live[id] || s).folder) + '<br>If you moved it, point SKBox at the new place.')); const lb = nav(el('button', 'btn p', 'Locate folder')); lb.onclick = async () => { const f = await sk.pickFile('folder'); if (!f) return; const r = await X('sksRelocate', { id, path: f }); if (!r || !r.ok) say(r); else { toast('Found it'); K.go('server', { id, cat: 'overview' }); } }; add(el('div', 'btnrow')).appendChild(lb); }
+        const err = add(el('div', 'salert')), info = add(el('div', 'sub')), br = add(el('div', 'btnrow')), main = nav(el('button', 'btn p', 'Start')), again = nav(el('button', 'btn', 'Restart'));
         main.onclick = () => { const st = (live[id] || s).state; if (st === 'stopped' || st === 'crashed') start(); else if (st === 'running' || st === 'starting') stop(); }; again.onclick = async () => { toast('Restarting\u2026'); const r = await X('sksRestart', { id }); if (r && !r.ok) say(r); }; br.append(main, again);
         const players = add(el('div', 'sub')); const addr = add(el('div')), net = add(el('div'));
         refs.refresh = () => { const c = live[id] || s, st = stOf(c); err.textContent = c.error || ''; err.style.display = c.error ? '' : 'none'; main.textContent = c.state === 'running' || c.state === 'starting' ? 'Stop server' : (c.state === 'stopping' || c.state === 'installing' ? st[0] : 'Start server'); main.disabled = ['stopping', 'installing'].includes(c.state); again.style.display = c.state === 'running' ? '' : 'none';
@@ -152,7 +193,7 @@
           menu('Update to', vs.slice(0, 30).map(v => ({ label: v === s.version ? v + ' (latest build)' : v, fn: () => confirm('Update to ' + v + '?', v === s.version ? 'Downloads the newest build of the same version.' : 'Newer Minecraft versions change the world. Make a backup first (Backups tab). Plugins may need updating too.', 'Update', async () => { const x = await withProgress('Updating', id, () => X('sksUpdateSoftware', { id, version: v })); if (!x || !x.ok) say(x); else { toast('Updated to ' + v); K.go('server', { id, cat: 'overview' }); } }) })).concat([{ label: 'Back', fn: () => {} }]));
         }));
         add(row('Open the server folder', 'Worlds, logs and settings files', '\u{1F4C2}', () => X('sksOpen', { id, what: 'folder' })));
-        ensureFocus(pane);
+        paneRestore(pane, keepIdx);
       } else if (cid === 'console') {
         h('Console'); sub('What the server prints. Type a command (without the slash) or use Quick commands.'); const lg = add(el('div', 'slog')); refs.log = lg; X('sksLog', { id }).then(r => { if (lg.isConnected && r.ok) { lg.innerHTML = ''; refs.raw = []; addLog(r.lines.length ? r.lines : ['Nothing yet. Start the server.']); lg.scrollTop = lg.scrollHeight; } });
         const send = async t => { const r = await X('sksCmd', { id, text: t }); if (!r || !r.ok) say(r); else { K.sksHist = [t].concat(K.sksHist.filter(x => x !== t)).slice(0, 8); } };
@@ -165,7 +206,17 @@
           { label: 'Whitelist on', fn: () => send('whitelist on') }, { label: 'Whitelist off', fn: () => send('whitelist off') }, { label: 'Kick a player\u2026', fn: () => ask('Player name', 'kick') }, { label: 'Ban a player\u2026', fn: () => ask('Player name', 'ban') },
           { label: 'Time: day', fn: () => send('time set day') }, { label: 'Weather: clear', fn: () => send('weather clear') }, { label: 'Back', fn: () => {} }]))));
         add(row('Open the logs folder', 'Older logs and crash reports', '\u{1F4C2}', () => X('sksOpen', { id, what: 'logs' })));
-        ensureFocus(pane);
+        paneRestore(pane, keepIdx);
+      } else if (cid === 'players') {
+        h('Players'); const run = () => ['running'].includes((live[id] || s).state); sub(run() ? 'Pick a player for quick actions.' : 'Start the server to use these actions. The lists below are read from its files.'); const box = add(el('div'));
+        const cmd = (t) => X('sksCmd', { id, text: t }).then(r => { if (!r || !r.ok) say(r); }); const ask = (title, c) => osk({ title, value: '', submitLabel: 'Do it', onDone: v => { if (v && v.trim()) cmd(c + ' ' + v.trim()); } });
+        const load = async () => { const r = await X('sksPlayers', { id }); if (!box.isConnected || !r.ok) return; box.innerHTML = ''; box.appendChild(el('h3', '', 'Online now (' + r.online.length + ')')); if (!r.online.length) box.appendChild(el('div', 'sub', run() ? 'Nobody is online.' : 'The server is not running.'));
+          r.online.forEach(n => box.appendChild(row(n, 'Tap for actions', '\u22EF', () => { if (!run()) return toast('Start the server first'); menu(n, [{ label: 'Make operator', fn: () => cmd('op ' + n) }, { label: 'Remove operator', fn: () => cmd('deop ' + n) }, { label: 'Add to whitelist', fn: () => cmd('whitelist add ' + n) }, { label: 'Kick', fn: () => cmd('kick ' + n) }, { label: 'Ban', fn: () => confirm('Ban ' + n + '?', 'They cannot join until you pardon them.', 'Ban', () => cmd('ban ' + n), true) }, { label: 'Back', fn: () => {} }]); })));
+          box.appendChild(row('Add someone to the whitelist', 'Type their Minecraft name', '+', () => { if (!run()) return toast('Start the server first'); ask('Minecraft name', 'whitelist add'); }));
+          const list = (title, arr, fmt, action) => { box.appendChild(el('h3', '', title + ' (' + arr.length + ')')); if (!arr.length) box.appendChild(el('div', 'sub', 'Nobody.')); arr.forEach(x => box.appendChild(row(x.name, fmt(x), action ? '\u22EF' : '', action ? () => { if (!run()) return toast('Start the server first'); action(x); } : null))); };
+          list('Operators', r.ops, x => 'Level ' + (x.level || '?'), x => confirm('Remove operator ' + x.name + '?', '', 'Remove', () => cmd('deop ' + x.name))); list('Whitelist', r.whitelist, () => '', x => confirm('Remove ' + x.name + ' from the whitelist?', '', 'Remove', () => cmd('whitelist remove ' + x.name))); list('Banned', r.banned, x => x.reason, x => confirm('Pardon ' + x.name + '?', 'They can join again.', 'Pardon', () => cmd('pardon ' + x.name)));
+          paneRestore(pane, keepIdx); };
+        refs.refresh = () => { if (box.isConnected) load(); }; load();
       } else if (cid === 'plugins') {
         if (!s.canPlugins) { h('Plugins'); sub('Vanilla servers cannot use plugins or mods. Make a Paper server for plugins or a Fabric server for mods.'); return; }
         const mods = s.pluginDir === 'mods'; h(mods ? 'Mods' : 'Plugins'); sub(mods ? 'Mods come from Modrinth. Fabric API and other required add-ons are installed for you.' : 'Find plugins on Modrinth and SpigotMC. SKBox checks that they fit your Minecraft version, verifies the download and adds the add-ons they need.');
@@ -177,11 +228,13 @@
             { label: p.enabled ? 'Turn off' : 'Turn on', fn: async () => { const x = await X('sksPluginToggle', { id, file: p.file }); if (!x.ok) say(x); else load(); } },
             { label: 'Remove', fn: () => confirm('Remove ' + p.title + '?', 'Its settings folder stays, only the file is deleted.', 'Remove', async () => { const x = await X('sksPluginRemove', { id, file: p.file }); if (!x.ok) say(x); else load(); }, true) }].concat(p.url ? [{ label: 'Open its page', fn: () => X('storeOpen', { url: p.url }) }] : []).concat([{ label: 'Back', fn: () => {} }])))));
           if (r.list.length) { box.appendChild(row('Check for updates', 'Looks at Modrinth for newer versions of what you installed', '\u2192', async () => { toast('Checking\u2026'); const u = await X('sksPluginUpdates', { id }); if (!u.ok) return say(u); if (!u.list.length) return toast('Everything is up to date'); confirm(u.list.length + ' update' + (u.list.length === 1 ? '' : 's'), u.list.map(x => x.title + ' ' + x.from + ' \u2192 ' + x.to).join('\n'), 'Update all', async () => { const x = await withProgress('Updating', id, () => X('sksPluginUpdateAll', { id })); if (!x.ok) say(x); else { toast('Updated ' + x.updated.length + (x.failed.length ? ', ' + x.failed.length + ' failed' : '')); load(); } }); })); box.appendChild(row('Open the ' + (mods ? 'mods' : 'plugins') + ' folder', 'Drop your own .jar files in here', '\u{1F4C2}', () => X('sksOpen', { id, what: 'plugins' }))); }
-          ensureFocus(pane, pane.querySelector('[data-nav]')); };
-        ensureFocus(pane); load();
+          paneRestore(pane, keepIdx); };
+        paneRestore(pane, keepIdx); load();
       } else if (cid === 'rules') {
-        h('Game settings'); const can = () => { if (busyNow()) { toast('Stop the server first. It only reads these when it starts.'); return false; } return true; }; sub(busyNow() ? 'The server is running. Stop it to change these.' : 'Saved right away. They apply the next time the server starts.');
-        const box = add(el('div')); X('sksProps', { id }).then(r => { if (!box.isConnected || !r.ok) return; const p = r.props; const sv = async (k, v) => { const x = await X('sksPropsSet', { id, props: { [k]: v } }); if (!x.ok) say(x); else p[k] = String(v); };
+        h('Game settings'); const can = () => true; const banner = add(el('div', 'salert pendbar')), bbar = add(el('div', 'btnrow')); let dirtyNow = 0;
+        const drawBanner = () => { const c = live[id] || s, n = c.pendingCount || 0, run = ['starting', 'running', 'stopping'].includes(c.state); banner.style.display = run || n ? '' : 'none'; banner.textContent = n ? n + ' change' + (n === 1 ? '' : 's') + ' waiting. ' + (run ? 'They apply when the server restarts.' : 'They apply when you start it.') : 'The server is running. Changes you make are saved now and apply when it restarts.'; bbar.style.display = run && n ? '' : 'none'; };
+        bbar.innerHTML = ''; const rb = nav(el('button', 'btn p', 'Restart now')), db = nav(el('button', 'btn', 'Discard changes')); rb.onclick = async () => { toast('Restarting\u2026'); const r = await X('sksRestart', { id }); if (r && r.ok === false) say(r); }; db.onclick = async () => { await X('sksPendingClear', { id }); K.go('server', { id, cat: 'rules' }); }; bbar.append(rb, db); refs.refresh = drawBanner; drawBanner(); sub('Saved right away.');
+        const box = add(el('div')); X('sksProps', { id }).then(r => { if (!box.isConnected || !r.ok) return; const p = r.props; const sv = async (k, v) => { const x = await X('sksPropsSet', { id, props: { [k]: v } }); if (!x.ok) say(x); else { p[k] = String(v); if (x.pending) { toast('Saved. Applies when the server restarts.'); } } };
           const c = (title, subt, key, opts) => { const b2 = cyc(title, subt, opts, () => p[key], v => { if (can()) sv(key, v); }); return b2; };
           const t = (title, subt, key) => toggle(title, subt, p[key] === 'true', v => { if (can()) sv(key, String(v)); }); const num = (title, subt, key, vals) => c(title, subt, key, vals.map(v => [String(v), String(v)]));
           box.append(row('Message of the day', 'Shown under the server name in the list', esc(p.motd.slice(0, 22)), () => { if (can()) osk({ title: 'Message of the day', value: p.motd, submitLabel: 'Save', onDone: v => { sv('motd', v || ''); K.go('server', { id, cat: 'rules' }); } }); }),
@@ -191,7 +244,7 @@
             num('View distance', 'Chunks players see. Lower is faster.', 'view-distance', [4, 6, 8, 10, 12, 16, 24, 32]), num('Simulation distance', 'Chunks that keep running. Lower is faster.', 'simulation-distance', [4, 6, 8, 10, 12]), num('Spawn protection', 'Radius only operators can build in', 'spawn-protection', [0, 4, 16, 32]),
             t('Allow flying (fly mods and plugins)', '', 'allow-flight'), t('Command blocks', '', 'enable-command-block'), t('Hardcore', 'One life. Only for new worlds.', 'hardcore'), t('Nether', '', 'allow-nether'), t('Monsters', '', 'spawn-monsters'), t('Animals', '', 'spawn-animals'),
             row('World seed', 'Only used when a new world is made. Delete the world folder to use a new seed.', esc(p['level-seed'] || 'random'), () => { if (can()) osk({ title: 'World seed', value: p['level-seed'], submitLabel: 'Save', onDone: v => { sv('level-seed', v || ''); K.go('server', { id, cat: 'rules' }); } }); }));
-          ensureFocus(pane, pane.querySelector('[data-nav]')); });
+          paneRestore(pane, keepIdx); });
       } else if (cid === 'backups') {
         h('Backups'); sub('A backup is a zip of the world (with the Nether and End). Stop the server first so the world is saved cleanly. SKBox keeps the newest five.'); const box = add(el('div'));
         const load = async () => { const r = await X('sksBackups', { id }); if (!box.isConnected) return; box.innerHTML = '';
@@ -199,7 +252,10 @@
           (r.list || []).forEach(b2 => box.appendChild(row(new Date(b2.t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }), fmtSize(b2.size), 'Options', () => menu('Backup', [
             { label: 'Restore this backup', fn: () => confirm('Restore this backup?', 'The current world is moved aside (not deleted) and this one takes its place.', 'Restore', async () => { const x = await X('sksRestore', { id, file: b2.file }); toast(x.ok ? 'Restored. Start the server.' : (x.error || 'That did not work')); }) },
             { label: 'Delete', fn: () => confirm('Delete this backup?', '', 'Delete', async () => { await X('sksBackupDelete', { id, file: b2.file }); load(); }, true) }, { label: 'Back', fn: () => {} }]))));
-          box.appendChild(row('Open the backups folder', '', '\u{1F4C2}', () => X('sksOpen', { id, what: 'backups' }))); ensureFocus(pane, pane.querySelector('[data-nav]')); }; load();
+          box.appendChild(row('Import a world', 'Put a world from a folder or a zip into this server. The current world is moved aside, not deleted.', '\u2B07', () => { if (busyNow()) return toast('Stop the server first'); menu('Import a world', [{ label: 'From a folder', fn: () => pickWorld('folder') }, { label: 'From a .zip file', fn: () => pickWorld('zip') }, { label: 'Back', fn: () => {} }]); }));
+          box.appendChild(row('Export this server', 'One zip of the whole server (world, plugins, settings) saved to your Desktop, to move it to another PC', '\u2B06', async () => { if (busyNow()) return toast('Stop the server first'); toast('Making the zip\u2026 this can take a while'); const x = await X('sksExport', { id }); toast(x.ok ? 'Saved to your Desktop: ' + x.name : (x.error || 'That did not work')); }));
+          box.appendChild(row('Open the backups folder', '', '\u{1F4C2}', () => X('sksOpen', { id, what: 'backups' }))); paneRestore(pane, keepIdx); };
+        const pickWorld = async kind => { const f = await sk.pickFile(kind); if (!f) return; confirm('Import this world?', 'The current world is moved aside (not deleted) and this one takes its place.', 'Import', async () => { const x = await withProgress('Importing the world', null, () => X('sksWorldImport', { id, path: f })); if (!x.ok) say(x); else { toast('World imported. Start the server.'); load(); } }); }; load();
       } else if (cid === 'options') {
         h('Server options'); const can = () => { if (busyNow()) { toast('Stop the server first'); return false; } return true; };
         add(row('Rename', 'Only changes the name in SKBox', esc(s.name), () => osk({ title: 'Server name', value: s.name, submitLabel: 'Save', onDone: async v => { if (v && v.trim()) { await X('sksSet', { id, name: v }); K.go('server', { id, cat: 'options' }); } } })));
@@ -212,8 +268,11 @@
         add(toggle('Tell me when someone joins', 'A Windows notification for each player who joins', !!s.notifyJoin, v => X('sksSet', { id, notifyJoin: v })));
         add(toggle('Hide addresses', 'Hide IP addresses and tunnel addresses on screen and in the console. Good for streaming.', hideOn(), v => { S.settings.hideAddresses = v; U.saveSettings(); }));
         add(row('Duplicate this server', 'Copies the world, plugins and settings to a new server on its own port', '\u29C9', async () => { if (busyNow()) return toast('Stop the server first'); toast('Copying\u2026'); const x = await X('sksDuplicate', { id }); if (!x.ok) say(x); else { toast('Copied as ' + x.server.name); K.go('server', { id: x.id, cat: 'overview' }); } }));
-        add(row('Delete this server', 'Deletes the world and every file. Backups stay.', '\u{1F5D1}', () => { if (busyNow()) return toast('Stop the server first'); confirm('Delete ' + s.name + '?', 'This deletes the world, plugins and settings. Backups in the backups folder are kept.', 'Delete', async () => { const x = await X('sksDelete', { id }); if (!x.ok) say(x); else { toast('Deleted'); K.go('servers'); } }, true); }));
-        ensureFocus(pane);
+        add(row('Server icon', s.icon ? 'A picture players see in the Minecraft server list. Tap to change or remove it.' : 'A picture players see in the Minecraft server list', s.icon ? 'Change' : 'Choose', () => menu('Server icon', [{ label: 'Choose a picture\u2026', fn: async () => { const f = await sk.pickFile('image'); if (!f) return; const r = await X('sksIcon', { id, file: f }); if (!r.ok) say(r); else { toast('Icon saved. Players see it after the server restarts.'); K.go('server', { id, cat: 'options' }); } } }, ...(s.icon ? [{ label: 'Remove the icon', fn: async () => { await X('sksIcon', { id, clear: true }); K.go('server', { id, cat: 'options' }); } }] : []), { label: 'Back', fn: () => {} }])));
+        add(row('Restart every day at', 'The server warns players 5 and 1 minutes ahead', esc(s.restartAt || 'Off'), () => menu('Daily restart', [['', 'Off'], ['03:00', '3:00 AM'], ['04:00', '4:00 AM'], ['05:00', '5:00 AM'], ['06:00', '6:00 AM']].map(([v, l]) => ({ label: l + (v === (s.restartAt || '') ? '  \u2713' : ''), fn: async () => { await X('sksSet', { id, restartAt: v }); K.go('server', { id, cat: 'options' }); } })).concat([{ label: 'Pick a time\u2026', fn: () => osk({ title: 'Time like 04:30', value: s.restartAt || '', submitLabel: 'Save', onDone: async v => { await X('sksSet', { id, restartAt: (v || '').trim() }); K.go('server', { id, cat: 'options' }); } }) }, { label: 'Back', fn: () => {} }]))));
+        add(row('Where your servers are kept', 'In SKBox\u2019s own folder. Updating SKBox never touches it. Tap to open.', '\u{1F4C2}', () => X('sksOpen', { what: 'root' })));
+        add(row('Delete this server', 'Deletes the world and every file. Backups stay.', '\u{1F5D1}', () => { if (busyNow()) return toast('Stop the server first'); confirm((s.inPlace ? 'Remove ' : 'Delete ') + s.name + '?', s.inPlace ? 'SKBox forgets this server. The folder and everything in it stay exactly where they are.' : 'This deletes the world, plugins and settings. Backups in the backups folder are kept.', s.inPlace ? 'Remove' : 'Delete', async () => { const x = await X('sksDelete', { id }); if (!x.ok) say(x); else { toast(x.kept ? 'Removed. Your files were not touched.' : 'Deleted'); K.go('servers'); } }, true); }));
+        paneRestore(pane, keepIdx);
       }
     }
     if (!firstEl) firstEl = menuE.firstChild; firstEl.dataset.first = ''; panel(sel); ensureFocus(root, firstEl);
