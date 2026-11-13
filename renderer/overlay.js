@@ -18,7 +18,7 @@
   let idleT = 0; const armIdle = () => { clearTimeout(idleT); const n = +(S.settings && S.settings.overlayIdle) || 0; if (n > 0) idleT = setTimeout(() => { try { sk.overlay.close(); } catch (_) {} }, n * 1000); };
   ['keydown', 'mousemove', 'mousedown', 'wheel'].forEach(ev => document.addEventListener(ev, armIdle, true));
   sk.on('padin', () => armIdle());
-  sk.on('overlay:open', s => { open(s); armIdle(); });
+  sk.on('overlay:open', s => { try { window.focus(); } catch (_) {} open(s); armIdle(); });
   sk.on('overlay:close', () => { clearTimeout(idleT); reset(); });
   sk.on('pads', n => { if (st) st.pads = n; });
 

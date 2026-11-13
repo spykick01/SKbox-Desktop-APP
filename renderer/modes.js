@@ -116,9 +116,19 @@
   K.settingsPages.skins = pane => {
     const { toggle, saveSettings, applyTheme } = U; const h = t => pane.appendChild(el('h2', '', t)), sub = t => pane.appendChild(el('div', 'sub', t)); const cur = K.skinId(S.settings);
     h('Themes'); sub('A theme changes the whole look: colors, type, shapes and the background. SK Glass is the original and uses your own color theme and accent. Every other theme brings its own colors.');
-    const grid = el('div', 'skincards'); K.skins.forEach(sk => { const p = sk.pv, c = nav(el('button', 'skcard' + (cur === sk.id ? ' sel' : '')));
+    const colorBlock = () => {
+    // color themes: the original Midnight/Ocean/Sakura look and more. Picking one switches to SK Glass with that color theme.
+    pane.appendChild(el('h3', 'skmore', 'Color themes')); pane.appendChild(el('div', 'sub', 'These keep the SK Glass shapes and change the colors. Pick one and your accent color follows it (you can still change the accent in Display & brightness).'));
+    const cg = el('div', 'skincards'), TH = K.colorThemes || {}, meta = K.themeMeta || {}, curT = S.settings.theme || 'midnight';
+    Object.keys(meta).forEach(id => { const t = TH[id] || {}, bg = t['--bg'] || '#0b0f1c', pn = (t['--panel2'] || 'rgba(26,32,54,.95)'), tx = t['--text'] || '#f3f5ff', a = meta[id][1], c = nav(el('button', 'skcard' + (cur === 'glass' && curT === id ? ' sel' : '')));
+      c.innerHTML = '<div class="skpv" style="background:' + bg + '"><div class="pvbar" style="background:' + pn + ';border-radius:10px;color:' + tx + '">SKBox</div><div class="pvrow"><i style="background:' + a + ';border-radius:10px"></i><i style="background:' + pn + ';border-radius:10px"></i><i style="background:' + pn + ';border-radius:10px"></i><i style="background:' + pn + ';border-radius:10px"></i></div></div><b>' + esc(meta[id][0]) + (cur === 'glass' && curT === id ? ' \u2713' : '') + '</b>';
+      c.onclick = () => { S.settings.skin = 'glass'; S.settings.theme = id; S.settings.accent = a; saveSettings(); applyTheme(); toast(meta[id][0]); K.go('settings', { cat: 'skins' }); }; cg.appendChild(c); });
+    pane.appendChild(cg);
+    };
+    let grid = el('div', 'skincards'); K.skins.forEach((sk, ix) => { if (ix === 2) { pane.appendChild(grid); colorBlock(); pane.appendChild(el('h3', 'skmore', 'More looks')); pane.appendChild(el('div', 'sub', 'These are rougher than SK Glass and Pixel Craft. Try them, and tell me which ones to improve or remove.')); grid = el('div', 'skincards'); } const p = sk.pv, c = nav(el('button', 'skcard' + (cur === sk.id ? ' sel' : '')));
       c.innerHTML = '<div class="skpv" style="background:' + p.bg + ';font-family:' + p.font.replace(/"/g, "'") + '"><div class="pvbar" style="background:' + p.panel + ';border-radius:' + p.r + ';color:' + p.text + '">SKBox</div><div class="pvrow"><i style="background:' + p.a + ';border-radius:' + p.r + '"></i><i style="background:' + p.b + ';border-radius:' + p.r + '"></i><i style="background:' + p.panel + ';border-radius:' + p.r + '"></i><i style="background:' + p.panel + ';border-radius:' + p.r + '"></i></div></div><b>' + esc(sk.name) + (cur === sk.id ? ' \u2713' : '') + '</b><small>' + esc(sk.desc) + '</small>';
-      c.onclick = () => { S.settings.skin = sk.id; saveSettings(); applyTheme(); toast(sk.name); K.go('settings', { cat: 'skins' }); }; grid.appendChild(c); }); pane.appendChild(grid);
+      c.onclick = () => { S.settings.skin = sk.id; if (sk.id === 'glass' && !S.settings.theme) S.settings.theme = 'midnight'; saveSettings(); applyTheme(); toast(sk.name); K.go('settings', { cat: 'skins' }); }; grid.appendChild(c); }); pane.appendChild(grid);
+
     pane.appendChild(toggle('Animated backgrounds and effects', 'Drifting lights, scanlines and moving grids. Turn off for a calmer look or to save power.', S.settings.skinFx !== false, v => { S.settings.skinFx = v; saveSettings(); applyTheme(); }));
     if (cur === 'glass') sub('Colors for SK Glass: Settings > Display & brightness (color theme, accent, wallpaper).'); else sub('This theme sets its own colors, so the accent and color theme pickers are not used while it is on.');
     ensureFocus(pane, pane.querySelector('.skcard.sel') || pane.querySelector('[data-nav]'));

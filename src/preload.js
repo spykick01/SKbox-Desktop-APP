@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('skbox', {
   store: { get: (n, d) => inv('store:get', n, d), set: (n, v) => inv('store:set', n, v) },
   info: () => inv('sys:info'),
   pickFile: k => inv('dialog:file', k),
+  pickFiles: k => inv('dialog:files', k),
   launch: a => inv('app:launch', a),
   cover: { candidates: t => inv('cover:candidates', t), auto: t => inv('cover:auto', t), pick: id => inv('cover:pick', id), pickUrl: u => inv('cover:pickUrl', u), copy: f => inv('cover:copy', f), icon: e => inv('cover:icon', e), remove: f => inv('cover:remove', f) },
   wifi: { scan: () => inv('wifi:scan'), status: () => inv('wifi:status'), connect: a => inv('wifi:connect', a), disconnect: () => inv('wifi:disconnect') },
@@ -25,5 +26,5 @@ contextBridge.exposeInMainWorld('skbox', {
   apps: { scan: () => inv('apps:scan'), launchers: () => inv('apps:launchers') },
   extras: { do: (n, a) => inv('extras:do', n, a) },
   installUpdate: () => inv('update:install'),
-  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'apps:changed', 'input-lock', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs', 'padin', 'padtest', 'battery', 'timer:fired', 'remote:state', 'queue:next', 'companion:state', 'roms:progress', 'info:progress', 'party:state', 'playit:state', 'sks:log', 'sks:state', 'sks:progress', 'store:progress'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
+  on: (ch, fn) => { if (['returned', 'launch-error', 'update-ready', 'pads', 'game:state', 'apps:changed', 'input-lock', 'overlay:open', 'overlay:close', 'players-changed', 'music:visible', 'fs', 'padin', 'padtest', 'battery', 'timer:fired', 'remote:state', 'queue:next', 'companion:state', 'roms:progress', 'info:progress', 'party:state', 'playit:state', 'sks:log', 'sks:state', 'sks:stats', 'sks:progress', 'store:progress'].includes(ch)) ipcRenderer.on(ch, (_e, ...a) => fn(...a)); }
 });

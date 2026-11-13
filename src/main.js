@@ -107,10 +107,14 @@ function loginScript(u, p) { return '(function(u,p){var a=document.getElementByI
 function autologin(wc, u) { const x = readProfiles().find(y => y.meta.u === u); if (!x) return; let p; try { p = dec(x.pw); } catch { return; } [1200, 3200, 6500].forEach(ms => setTimeout(() => { try { if (!wc.isDestroyed()) wc.executeJavaScript(loginScript(u, p)).catch(() => {}); } catch {} }, ms)); }
 
 // ================= apps / covers =================
+// file pickers: make sure the window is up front and not "always on top", so the picker can never open hidden behind SKBox
+const pickDlg = async opts => { let was = false; try { was = win.isAlwaysOnTop(); if (was) win.setAlwaysOnTop(false); win.show(); win.focus(); } catch {} try { return await dialog.showOpenDialog(win, opts); } finally { try { if (was) win.setAlwaysOnTop(true); win.focus(); } catch {} } };
 ipcMain.handle('dialog:file', async (_e, kind) => {
   const filters = kind === 'zip' ? [{ name: 'Zip files', extensions: ['zip'] }] : kind === 'json' ? [{ name: 'SKBox setup', extensions: ['json'] }] : kind === 'image' ? [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] : [{ name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'lnk'] }, { name: 'All files', extensions: ['*'] }];
-  const r = kind === 'folder' ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] }) : await dialog.showOpenDialog(win, { properties: ['openFile'], filters });
-  return r.canceled ? null : r.filePaths[0];
+  try { const r = kind === 'folder' ? await pickDlg({ properties: ['openDirectory'] }) : await pickDlg({ properties: ['openFile'], filters }); return r.canceled ? null : r.filePaths[0]; } catch { return null; }
+});
+ipcMain.handle('dialog:files', async (_e, kind) => {   // several files at once, or a folder, for the file manager
+  try { const r = kind === 'folder' ? await pickDlg({ properties: ['openDirectory'] }) : await pickDlg({ properties: ['openFile', 'multiSelections'] }); return r.canceled ? [] : r.filePaths; } catch { return []; }
 });
 const newCover = ext => path.join(COVER_DIR(), crypto.randomBytes(6).toString('hex') + (ext || '.jpg'));
 // "fill" = portrait box art that fills the tile; "fit" = wide or square images shown whole on a blurred backdrop
@@ -153,7 +157,7 @@ const roms = require('./lib/roms').create({
 const gameinfo = require('./lib/gameinfo').create({ store, progress: (f, t) => send('info:progress', { found: f, total: t }) });
 // SKServers (Minecraft server hosting) and the App Store.
 let playit = null;   // made right after the servers; the servers tell it when they start and stop
-const servers = require('./lib/servers').create({ store, dir: app.getPath('userData'), send, openPath: p => shell.openPath(p), copy: t => { try { require('electron').clipboard.writeText(t); } catch {} }, desktop: () => app.getPath('desktop'),
+const servers = require('./lib/servers').create({ store, dir: app.getPath('userData'), send, roots: { shots: path.join(app.getPath('pictures'), 'SKBox'), downloads: app.getPath('downloads'), desktop: app.getPath('desktop'), documents: app.getPath('documents'), data: app.getPath('userData') }, openPath: p => shell.openPath(p), copy: t => { try { require('electron').clipboard.writeText(t); } catch {} }, desktop: () => app.getPath('desktop'),
   resizeIcon: async f => { const img = nativeImage.createFromPath(String(f)); if (img.isEmpty()) return null; const sz = img.getSize(), side = Math.min(sz.width, sz.height), sq = img.crop({ x: Math.floor((sz.width - side) / 2), y: Math.floor((sz.height - side) / 2), width: side, height: side }); return sq.resize({ width: 64, height: 64, quality: 'best' }).toPNG(); },   // Minecraft wants a 64x64 square PNG
   onState: v => { if (playit) playit.onServer(v); },
   notify: (t, b) => { try { if (Notification.isSupported()) new Notification({ title: t, body: b }).show(); } catch {} } });
@@ -420,9 +424,14 @@ function openOverlay(opts) {
   overlayTarget = fgTarget && Date.now() - fgTarget.at < 1500 ? fgTarget : (game && game.hwnd ? { hwnd: String(game.hwnd), fs: true } : null); fgTarget = null;
   const moveAside = !!(overlayTarget && overlayTarget.fs && overlayOpaque && helper && helper.ready);
   if (moveAside) helper.minimize(overlayTarget.hwnd);
-  const show = () => { try { w.setAlwaysOnTop(true, 'screen-saver'); w.show(); w.moveTop(); w.focus(); if (helper) helper.focus(nativeHwnd(w)); w.webContents.send('overlay:open', overlayStateObj(opts)); } catch {}
-    // a fullscreen game can keep the keyboard focus for a moment: keep asking until the menu really has it
-    [200, 600, 1200, 2200].forEach(ms => setTimeout(() => { try { if (overlayOpen && overlayWin && !overlayWin.isDestroyed() && !overlayWin.isFocused()) { overlayWin.moveTop(); overlayWin.focus(); if (helper) { helper.focus(nativeHwnd(overlayWin)); helper.padIn(true); } } } catch {} }, ms)); };
+  const grab = () => { w.setAlwaysOnTop(true, 'screen-saver'); w.show(); w.moveTop(); w.focus(); try { w.webContents.focus(); } catch {} if (helper) { try { helper.focus(nativeHwnd(w)); } catch {} } };
+  const show = () => { try { grab(); w.webContents.send('overlay:open', overlayStateObj(opts)); } catch {}
+    // a fullscreen game (Cemu and other emulators especially) can keep the keyboard focus for a while: keep asking, both at the
+    // window level and for the page inside it, until the menu really has it. Stops as soon as it has focus or the menu closes.
+    let n = 0; const keep = setInterval(() => { try {
+      if (!overlayOpen || !overlayWin || overlayWin.isDestroyed() || overlayWin !== w || ++n > 28) return clearInterval(keep);
+      if (!w.isFocused() || !w.webContents.isFocused()) grab(); else if (n > 6) clearInterval(keep);
+    } catch { clearInterval(keep); } }, 150); };
   const go = () => { if (w.webContents.isLoading()) w.webContents.once('did-finish-load', show); else show(); };
   if (moveAside) setTimeout(go, 220); else go();
 }

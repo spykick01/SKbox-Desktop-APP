@@ -26,7 +26,7 @@ html.skin-pixel body::after{content:'';position:fixed;left:0;right:0;bottom:0;he
   background:linear-gradient(#5fb236 0 0) 0 0/100% 2.6vh no-repeat,linear-gradient(#4a8f2a 0 0) 0 2.6vh/100% 1vh no-repeat,repeating-conic-gradient(#7b4b24 0 25%,#6d4020 0 50%) 0 3.6vh/3.2vh 3.2vh}
 html.skin-pixel #shade{background:rgba(8,10,30,.3)}
 html.skin-pixel #fx{display:none}
-html.skin-pixel :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){border:4px solid #000;background:var(--panel);box-shadow:inset 4px 4px 0 rgba(255,255,255,.16),inset -4px -4px 0 rgba(0,0,0,.35)}
+html.skin-pixel :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.dhero2,.dcard,.dchart,.dcon,.dplayers,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){border:4px solid #000;background:var(--panel);box-shadow:inset 4px 4px 0 rgba(255,255,255,.16),inset -4px -4px 0 rgba(0,0,0,.35)}
 html.skin-pixel :is(.item.focus,.pcard.focus,.scard.focus,.pm.focus,.mcard.focus,.srow.focus,.mi.focus,.qb.focus,.chip.focus,.wdg.focus){border-color:var(--a);background:var(--panel2)}
 html.skin-pixel .btn{background:#8a8a8a;color:#101010;border:4px solid #000;box-shadow:inset 4px 4px 0 rgba(255,255,255,.45),inset -4px -4px 0 rgba(0,0,0,.35);text-shadow:none}
 html.skin-pixel .btn.p{background:var(--a);color:#0f2a07}html.skin-pixel .btn.danger{background:#d9534f;color:#fff}
@@ -46,7 +46,7 @@ html.skin-crt body::after{content:'';position:fixed;inset:0;z-index:60;pointer-e
 html.skin-crt.no-fx body::after{display:none}
 html.skin-crt #shade{background:radial-gradient(120% 90% at 50% 0%,rgba(0,24,8,.25),rgba(1,8,3,.94) 80%)}
 html.skin-crt:not(.no-fx) .bg:not(.wall){opacity:0!important}
-html.skin-crt :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu,.tile){border:1px solid rgba(61,255,122,.35);background:var(--panel);box-shadow:0 0 12px rgba(61,255,122,.12)}
+html.skin-crt :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.dhero2,.dcard,.dchart,.dcon,.dplayers,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu,.tile){border:1px solid rgba(61,255,122,.35);background:var(--panel);box-shadow:0 0 12px rgba(61,255,122,.12)}
 html.skin-crt :is(.item.focus,.pcard.focus,.scard.focus,.pm.focus,.mcard.focus,.srow.focus,.mi.focus,.qb.focus,.chip.focus,.wdg.focus,.tile.focus){border-color:var(--a);box-shadow:0 0 18px rgba(61,255,122,.55);background:var(--panel2)}
 html.skin-crt .btn{border:1px solid var(--a);background:transparent;color:var(--a);text-transform:uppercase;letter-spacing:.08em}html.skin-crt .btn.p{background:var(--a);color:#021a08;text-shadow:none}html.skin-crt .btn.focus{box-shadow:0 0 18px var(--a);background:rgba(61,255,122,.18)}html.skin-crt .btn.p.focus{background:var(--a)}
 html.skin-crt :is(h1,h2,h3,.mgrp){text-transform:uppercase;letter-spacing:.1em}
@@ -59,7 +59,7 @@ html.skin-gameboy #shade{background:transparent}
 html.skin-gameboy #fx,html.skin-brutal #fx,html.skin-paper #fx{display:none}
 html.skin-gameboy:not(.no-fx) .bg:not(.wall){opacity:0!important}
 html.skin-gameboy body::before{content:'';position:fixed;inset:0;z-index:0;background:repeating-linear-gradient(0deg,rgba(15,56,15,.07) 0 2px,transparent 2px 4px),repeating-linear-gradient(90deg,rgba(15,56,15,.07) 0 2px,transparent 2px 4px)}
-html.skin-gameboy :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){border:4px solid #0f380f;background:#8bac0f;color:#0f380f;box-shadow:none}
+html.skin-gameboy :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.dhero2,.dcard,.dchart,.dcon,.dplayers,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){border:4px solid #0f380f;background:#8bac0f;color:#0f380f;box-shadow:none}
 html.skin-gameboy :is(.item.focus,.pcard.focus,.scard.focus,.pm.focus,.mcard.focus,.srow.focus,.mi.focus,.qb.focus,.chip.focus,.wdg.focus){background:#0f380f;color:#9bbc0f;border-color:#0f380f}
 html.skin-gameboy :is(.item.focus,.mi.focus,.srow.focus,.pcard.focus,.scard.focus,.pm.focus,.chip.focus,.wdg.focus) *{color:#9bbc0f}
 html.skin-gameboy .btn{background:#9bbc0f;color:#0f380f;border:4px solid #0f380f}html.skin-gameboy .btn.p,html.skin-gameboy .btn.focus{background:#0f380f;color:#9bbc0f}
@@ -77,7 +77,7 @@ html.skin-synth.no-fx body::after{animation:none}
 @keyframes sgrid{to{background-position:0 6vh,0 0}}
 html.skin-synth #shade{background:linear-gradient(180deg,rgba(10,0,30,.35),rgba(10,0,30,.55))}
 html.skin-synth:not(.no-fx) .bg:not(.wall){opacity:0!important}
-html.skin-synth :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){border:1px solid rgba(255,43,214,.45);background:var(--panel);box-shadow:0 0 14px rgba(255,43,214,.18),inset 0 0 18px rgba(0,229,255,.05);backdrop-filter:blur(6px)}
+html.skin-synth :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.dhero2,.dcard,.dchart,.dcon,.dplayers,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){border:1px solid rgba(255,43,214,.45);background:var(--panel);box-shadow:0 0 14px rgba(255,43,214,.18),inset 0 0 18px rgba(0,229,255,.05);backdrop-filter:blur(6px)}
 html.skin-synth :is(.item.focus,.pcard.focus,.scard.focus,.pm.focus,.mcard.focus,.srow.focus,.mi.focus,.qb.focus,.chip.focus,.wdg.focus){border-color:var(--a2);box-shadow:0 0 22px rgba(0,229,255,.55),inset 0 0 18px rgba(0,229,255,.12);background:var(--panel2)}
 html.skin-synth .btn{border:1px solid var(--a);background:rgba(255,43,214,.12);text-transform:uppercase;letter-spacing:.08em}html.skin-synth .btn.p{background:linear-gradient(90deg,var(--a),#8a2be2);color:#fff;border-color:transparent;box-shadow:0 0 18px rgba(255,43,214,.6)}html.skin-synth .btn.focus{box-shadow:0 0 22px var(--a2);border-color:var(--a2)}
 html.skin-synth :is(h1,h2,h3){text-transform:uppercase;letter-spacing:.12em;text-shadow:0 0 14px rgba(255,43,214,.7)}
@@ -90,9 +90,9 @@ html.skin-aurora.no-fx body::before{animation:none}
 @keyframes aurora{0%{transform:translate(-4%,-2%) rotate(0deg) scale(1)}50%{transform:translate(5%,3%) rotate(8deg) scale(1.12)}100%{transform:translate(-2%,5%) rotate(-6deg) scale(1.05)}}
 html.skin-aurora #shade{background:linear-gradient(180deg,rgba(3,10,22,.35),rgba(3,10,22,.7))}
 html.skin-aurora:not(.no-fx) .bg:not(.wall){opacity:0!important}
-html.skin-aurora :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(22px) saturate(1.5);box-shadow:0 10px 30px rgba(0,0,0,.25)}
+html.skin-aurora :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.dhero2,.dcard,.dchart,.dcon,.dplayers,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(22px) saturate(1.5);box-shadow:0 10px 30px rgba(0,0,0,.25)}
 html.skin-aurora :is(.item.focus,.pcard.focus,.scard.focus,.pm.focus,.mcard.focus,.srow.focus,.mi.focus,.qb.focus,.chip.focus,.wdg.focus){background:var(--panel2);border-color:rgba(255,255,255,.55);box-shadow:0 14px 38px rgba(124,245,200,.25)}
-html.skin-aurora :is(.item,.box,.pcard,.scard,.pm,.mcard,.pane,.menu,.dhero,.ovpanel){border-radius:1.5rem!important}html.skin-aurora :is(.btn,.chip,.mi,.qb,.srow,.sfield){border-radius:1.1rem!important}
+html.skin-aurora :is(.item,.box,.pcard,.scard,.pm,.mcard,.pane,.menu,.dhero,.dhero2,.dcard,.dchart,.dcon,.dplayers,.ovpanel){border-radius:1.5rem!important}html.skin-aurora :is(.btn,.chip,.mi,.qb,.srow,.sfield){border-radius:1.1rem!important}
 html.skin-aurora .btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);backdrop-filter:blur(10px)}html.skin-aurora .btn.p{background:linear-gradient(135deg,var(--a),var(--a2));color:#04202b;border-color:transparent}
 html.skin-aurora :is(h1,h2){font-weight:300;letter-spacing:.02em}
 
@@ -102,7 +102,7 @@ html.skin-brutal #shade{background:transparent}
 html.skin-brutal:not(.no-fx) .bg:not(.wall){opacity:0!important}
 html.skin-brutal body::before{content:'';position:fixed;inset:0;z-index:0;background:radial-gradient(#111 1.2px,transparent 1.6px) 0 0/22px 22px;opacity:.12}
 html.skin-brutal *{border-radius:6px}
-html.skin-brutal :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){background:#fff;color:#111;border:3px solid #111;box-shadow:5px 5px 0 #111}
+html.skin-brutal :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.dhero2,.dcard,.dchart,.dcon,.dplayers,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){background:#fff;color:#111;border:3px solid #111;box-shadow:5px 5px 0 #111}
 html.skin-brutal :is(.item.focus,.pcard.focus,.scard.focus,.pm.focus,.mcard.focus,.srow.focus,.mi.focus,.qb.focus,.chip.focus,.wdg.focus){background:var(--a);transform:translate(-3px,-3px);box-shadow:8px 8px 0 #111}
 html.skin-brutal .btn{background:#fff;color:#111;border:3px solid #111;box-shadow:4px 4px 0 #111;text-transform:uppercase}html.skin-brutal .btn.p{background:var(--a2);color:#fff}html.skin-brutal .btn.focus{transform:translate(-3px,-3px);box-shadow:7px 7px 0 #111;background:var(--a);color:#111}
 html.skin-brutal .tile{border:3px solid #111;box-shadow:6px 6px 0 #111}html.skin-brutal .tile.focus{transform:translate(-4px,-4px);box-shadow:10px 10px 0 var(--a)}
@@ -114,7 +114,7 @@ html.skin-paper body{background:#f2ece1}
 html.skin-paper body::before{content:'';position:fixed;inset:0;z-index:0;background:radial-gradient(1200px 700px at 20% 0%,rgba(255,255,255,.7),transparent 70%),repeating-linear-gradient(0deg,rgba(90,60,30,.025) 0 1px,transparent 1px 3px)}
 html.skin-paper #shade{background:transparent}
 html.skin-paper:not(.no-fx) .bg:not(.wall){opacity:0!important}
-html.skin-paper :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){background:var(--panel);color:#2b2622;border:1px solid var(--line);box-shadow:0 6px 18px rgba(70,50,30,.1)}
+html.skin-paper :is(.item,.box,.pcard,.scard,.pm,.mcard,.wdg,.srow,.sfield,.chip,.mi,.qb,.dhero,.dhero2,.dcard,.dchart,.dcon,.dplayers,.pcode,.ovpanel,.ovmenu,#toast,.pane,.menu){background:var(--panel);color:#2b2622;border:1px solid var(--line);box-shadow:0 6px 18px rgba(70,50,30,.1)}
 html.skin-paper :is(.item.focus,.pcard.focus,.scard.focus,.pm.focus,.mcard.focus,.srow.focus,.mi.focus,.qb.focus,.chip.focus,.wdg.focus){background:#fff;border-color:var(--a);box-shadow:0 10px 26px rgba(194,65,12,.18)}
 html.skin-paper .btn{background:#fffdf7;color:#2b2622;border:1px solid rgba(70,50,30,.3);box-shadow:0 2px 0 rgba(70,50,30,.18)}html.skin-paper .btn.p{background:var(--a);color:#fff;border-color:transparent}html.skin-paper .btn.focus{border-color:var(--a);box-shadow:0 6px 16px rgba(194,65,12,.25)}
 html.skin-paper :is(h1,h2,h3){color:#2b2622;font-weight:700}html.skin-paper #hints{background:transparent;color:#7a6c5c}

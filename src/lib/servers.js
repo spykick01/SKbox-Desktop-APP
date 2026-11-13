@@ -192,7 +192,7 @@ function create(ctx) {
   const portFree = port => new Promise(res => { const s = net.createServer(); s.once('error', () => res(false)); s.once('listening', () => s.close(() => res(true))); s.listen(port, '0.0.0.0'); });
   const lanIps = () => { const o = []; const n = os.networkInterfaces(); Object.keys(n).forEach(k => (n[k] || []).forEach(a => { if (a.family === 'IPv4' && !a.internal && !/^169\.254\./.test(a.address)) o.push(a.address); })); return o; };
   const iconOf = s => { try { const f = path.join(dirOf(s), 'server-icon.png'); return fs.existsSync(f) ? f : ''; } catch { return ''; } };
-  const view = s => { const r = rt(s.id); return Object.assign({}, s, { icon: iconOf(s), inPlace: !!s.path, missing: !fs.existsSync(dirOf(s)),  state: r.state, players: Array.from(r.players), startedAt: r.startedAt || 0, error: r.err || '', progress: r.prog || null, pendingCount: Object.keys(s.pending || {}).length, typeName: typeOf(s).name, pluginDir: typeOf(s).dir, canPlugins: !!typeOf(s).dir, mc: s.version }); };
+  const view = s => { const r = rt(s.id); return Object.assign({}, s, { icon: iconOf(s), inPlace: !!s.path, missing: !fs.existsSync(dirOf(s)),  state: r.state, players: Array.from(r.players), startedAt: r.startedAt || 0, maxPlayers: r.maxPlayers || 0, stats: r.stats ? { cpu: r.stats.cpu, mem: r.stats.mem } : null, error: r.err || '', progress: r.prog || null, pendingCount: Object.keys(s.pending || {}).length, typeName: typeOf(s).name, pluginDir: typeOf(s).dir, canPlugins: !!typeOf(s).dir, mc: s.version }); };
   const list = () => ({ ok: true, root, list: read().map(view), ips: lanIps(), totalMB: Math.round(os.totalmem() / 1048576), freeMB: Math.round(os.freemem() / 1048576) });
   const emit = id => { const s = find(id); if (s) { const v = view(s); send('sks:state', v); if (ctx.onState) { try { ctx.onState(v); } catch (_) {} } } };
   const note = (title, body) => { try { ctx.notify && ctx.notify(title, body); } catch (_) {} };
@@ -246,12 +246,12 @@ function create(ctx) {
     if (R.startToken !== token) return { ok: true, cancelled: true };   // Stop was pressed while Java was still downloading
     const args = ['-Xms' + Math.min(s.ram, 1024) + 'M', '-Xmx' + s.ram + 'M', '-Dfile.encoding=UTF-8'].concat(String(s.jvm || '').split(/\s+/).filter(Boolean), ['-jar', jar, 'nogui']);
     let proc; try { proc = (ctx.spawn || cp.spawn)(j.path, args, { cwd: dir, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }); } catch (e) { setState(id, 'crashed', 'Could not start Java.'); return { ok: false, error: R.err }; }
-    R.proc = proc; R.stopping = false; pushLog(id, ['[SKServers] Starting ' + s.name + ' (' + typeOf(s).name + ' ' + s.version + ', ' + Math.round(s.ram / 1024 * 10) / 10 + ' GB)\u2026']);
+    R.proc = proc; R.stopping = false; R.maxPlayers = maxPlayersOf(dir); startSampler(id, proc); pushLog(id, ['[SKServers] Starting ' + s.name + ' (' + typeOf(s).name + ' ' + s.version + ', ' + Math.round(s.ram / 1024 * 10) / 10 + ' GB)\u2026']);
     const feed = () => { let buf = ''; return d => { buf += stripAnsi(d.toString('utf8')); const parts = buf.split('\n'); buf = parts.pop(); const lines = parts.map(l => l.slice(0, 2000)).filter(l => l.length); if (lines.length) { lines.forEach(l => watchLine(id, l)); pushLog(id, lines); } }; };
     if (proc.stdout) proc.stdout.on('data', feed()); if (proc.stderr) proc.stderr.on('data', feed()); if (proc.stdin) proc.stdin.on('error', () => {});
-    proc.on('error', e => { R.proc = null; setState(id, 'crashed', 'Could not start Java: ' + String(e.message).slice(0, 100)); });
+    proc.on('error', e => { stopSampler(id); R.proc = null; setState(id, 'crashed', 'Could not start Java: ' + String(e.message).slice(0, 100)); });
     proc.on('exit', code => {
-      clearTimeout(R.killT); R.proc = null; R.players = new Set(); R.startedAt = 0; const wasStopping = R.stopping; R.stopping = false;
+      clearTimeout(R.killT); stopSampler(id); R.proc = null; R.players = new Set(); R.startedAt = 0; const wasStopping = R.stopping; R.stopping = false;
       pushLog(id, ['[SKServers] The server ' + (wasStopping ? 'stopped.' : 'closed (exit code ' + code + ').')]);
       if (wasStopping || code === 0) { applyPending(id); setState(id, 'stopped'); const w = R.waiters; R.waiters = []; (w || []).forEach(f => f()); const sv = find(id); if (sv && sv.backupOnStop && worlds(sv).length) backup(id).then(b => { pushLog(id, ['[SKServers] ' + (b.ok ? 'Backup saved: ' + b.file : 'Backup failed: ' + b.error)]); if (!b.ok) note(sv.name, 'The automatic backup did not work.'); }); return; }
       const known = R.err; setState(id, 'crashed', known || 'The server closed unexpectedly (exit code ' + code + '). Check the console.'); const w = R.waiters; R.waiters = []; (w || []).forEach(f => f());
@@ -468,12 +468,15 @@ function create(ctx) {
   function inspectDir(dir) {
     const out = { dir, problems: [], warnings: [], type: '', version: '', jar: '', needsVersion: false }; let files = []; try { files = fs.readdirSync(dir); } catch { out.problems.push('That folder could not be read.'); return out; }
     let side = null; try { side = JSON.parse(fs.readFileSync(path.join(dir, SIDE), 'utf8')); if (side.skbox !== 'server') side = null; } catch {}
-    if (files.some(n => /^(user_jvm_args\.txt)$/i.test(n)) || fs.existsSync(path.join(dir, 'libraries', 'net', 'minecraftforge')) || fs.existsSync(path.join(dir, 'libraries', 'net', 'neoforged'))) out.problems.push('Forge and NeoForge servers are not supported yet. Paper, Purpur, Fabric, Vanilla and plain server jars work.');
+    if (fs.existsSync(path.join(dir, 'libraries', 'net', 'minecraftforge')) || fs.existsSync(path.join(dir, 'libraries', 'net', 'neoforged'))) out.problems.push('Forge and NeoForge servers are not supported yet. Paper, Purpur, Fabric, Vanilla and plain server jars work.');
     const jars = files.filter(n => /\.jar$/i.test(n)); const prefer = [side && side.jar, 'fabric-server-launch.jar', 'server.jar'].filter(Boolean); let jar = prefer.find(n => jars.includes(n)) || jars.find(n => /^(paper|purpur|spigot|craftbukkit|minecraft_server|quilt-server-launch)/i.test(n)) || (jars.length === 1 ? jars[0] : jars.map(n => [n, (() => { try { return fs.statSync(path.join(dir, n)).size; } catch { return 0; } })()]).filter(x => x[1] > 1e6).sort((a, b) => b[1] - a[1]).map(x => x[0])[0]) || '';
     if (!jar) out.problems.push('No server .jar was found in that folder.'); out.jar = jar;
     let ji = { type: '', version: '' }; if (jar) ji = inspectJar(path.join(dir, jar)); const fv = VER.exec(jar); const fn = /paper/i.test(jar) ? 'paper' : /purpur/i.test(jar) ? 'purpur' : /fabric/i.test(jar) ? 'fabric' : '';
     let type = (side && side.type) || ji.type || fn; if (type === 'forge') { out.problems.push('Forge and NeoForge servers are not supported yet. Paper, Purpur, Fabric, Vanilla and plain server jars work.'); type = 'custom'; } if (['spigot', ''].includes(type)) type = 'custom'; out.type = type;
     let version = (side && side.version) || ji.version || (fv ? fv[1] : ''); if (!version) { try { const m = /Starting minecraft server version (\d+\.\d+(?:\.\d+)?)/.exec(fs.readFileSync(path.join(dir, 'logs', 'latest.log'), 'utf8').slice(0, 20000)); if (m) version = m[1]; } catch {} }
+    if (!version) { try { const m = /\(MC: (\d+\.\d+(?:\.\d+)?)\)/.exec(fs.readFileSync(path.join(dir, 'version_history.json'), 'utf8')); if (m) version = m[1]; } catch {} }      // Paper writes this
+    if (!version) { try { const c = fs.readdirSync(path.join(dir, 'cache')).map(n => /^(?:mojang|patched)_(\d+\.\d+(?:\.\d+)?)\.jar$/.exec(n)).filter(Boolean)[0]; if (c) version = c[1]; } catch {} }
+    if (!version) { try { const lg = fs.readFileSync(path.join(dir, 'logs', 'latest.log'), 'utf8').slice(0, 300000); const m = /(?:Starting minecraft server version|This server is running \w+ version).*?(\d+\.\d+(?:\.\d+)?)/.exec(lg); if (m) version = m[1]; } catch {} }
     if (!/^\d+(\.\d+){1,2}$/.test(version)) { version = ''; out.needsVersion = true; } out.version = version;
     let props = {}; try { props = propsToObj(parseProps(fs.readFileSync(path.join(dir, 'server.properties'), 'utf8'))); } catch { out.warnings.push('There is no server.properties yet. SKBox will make one.'); }
     out.port = +props['server-port'] || (side && side.port) || 25565; out.levelName = props['level-name'] || 'world'; out.hasWorld = fs.existsSync(path.join(dir, out.levelName, 'level.dat')) || fs.existsSync(path.join(dir, out.levelName));
@@ -553,6 +556,82 @@ function create(ctx) {
   }
   const tickTimer = setInterval(tick, ctx.tickMs || 15000); if (tickTimer.unref) tickTimer.unref();
 
+
+  // ---------- live CPU and memory ----------
+  // One small sampler per running server. CPU is shown as a share of the whole PC (like Task Manager), memory as what Java really uses.
+  const cores = Math.max(1, (os.cpus() || []).length || 1);
+  function maxPlayersOf(dir) { try { const m = /^max-players\s*=\s*(\d+)/m.exec(fs.readFileSync(path.join(dir, 'server.properties'), 'utf8')); return m ? +m[1] : 20; } catch { return 20; } }
+  function readProc(pid) {   // non-Windows fallback (used by tests and Linux): /proc
+    try { const st = fs.readFileSync('/proc/' + pid + '/stat', 'utf8'), f = st.slice(st.lastIndexOf(')') + 2).split(' '); const ticks = (+f[11] || 0) + (+f[12] || 0); const rss = (+fs.readFileSync('/proc/' + pid + '/statm', 'utf8').split(' ')[1] || 0) * 4096; return { cpuSec: ticks / 100, mem: rss }; } catch { return null; }
+  }
+  function pushSample(id, cpuSec, mem) {
+    const R = rt(id), t = now(); const prev = R.sampPrev; R.sampPrev = { t, cpuSec };
+    let cpu = R.stats ? R.stats.cpu : 0; if (prev && t > prev.t) cpu = Math.max(0, Math.min(100, (cpuSec - prev.cpuSec) / ((t - prev.t) / 1000) / cores * 100));
+    R.stats = { cpu: Math.round(cpu * 10) / 10, mem: Math.round(mem) }; R.hist = (R.hist || []).concat([{ t, cpu: R.stats.cpu, mem: R.stats.mem }]).slice(-120);
+    send('sks:stats', { id, cpu: R.stats.cpu, mem: R.stats.mem, ram: (find(id) || {}).ram || 0, players: Array.from(R.players).length, max: R.maxPlayers || 0, hist: R.hist.slice(-1) });
+  }
+  function startSampler(id, proc) {
+    const R = rt(id); stopSampler(id); R.hist = []; R.stats = null; R.sampPrev = null; const pid = proc && proc.pid; if (!pid) return;
+    if (ctx.sample) { const tick = async () => { try { const v = await ctx.sample(pid); if (v) pushSample(id, v.cpuSec, v.mem); } catch {} }; R.samp = { timer: setInterval(tick, ctx.sampleMs || 2000) }; if (R.samp.timer.unref) R.samp.timer.unref(); return; }
+    if (process.platform === 'win32') {
+      const c = '$c=[Globalization.CultureInfo]::InvariantCulture; while($true){ $p=Get-Process -Id ' + (pid | 0) + ' -ErrorAction SilentlyContinue; if(-not $p){break}; [Console]::Out.WriteLine($p.TotalProcessorTime.TotalSeconds.ToString($c) + " " + $p.WorkingSet64); Start-Sleep -Seconds 2 }';
+      let q; try { q = cp.spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', c], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return; }
+      let buf = ''; q.stdout.on('data', d => { buf += d.toString(); const parts = buf.split(/\r?\n/); buf = parts.pop(); parts.forEach(l => { const m = /^([\d.]+) (\d+)$/.exec(l.trim()); if (m) pushSample(id, +m[1], +m[2]); }); });
+      q.on('error', () => {}); R.samp = { proc: q };
+    } else { const tick = () => { const v = readProc(pid); if (v) pushSample(id, v.cpuSec, v.mem); }; R.samp = { timer: setInterval(tick, 2000) }; if (R.samp.timer.unref) R.samp.timer.unref(); }
+  }
+  function stopSampler(id) { const R = rt(id); if (R.samp) { if (R.samp.timer) clearInterval(R.samp.timer); if (R.samp.proc) try { R.samp.proc.kill(); } catch {} R.samp = null; } R.stats = null; }
+  const statsOf = id => { const R = rt(id); return { ok: true, running: !!R.proc, stats: R.stats, hist: R.hist || [], players: Array.from(R.players), max: R.maxPlayers || 0, startedAt: R.startedAt || 0 }; };
+
+  // ---------- file manager (inside SKBox: no Windows File Explorer needed) ----------
+  const TEXT_EXT = /\.(txt|properties|yml|yaml|json|json5|toml|conf|cfg|ini|log|md|csv|xml|html|js|sh|bat|cmd|mcmeta|lang|secret|env|list|skript|sk)$/i;
+  function fsRootDir(key) {
+    key = String(key || ''); if (/^s:/.test(key)) { const s = find(key.slice(2)); return s ? dirOf(s) : ''; }
+    const map = Object.assign({ servers: root, backups: backupRoot }, ctx.roots || {}); return map[key] || '';
+  }
+  function fsSafe(key, rel) {   // a path inside the chosen folder only: no .., no links that lead outside
+    const base = fsRootDir(key); if (!base) return { err: 'That folder is not available.' }; rel = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    if (rel.split('/').some(x => x === '..')) return { err: 'That path is not allowed.' }; const full = path.resolve(base, rel); const bn = path.resolve(base);
+    if (full !== bn && !full.startsWith(bn + path.sep)) return { err: 'That path is not allowed.' };
+    try { const rp = fs.realpathSync(fs.existsSync(full) ? full : path.dirname(full)), rb = fs.realpathSync(bn); if (rp !== rb && !rp.startsWith(rb + path.sep)) return { err: 'That path leads outside this folder.' }; } catch {}
+    return { base: bn, full, rel: path.relative(bn, full).split(path.sep).join('/') };
+  }
+  const fsRunning = key => /^s:/.test(String(key)) ? !!rt(String(key).slice(2)).proc : false;
+  function fsList(a) {
+    const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; let ents; try { ents = fs.readdirSync(p.full, { withFileTypes: true }); } catch (e) { return { ok: false, error: e.code === 'ENOENT' ? 'That folder is gone.' : 'SKBox could not open that folder.' }; }
+    const out = []; for (const e of ents.filter(x => !/^\.skbox/i.test(x.name) && !/\.skbox-tmp$/i.test(x.name)).slice(0, 3000)) { let st; try { st = fs.statSync(path.join(p.full, e.name)); } catch { continue; } const dir = st.isDirectory(); out.push({ name: e.name, dir, size: dir ? 0 : st.size, mtime: Math.round(st.mtimeMs), text: !dir && TEXT_EXT.test(e.name) }); }
+    out.sort((x, y) => (y.dir - x.dir) || x.name.localeCompare(y.name, undefined, { numeric: true, sensitivity: 'base' }));
+    return { ok: true, path: p.rel, parent: p.rel ? path.posix.dirname(p.rel).replace(/^\.$/, '') : null, list: out, truncated: ents.length > 3000, running: fsRunning(a.root), label: a.root.startsWith('s:') ? (find(a.root.slice(2)) || {}).name || 'Server' : '' };
+  }
+  function fsRead(a) {
+    const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; let st; try { st = fs.statSync(p.full); } catch { return { ok: false, error: 'That file is gone.' }; }
+    if (st.isDirectory()) return { ok: false, error: 'That is a folder.' }; if (st.size > 1024 * 1024) return { ok: false, error: 'That file is too big to edit here (over 1 MB).' };
+    const b = fs.readFileSync(p.full); if (b.includes(0)) return { ok: false, error: 'That is not a text file, so it cannot be edited here.' };
+    return { ok: true, text: b.toString('utf8'), size: st.size, mtime: Math.round(st.mtimeMs), name: path.basename(p.full), crlf: /\r\n/.test(b.toString('utf8').slice(0, 4000)) };
+  }
+  function fsWrite(a) {
+    const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; if (p.full === p.base) return { ok: false, error: 'Pick a file.' };
+    try { if (a.mtime && fs.existsSync(p.full) && Math.abs(Math.round(fs.statSync(p.full).mtimeMs) - a.mtime) > 1 && !a.force) return { ok: false, changed: true, error: 'This file changed on disk since you opened it (the server may have written to it).' };
+      let t = String(a.text == null ? '' : a.text); if (a.crlf) t = t.replace(/\r?\n/g, '\r\n'); const tmp = p.full + '.skbox-tmp'; fs.writeFileSync(tmp, t, 'utf8'); fs.renameSync(tmp, p.full); return { ok: true, mtime: Math.round(fs.statSync(p.full).mtimeMs) }; } catch (e) { return { ok: false, error: 'Could not save: ' + String((e && e.message) || e).slice(0, 100) }; }
+  }
+  function fsMkdir(a) { const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; const nm = String(a.name || '').trim(); if (!nm || /[\\/:*?"<>|]/.test(nm) || nm === '.' || nm === '..') return { ok: false, error: 'Use a name without \\ / : * ? " < > |' }; const d = path.join(p.full, nm); if (fs.existsSync(d)) return { ok: false, error: 'That name is already used here.' }; try { fs.mkdirSync(d); return { ok: true }; } catch { return { ok: false, error: 'Could not make that folder.' }; } }
+  function fsNew(a) { const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; const nm = String(a.name || '').trim(); if (!nm || /[\\/:*?"<>|]/.test(nm) || nm === '.' || nm === '..') return { ok: false, error: 'Use a name without \\ / : * ? " < > |' }; const f = path.join(p.full, nm); if (fs.existsSync(f)) return { ok: false, error: 'That name is already used here.' }; try { fs.writeFileSync(f, ''); return { ok: true }; } catch { return { ok: false, error: 'Could not make that file.' }; } }
+  function fsRename(a) { const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; if (p.full === p.base) return { ok: false, error: 'This folder itself cannot be renamed here.' }; const nm = String(a.to || '').trim(); if (!nm || /[\\/:*?"<>|]/.test(nm) || nm === '.' || nm === '..') return { ok: false, error: 'Use a name without \\ / : * ? " < > |' }; const d = path.join(path.dirname(p.full), nm); if (fs.existsSync(d)) return { ok: false, error: 'That name is already used here.' }; try { fs.renameSync(p.full, d); return { ok: true }; } catch (e) { return { ok: false, error: e.code === 'EBUSY' || e.code === 'EPERM' ? 'That is in use right now. Stop the server first.' : 'Could not rename it.' }; } }
+  function fsDelete(a) { const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; if (p.full === p.base) return { ok: false, error: 'The main folder cannot be deleted here.' }; if (!fs.existsSync(p.full)) return { ok: false, error: 'That is already gone.' }; try { fs.rmSync(p.full, { recursive: true, force: false }); return { ok: true }; } catch (e) { return { ok: false, error: e.code === 'EBUSY' || e.code === 'EPERM' ? 'That is in use right now. Stop the server first.' : 'Could not delete it.' }; } }
+  function uniqName(dir, name) { if (!fs.existsSync(path.join(dir, name))) return name; const ext = path.extname(name), b = path.basename(name, ext); for (let i = 2; i < 500; i++) { const n = b + ' (' + i + ')' + ext; if (!fs.existsSync(path.join(dir, n))) return n; } return b + '-' + Date.now() + ext; }
+  async function fsCopy(a) { const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; if (p.full === p.base) return { ok: false, error: 'Pick a file or folder inside.' }; if (!fs.existsSync(p.full)) return { ok: false, error: 'That is gone.' }; const ext = path.extname(p.full), bn = path.basename(p.full, ext), to = uniqName(path.dirname(p.full), bn + ' copy' + (fs.statSync(p.full).isDirectory() ? '' : ext)); try { await fs.promises.cp(p.full, path.join(path.dirname(p.full), to), { recursive: true }); return { ok: true, name: to }; } catch { return { ok: false, error: 'Could not copy it.' }; } }
+  async function fsMove(a) { const p = fsSafe(a.root, a.path), q = fsSafe(a.root, a.to); if (p.err || q.err) return { ok: false, error: p.err || q.err }; if (p.full === p.base) return { ok: false, error: 'Not allowed.' }; if (q.full === p.full || q.full.startsWith(p.full + path.sep)) return { ok: false, error: 'You cannot move a folder into itself.' }; let dst = q.full; try { if (fs.existsSync(dst) && fs.statSync(dst).isDirectory()) dst = path.join(dst, uniqName(dst, path.basename(p.full))); fs.mkdirSync(path.dirname(dst), { recursive: true }); try { fs.renameSync(p.full, dst); } catch (e) { if (e.code !== 'EXDEV') throw e; await fs.promises.cp(p.full, dst, { recursive: true }); fs.rmSync(p.full, { recursive: true, force: true }); } return { ok: true }; } catch (e) { return { ok: false, error: e.code === 'EBUSY' || e.code === 'EPERM' ? 'That is in use right now. Stop the server first.' : 'Could not move it.' }; } }
+  async function fsAdd(a) {   // copy files or folders picked on the PC into the current folder
+    const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; const list = (Array.isArray(a.files) ? a.files : [a.files]).filter(Boolean).map(String).slice(0, 200); if (!list.length) return { ok: false, error: 'Nothing was picked.' }; const added = [];
+    try { for (const f of list) { if (!fs.existsSync(f)) continue; const nm = uniqName(p.full, path.basename(f)); await fs.promises.cp(f, path.join(p.full, nm), { recursive: true }); added.push(nm); } } catch (e) { return { ok: false, error: 'Could not copy everything: ' + String((e && e.message) || e).slice(0, 80), added }; }
+    return added.length ? { ok: true, added } : { ok: false, error: 'Those files could not be found.' };
+  }
+  async function fsZip(a) { const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; if (p.full === p.base) return { ok: false, error: 'Open the folder and pick something inside it.' }; if (!fs.existsSync(p.full)) return { ok: false, error: 'That is gone.' }; const nm = uniqName(path.dirname(p.full), path.basename(p.full).replace(/\.[^.]*$/, '') + '.zip'), out = path.join(path.dirname(p.full), nm);
+    try { if (ctx.compress) await ctx.compress([p.full], out); else await ps('Compress-Archive -LiteralPath ' + psq(p.full) + ' -DestinationPath ' + psq(out) + ' -Force'); return { ok: true, name: nm }; } catch (e) { try { fs.unlinkSync(out); } catch {} return { ok: false, error: 'Could not make the zip: ' + String((e && e.message) || e).slice(0, 80) }; } }
+  async function fsUnzip(a) { const p = fsSafe(a.root, a.path); if (p.err) return { ok: false, error: p.err }; if (!/\.zip$/i.test(p.full) || !fs.existsSync(p.full)) return { ok: false, error: 'That is not a zip file.' }; const dest = path.join(path.dirname(p.full), uniqName(path.dirname(p.full), path.basename(p.full, '.zip')));
+    try { await extractZip(p.full, dest); noLinks(dest); return { ok: true, name: path.basename(dest) }; } catch (e) { try { fs.rmSync(dest, { recursive: true, force: true }); } catch {} return { ok: false, error: 'Could not open that zip: ' + String((e && e.message) || e).slice(0, 80) }; } }
+  function fsRoots() { const out = []; read().forEach(s => out.push({ key: 's:' + s.id, name: s.name, sub: 'Server files', server: true })); const map = Object.assign({ servers: root, backups: backupRoot }, ctx.roots || {}); const names = { servers: ['All servers', 'The folder SKBox keeps servers in'], backups: ['Server backups', 'Backups you made in SKServers'], shots: ['Screenshots', 'Pictures\\SKBox'], downloads: ['Downloads', 'Your Downloads folder'], desktop: ['Desktop', 'Files on your Desktop'], documents: ['Documents', 'Your Documents folder'], data: ['SKBox data', 'Settings, covers and logs'] }; Object.keys(map).forEach(k => { if (map[k] && fs.existsSync(map[k])) out.push({ key: k, name: (names[k] || [k])[0], sub: (names[k] || [])[1] || '' }); }); return { ok: true, roots: out }; }
+
   // ---------- misc ----------
   async function netInfo(a) {
     const s = find(a && a.id); const ips = lanIps(); const out = { ok: true, ips, port: s ? s.port : 25565 };
@@ -587,6 +666,20 @@ function create(ctx) {
         case 'sksPlugins': return installed(String(a.id || a));
         case 'sksPluginSearch': return await searchPlugins(a);
         case 'sksPluginFeatured': return await featured(String(a.id || a));
+        case 'sksStats': return statsOf(String((a && a.id) || a));
+        case 'sksFsRoots': return fsRoots();
+        case 'sksFsList': return fsList(a || {});
+        case 'sksFsRead': return fsRead(a || {});
+        case 'sksFsWrite': return fsWrite(a || {});
+        case 'sksFsMkdir': return fsMkdir(a || {});
+        case 'sksFsNew': return fsNew(a || {});
+        case 'sksFsRename': return fsRename(a || {});
+        case 'sksFsDelete': return fsDelete(a || {});
+        case 'sksFsCopy': return await fsCopy(a || {});
+        case 'sksFsMove': return await fsMove(a || {});
+        case 'sksFsAdd': return await fsAdd(a || {});
+        case 'sksFsZip': return await fsZip(a || {});
+        case 'sksFsUnzip': return await fsUnzip(a || {});
         case 'sksPluginInstall': return await installPlugin(a);
         case 'sksPluginPack': return await installPack(a);
         case 'sksPluginRemove': return removePlugin(String(a.id || ''), a.file);
@@ -606,7 +699,7 @@ function create(ctx) {
         case 'sksExport': return await exportServer(String(a.id || a));
         case 'sksIcon': return await setIcon(String(a.id || ''), a.clear ? null : a.file);
         case 'sksPlayers': return playersData(String(a.id || a));
-        case 'sksCopy': if (ctx.copy) ctx.copy(String(a.text || '').slice(0, 300)); return { ok: true };
+        case 'sksCopy': if (ctx.copy) ctx.copy(String(a.text || '').slice(0, a.long ? 40000 : 300)); return { ok: true };
         case 'sksPortFree': return { ok: true, free: await portFree(+a.port || 0) };
       }
     } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 200) }; }

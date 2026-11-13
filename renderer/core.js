@@ -40,6 +40,8 @@
   };
   K.ensureFocus = (r, prefer) => {
     r = r || root(); const l = navs(r); if (!l.length) { K.focus(null); return; }
+    // a page that fills in beside a menu must never pull the cursor out of the menu while you are still choosing
+    if (cur && cur.classList.contains('mi') && cur.isConnected && r.classList && r.classList.contains('pane')) return;
     if (prefer && l.includes(prefer)) { K.focus(prefer); return; }
     if (!cur || !l.includes(cur)) K.focus(l.find(x => x.dataset.first !== undefined) || l[0]);
   };

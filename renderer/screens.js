@@ -18,10 +18,36 @@
   const BGMOOD = { west_dusk: 'west', blocks_day: 'pixel', neon_city: 'neon', cabin_night: 'campfire', rainy_window: 'lofi', campfire: 'campfire', aurora: 'lofi', sunrise_hills: 'pixel', grad_dusk: 'dream', grad_ocean: 'ocean', grad_ember: 'jazz', grad_mint: 'forest', grad_violet: 'space', grad_slate: 'lofi' };
   const FXCOL = { dynamic: '#ffe2a8', west_dusk: '#ffb870', blocks_day: '#ffffff', neon_city: '#ff6aa8', cabin_night: '#ffd98a', rainy_window: '#8fb4ff', campfire: '#ffae50', aurora: '#8fffd0', sunrise_hills: '#fff0c8', grad_dusk: '#ffc9d6', grad_ocean: '#a6f0ff', grad_ember: '#ffb35c', grad_mint: '#d6ffe4', grad_violet: '#e3c9ff', grad_slate: '#cfd8ea' };
   const ACCENTS = ['#2dd4bf', '#818cf8', '#f472b6', '#fb923c', '#4ade80', '#60a5fa', '#f87171', '#facc15', '#a78bfa', '#22d3ee', '#e879f9', '#34d399'];
+  // color themes for SK Glass: id -> [name, suggested accent]. Their colors live in TH inside applyTheme.
+  const THEME_META = { midnight: ['Midnight', '#2dd4bf'], oled: ['OLED black', '#2dd4bf'], daylight: ['Daylight', '#2563eb'], sunset: ['Sunset', '#fb923c'], ocean: ['Ocean', '#22d3ee'], forest: ['Forest', '#4ade80'], rose: ['Rose', '#f472b6'], cyber: ['Cyber', '#a78bfa'], graphite: ['Graphite', '#60a5fa'], sakura: ['Sakura', '#ec4899'],
+    nord: ['Nord', '#88c0d0'], dracula: ['Dracula', '#bd93f9'], mocha: ['Mocha', '#f5c2e7'], solar: ['Solar Dark', '#b58900'], crimson: ['Crimson', '#ef4444'], amethyst: ['Amethyst', '#c084fc'], mint: ['Mint', '#34d399'], gold: ['Gold', '#facc15'], steel: ['Steel', '#94a3b8'], coffee: ['Coffee', '#d6a26b'], lavender: ['Lavender', '#8b5cf6'], paperwhite: ['Paper White', '#0ea5e9'], bubblegum: ['Bubblegum', '#ff5fa2'], abyss: ['Abyss', '#38bdf8'] };
+  const THEME_EXTRA = {
+    nord: { '--bg': '#2e3440', '--panel': 'rgba(59,66,82,.88)', '--panel2': 'rgba(67,76,94,.96)', '--line': 'rgba(216,222,233,.14)', '--text': '#eceff4', '--dim': '#a3b1c7' },
+    dracula: { '--bg': '#1e1f29', '--panel': 'rgba(40,42,54,.9)', '--panel2': 'rgba(52,55,70,.96)', '--line': 'rgba(189,147,249,.2)', '--text': '#f8f8f2', '--dim': '#9aa0c4' },
+    mocha: { '--bg': '#1e1e2e', '--panel': 'rgba(49,50,68,.88)', '--panel2': 'rgba(69,71,90,.96)', '--line': 'rgba(205,214,244,.14)', '--text': '#cdd6f4', '--dim': '#9399b2' },
+    solar: { '--bg': '#002b36', '--panel': 'rgba(7,54,66,.9)', '--panel2': 'rgba(12,70,84,.96)', '--line': 'rgba(147,161,161,.2)', '--text': '#eee8d5', '--dim': '#93a1a1' },
+    crimson: { '--bg': '#1a0707', '--panel': 'rgba(48,14,14,.88)', '--panel2': 'rgba(68,20,20,.96)', '--line': 'rgba(255,120,120,.18)', '--text': '#ffeded', '--dim': '#cc9090' },
+    amethyst: { '--bg': '#160a24', '--panel': 'rgba(38,20,64,.88)', '--panel2': 'rgba(54,28,90,.96)', '--line': 'rgba(200,150,255,.2)', '--text': '#f5eaff', '--dim': '#b79cd9' },
+    mint: { '--bg': '#07211c', '--panel': 'rgba(12,52,44,.88)', '--panel2': 'rgba(18,72,60,.96)', '--line': 'rgba(120,255,214,.18)', '--text': '#e8fff8', '--dim': '#86c9b6' },
+    gold: { '--bg': '#1a1405', '--panel': 'rgba(48,38,10,.88)', '--panel2': 'rgba(68,54,14,.96)', '--line': 'rgba(255,215,100,.2)', '--text': '#fff8e0', '--dim': '#cdb878' },
+    steel: { '--bg': '#10151c', '--panel': 'rgba(30,38,50,.9)', '--panel2': 'rgba(42,52,68,.96)', '--line': 'rgba(160,180,210,.18)', '--text': '#e6edf7', '--dim': '#8d9bb0' },
+    coffee: { '--bg': '#1c130e', '--panel': 'rgba(50,36,28,.9)', '--panel2': 'rgba(70,50,38,.96)', '--line': 'rgba(230,190,150,.18)', '--text': '#f6ebe0', '--dim': '#bba48f' },
+    lavender: { '--bg': '#efeafc', '--panel': 'rgba(255,255,255,.86)', '--panel2': 'rgba(244,239,255,.96)', '--line': 'rgba(60,30,120,.14)', '--text': '#201640', '--dim': '#665a8c' },
+    paperwhite: { '--bg': '#f6f6f3', '--panel': 'rgba(255,255,255,.92)', '--panel2': 'rgba(240,240,236,.98)', '--line': 'rgba(0,0,0,.13)', '--text': '#18181b', '--dim': '#60606a' },
+    bubblegum: { '--bg': '#ffeaf4', '--panel': 'rgba(255,255,255,.88)', '--panel2': 'rgba(255,226,240,.96)', '--line': 'rgba(120,10,70,.14)', '--text': '#3a0b28', '--dim': '#8a4a70' },
+    abyss: { '--bg': '#02070f', '--panel': 'rgba(6,18,34,.9)', '--panel2': 'rgba(10,28,52,.96)', '--line': 'rgba(80,170,255,.18)', '--text': '#e6f3ff', '--dim': '#7ea6c9' } };
+  K.themeMeta = THEME_META;
   const GRADS = { grad_dusk: ['#2b1055', '#7a3b8f', '#ff9a8b'], grad_ocean: ['#031a33', '#0a5a8a', '#38d0c9'], grad_ember: ['#1a0a0a', '#7a1f1f', '#ff9b3d'], grad_mint: ['#06201a', '#12805f', '#b8f5c9'], grad_violet: ['#0a0720', '#3d1f8a', '#c18bff'], grad_slate: ['#0d1117', '#2a3341', '#7d8aa3'] };
   const GRADN = { grad_dusk: 'Dusk Glow', grad_ocean: 'Deep Ocean', grad_ember: 'Ember', grad_mint: 'Mint Haze', grad_violet: 'Violet Night', grad_slate: 'Slate' };
   const gradUrl = k => { const c = GRADS[k]; if (!c) return ''; const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 900' preserveAspectRatio='none'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='" + c[0] + "'/><stop offset='.55' stop-color='" + c[1] + "'/><stop offset='1' stop-color='" + c[2] + "'/></linearGradient><radialGradient id='r' cx='.78' cy='.18' r='.65'><stop offset='0' stop-color='#fff' stop-opacity='.22'/><stop offset='1' stop-color='#fff' stop-opacity='0'/></radialGradient><radialGradient id='q' cx='.1' cy='.95' r='.7'><stop offset='0' stop-color='" + c[2] + "' stop-opacity='.35'/><stop offset='1' stop-color='" + c[2] + "' stop-opacity='0'/></radialGradient></defs><rect width='1600' height='900' fill='url(#g)'/><rect width='1600' height='900' fill='url(#r)'/><rect width='1600' height='900' fill='url(#q)'/></svg>"; return 'data:image/svg+xml,' + encodeURIComponent(svg); };
   const bgUrl = k => k.startsWith('grad_') ? gradUrl(k) : 'assets/bg/' + k + '.jpg';
+  const NEWBG = [['px_plains', 'Pixel Plains', 'pixel', '#ffffff'], ['px_night', 'Pixel Night', 'space', '#e8ecff'], ['px_nether', 'The Nether', 'campfire', '#ff9a4a'], ['px_end', 'The End', 'space', '#e3c9ff'], ['px_cave', 'Deep Cave', 'lofi', '#ffe08a'], ['px_ocean', 'Pixel Ocean', 'ocean', '#cfeeff'], ['px_snow', 'Snowy Hills', 'dream', '#ffffff'], ['px_desert', 'Desert Dusk', 'west', '#ffe3a8'],
+    ['mesh_sunset', 'Sunset Glow', 'dream', '#ffd6c9'], ['mesh_ocean', 'Ocean Glow', 'ocean', '#bff3ff'], ['mesh_forest', 'Forest Glow', 'forest', '#d6ffe4'], ['mesh_candy', 'Candy Glow', 'neon', '#ffd0f0'], ['mesh_ember', 'Ember Glow', 'jazz', '#ffc27a'], ['mesh_slate', 'Slate Glow', 'lofi', '#d6deee']];
+  NEWBG.forEach(([k, n, m, c]) => { BGS.push([k, n]); BGMOOD[k] = m; FXCOL[k] = c; });
+  Object.assign(GRADS, { grad_rose: ['#2a0a1a', '#a02060', '#ffb3c8'], grad_gold: ['#1a1206', '#8a6a12', '#ffe28a'], grad_ice: ['#061a2a', '#2a7ab0', '#e0f6ff'], grad_lime: ['#0a1a06', '#4a8a1a', '#e6ff8a'], grad_plum: ['#1a0620', '#6a1f7a', '#ff9bd6'], grad_coal: ['#050505', '#1a1a22', '#3a3a4a'], grad_sky: ['#0a1a4a', '#3a7be0', '#bfe3ff'], grad_peach: ['#3a1a1a', '#e0705a', '#ffe2b8'] });
+  Object.assign(GRADN, { grad_rose: 'Rose', grad_gold: 'Gold Rush', grad_ice: 'Glacier', grad_lime: 'Lime Zest', grad_plum: 'Plum', grad_coal: 'Coal', grad_sky: 'Clear Sky', grad_peach: 'Peach' });
+  Object.assign(BGMOOD, { grad_rose: 'dream', grad_gold: 'jazz', grad_ice: 'ocean', grad_lime: 'forest', grad_plum: 'neon', grad_coal: 'lofi', grad_sky: 'dream', grad_peach: 'west' });
+  Object.assign(FXCOL, { grad_rose: '#ffd0de', grad_gold: '#fff0b8', grad_ice: '#e8faff', grad_lime: '#f2ffc4', grad_plum: '#ffd0ee', grad_coal: '#cfd0e0', grad_sky: '#ffffff', grad_peach: '#fff0d8' });
   Object.keys(GRADN).forEach(k => BGS.push([k, GRADN[k]]));
   const gradFor = n => { let h = 0; for (const c of String(n)) h = (h * 31 + c.charCodeAt(0)) % 360; return 'linear-gradient(160deg,hsl(' + h + ',55%,32%),hsl(' + ((h + 50) % 360) + ',60%,12%))'; };
   const saveApps = () => sk.store.set('apps', S.apps);
@@ -103,6 +129,7 @@
       cyber: { '--bg': '#0b0720', '--panel': 'rgba(24,14,56,.86)', '--panel2': 'rgba(34,18,78,.95)', '--line': 'rgba(170,120,255,.2)', '--text': '#f2ecff', '--dim': '#a99bd6' },
       graphite: { '--bg': '#121316', '--panel': 'rgba(30,32,38,.9)', '--panel2': 'rgba(42,45,53,.95)', '--line': 'rgba(255,255,255,.1)', '--text': '#eceef2', '--dim': '#9096a4' },
       sakura: { '--bg': '#fbeef3', '--panel': 'rgba(255,255,255,.86)', '--panel2': 'rgba(255,240,246,.96)', '--line': 'rgba(80,20,50,.14)', '--text': '#2a1020', '--dim': '#7a5468' } };
+    Object.assign(TH, THEME_EXTRA); K.colorThemes = TH;
     if (skin === 'glass') { ['--bg', '--panel', '--panel2', '--line', '--text', '--dim'].forEach(k => document.documentElement.style.removeProperty(k)); Object.entries(TH[S.settings.theme] || {}).forEach(([k, v]) => document.documentElement.style.setProperty(k, v)); }
     document.documentElement.style.fontSize = 'calc(clamp(13px, 2vh, 26px) * ' + (({ small: .9, normal: 1, large: 1.15, huge: 1.3 }[S.settings.uiSize] || 1) * (K.skinScale || 1)) + ')';
     buildFx(); applyWall();
@@ -204,6 +231,9 @@
   const refreshInfo = () => { try { sk.extras.do('infoAll').then(r => { S.infoMap = (r && r.map) || {}; }).catch(() => {}); } catch (_) {} }; refreshInfo();
   sk.on('queue:next', q => { if (!q || S.game || ['boot', 'start', 'welcome', 'profiles'].includes(S.screen)) return; const a = allApps().find(x => x.id === q.id); if (!a) return; confirm('Up next: ' + a.name, 'It is first in your Up next list. Start it now?', 'Play', () => openApp(a), false); });
   const infoLine = a => { const i = (S.infoMap || {})[a.id]; return i && i.genres && i.genres.length ? i.genres.slice(0, 2).join(' / ') + (i.released ? ' \u00B7 ' + String(i.released).slice(-4) : '') : ''; };
+  // a friendly one-line description of an app that never shows its file path
+  const kindLine = a => { if (a.tag) return a.tag; if (a.kind === 'web') return 'Web app'; if (a.kind === 'music') return 'Music'; if (a.kind === 'screen') return 'SKBox app'; if (a.sys) return String(a.sys); const e = String(a.exe || ''); if (/^steam:|store\.steampowered|steam:\/\//i.test(e) || a.src === 'steam') return 'Steam game'; if (/^com\.epicgames|epicgames/i.test(e) || a.src === 'epic') return 'Epic game'; if (/^[a-z][a-z0-9+.-]*:\/\//i.test(e)) return a.src || 'Game launcher'; if (/\.lnk$/i.test(e)) return 'Shortcut'; return 'PC game'; };
+  const descLine = a => { const i = (S.infoMap || {})[a.id]; const d = i && (i.short || i.description || i.about); return d ? String(d).replace(/<[^>]+>/g, '').slice(0, 150) + (String(d).length > 150 ? '\u2026' : '') : ''; };
   const playInfo = a => { const x = (S.stats || {})[a.id]; if (!x || (!x.ms && !x.last)) return a.kind ? '' : [infoLine(a), 'Not played yet'].filter(Boolean).join(' \u00B7 '); return [infoLine(a), x.ms ? fmtPlay(x.ms) : '', x.last ? 'last ' + fmtAgo(x.last) : ''].filter(Boolean).join(' \u00B7 '); };
   const topGenres = () => { const c = {}; Object.values(S.infoMap || {}).forEach(i => (i.genres || []).forEach(g => { c[g] = (c[g] || 0) + 1; })); return Object.keys(c).filter(g => c[g] >= 2).sort((a, b) => c[b] - c[a]).slice(0, 8); };
   function tileEl(a) {
@@ -261,7 +291,7 @@
       t._onfocus = () => {
         S.lastTile = i; S.lastTileId = a.id || 'lib';
         if (a.lib) { info.innerHTML = '<h1>Library</h1><p>' + (allApps().length) + ' apps and games. Pin the ones you want on this screen.</p><div class="go"><i class="key k-A">A</i> Open</div>'; setBg(''); }
-        else { info.innerHTML = '<h1>' + esc(a.name) + '</h1><p>' + esc([a.tag || a.exe || '', playInfo(a)].filter(Boolean).join(' \u00B7 ')) + '</p><div class="go"><i class="key k-A">A</i> ' + (isRunning(a) ? 'Resume' : a.kind === 'web' ? 'Open' : 'Play') + '</div>'; setBg(a.cover ? fileUrl(a.cover) : ''); }
+        else { info.innerHTML = '<h1>' + esc(a.name) + '</h1><p>' + esc([kindLine(a), playInfo(a)].filter(Boolean).join(' \u00B7 ')) + '</p>' + (descLine(a) ? '<p class="desc">' + esc(descLine(a)) + '</p>' : '') + '<div class="go"><i class="key k-A">A</i> ' + (isRunning(a) ? 'Resume' : a.kind === 'web' ? 'Open' : 'Play') + '</div>'; setBg(a.cover ? fileUrl(a.cover) : ''); }
       };
       t.onclick = () => a.lib ? go('library') : openApp(a);
       if (!a.lib) t._onopts = () => appMenu(a, 'home'); else t._onopts = () => toast('Press A to open your Library');
@@ -352,7 +382,7 @@
     const h = await sk.extras.do('gameHistory', a.id), fh = ms => { const m = Math.round((ms || 0) / 60000); return m < 1 ? '0 min' : m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; }, rows = [];
     const add = (t, s2, r, fn) => { const x = row(t, s2, r, fn); pane.appendChild(x); rows.push(x); return x; };
     if (a.cover) { const im = el('div', 'dcover'); im.style.cssText = 'height:16vh;width:11vh;border-radius:1rem;background:url(' + fileUrl(a.cover) + ') center/cover;margin:0 0 1rem;box-shadow:0 .6rem 1.6rem rgba(0,0,0,.4)'; pane.appendChild(im); }
-    add('Play', isRunning(a) ? 'Running now' : (/^[a-z][a-z0-9+.-]*:\/\//i.test(a.exe || '') ? (a.src || 'Launcher') : (a.exe || '')), '\u25B6', () => openApp(a));
+    add('Play', isRunning(a) ? 'Running now' : kindLine(a), '\u25B6', () => openApp(a));
     const infoBox = el('div'); pane.appendChild(infoBox);
     const loadInfo = async force => {
       infoBox.innerHTML = ''; if (S.settings.gameInfoAuto === false && !force) { infoBox.appendChild(row('Game info', 'Description, screenshots and a trailer. Sends the game\u2019s name to Steam or Wikipedia.', 'Get it', () => loadInfo(true))); return; }
@@ -619,6 +649,7 @@
 
   // ---------- settings ----------
   const NEWS = [
+    ['Server dashboard, file manager, color themes back', 'SKServers: a Dashboard with live players, CPU, memory and the console; a Files tab to browse and edit server files inside SKBox; richer server cards. Settings > File manager. Themes: your old color themes are back (plus 14 new) and there are 22 new backgrounds. The Settings menu no longer jumps around, the SK menu grabs focus harder, and Home no longer shows file paths.'],
     ['Real themes, server import, easier server pages', 'Settings > Themes: eight full looks (Pixel Craft, Retro Terminal, Game Boy, Synthwave, Aurora, Neo Brutal, Paper and SK Glass). SKServers: import a server from a folder or zip, import a world, export a server, change settings while it runs, and your servers are kept safe across updates. Cinema, Arcade, Zen and Wall modes are gone; Classic and Deck stay.'],
     ['playit.gg, three more modes, tidier Settings', 'SKServers: let friends join from anywhere with playit.gg (no port forwarding), addresses hidden by default, console filter, backup on stop, notifications, duplicate server. Look & modes: Arcade, Zen and Wall. Settings is grouped and no longer jumps around.'],
     ['Voice parties, Cinema and Deck modes, Spotlight', 'SK menu > Party: voice chat with friends while you play (code or invite link, up to 8). Settings > Look & modes: Classic, Cinema or Deck, 6 loading screens, Home widgets, export your setup. Press / or Ctrl+K to search everything.'],
@@ -653,15 +684,15 @@
     NEWS.forEach(([t, d]) => { const li = document.createElement('li'); li.innerHTML = '<b>' + esc(t) + '</b>: ' + esc(d); ul.appendChild(li); });
     const row = el('div', 'btnrow'), ok = nav(el('button', 'btn p', 'Got it')); ok.dataset.first = ''; ok.onclick = () => closeLayer(L); row.appendChild(ok); b.append(ul, row); L.appendChild(b); openLayer(L, () => closeLayer(L));
   }
-  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['queue', '\u23ED', 'Up next'], ['roms', '\u{1F579}', 'Game library'], ['companion', '\u{1F4F1}', 'Phone companion'], ['routines', '\u23F0', 'Routines'], ['history', '\u{1F4C5}', 'History & Wrapped'], ['notifs', '\u{1F514}', 'Notifications'], ['milestones', '\u{1F3C6}', 'Milestones'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About'], ['looks', '\u{1F3A8}', 'Look & modes'], ['party', '\u{1F3A7}', 'Party'], ['skins', '\u{1F3AD}', 'Themes']];
+  const CATS = [['wifi', '\u{1F4F6}', 'Wi-Fi'], ['controllers', '\u{1F3AE}', 'Controllers'], ['guide', '\u24E7', 'Xbox / PS button'], ['players', '\u{1F464}', 'Players'], ['apps', '\u{1F4E6}', 'Apps'], ['cozy', '\u2615', 'Backgrounds & sound'], ['display', '\u{1F3A8}', 'Display & startup'], ['import', '\u{1F4E5}', 'Import apps'], ['remote', '\u{1F4E1}', 'Remote play'], ['bluetooth', '\u16D2', 'Bluetooth'], ['shots', '\u{1F4F8}', 'Screenshots'], ['sound', '\u{1F50A}', 'Sound'], ['prefs', '\u{1F39B}', 'Preferences'], ['extras', '\u26A1', 'Extras & QOL'], ['bright', '\u{1F506}', 'Display & brightness'], ['windows', '\u{1FA9F}', 'Windows opened apps'], ['stats', '\u{1F4CA}', 'Play stats'], ['queue', '\u23ED', 'Up next'], ['roms', '\u{1F579}', 'Game library'], ['companion', '\u{1F4F1}', 'Phone companion'], ['files', '\u{1F4C1}', 'File manager'], ['routines', '\u23F0', 'Routines'], ['history', '\u{1F4C5}', 'History & Wrapped'], ['notifs', '\u{1F514}', 'Notifications'], ['milestones', '\u{1F3C6}', 'Milestones'], ['sysinfo', '\u{1F5A5}', 'System info'], ['padtest', '\u{1F579}', 'Controller test'], ['power', '\u23FB', 'Power'], ['new', '\u2728', 'What\u2019s new'], ['about', '\u2139', 'About'], ['looks', '\u{1F3A8}', 'Look & modes'], ['party', '\u{1F3A7}', 'Party'], ['skins', '\u{1F3AD}', 'Themes']];
   function settings(root, d) {
-    hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => go('home');
+    hints([['A', 'Select'], ['B', 'Back']]); S.backFn = () => { const c = K.current && K.current(), pn = root.querySelector('.pane'); if (pn && pn._filesBack && pn._filesBack()) return; if (c && pn && pn.contains(c) && S.curCat) { const mi = root.querySelector('.menu .mi.sel'); if (mi) return focus(mi); } go('home'); };   // B inside a page goes back to the menu first, then Home
     root.innerHTML = '<div class="page"><h1>Settings</h1></div>';
     const split = el('div', 'split'), menuE = el('div', 'menu'), pane = el('div', 'pane');
     split.append(menuE, pane); root.querySelector('.page').appendChild(split);
-    const KW = { extras: 'goal streak quiet hours idle start screen emulator cemu fullscreen reminder break limit tiles badge backup', stats: 'play time chart', history: 'wrapped sessions csv export', routines: 'schedule timer automatic', notifs: 'notification log', queue: 'playlist next', milestones: 'badges achievements', apps: 'add games', import: 'steam epic scan', sysinfo: 'cpu memory ram disk', display: 'theme accent startup idle clock', power: 'sleep shutdown restart lock', remote: 'stream phone mac moonlight',
+    const KW = { files: 'file manager folders edit text server plugins config explorer', extras: 'goal streak quiet hours idle start screen emulator cemu fullscreen reminder break limit tiles badge backup', stats: 'play time chart', history: 'wrapped sessions csv export', routines: 'schedule timer automatic', notifs: 'notification log', queue: 'playlist next', milestones: 'badges achievements', apps: 'add games', import: 'steam epic scan', sysinfo: 'cpu memory ram disk', display: 'theme accent startup idle clock', power: 'sleep shutdown restart lock', remote: 'stream phone mac moonlight',
       wifi: 'network internet wireless connect', controllers: 'gamepad pads player 1 player 2 assign', guide: 'xbox playstation button home menu', players: 'profiles accounts nickname', cozy: 'wallpaper background music ambient', bluetooth: 'headphones pair speaker', shots: 'screenshots capture pictures', sound: 'volume audio output speakers', prefs: 'tiles size compact calm animations', bright: 'brightness dimmer night filter', windows: 'close apps task manager', roms: 'roms emulators cemu dolphin games systems library', companion: 'phone qr keyboard trackpad', padtest: 'controller test buttons', new: 'changelog updates', about: 'version update', looks: 'mode deck classic loading screen widgets export import setup move pc', skins: 'theme themes look style pixel minecraft retro terminal crt gameboy synthwave aurora brutal paper font', party: 'voice chat friends microphone mute call' };
-    const GROUPS = [['Connect', ['wifi', 'bluetooth', 'remote', 'companion']], ['Play', ['controllers', 'guide', 'players', 'apps', 'import', 'roms', 'windows', 'queue']], ['Look & sound', ['skins', 'looks', 'display', 'cozy', 'sound', 'bright', 'prefs']], ['Social', ['party', 'history', 'milestones', 'stats']], ['Tools', ['extras', 'routines', 'notifs', 'shots']], ['System', ['sysinfo', 'padtest', 'power', 'new', 'about']]];
+    const GROUPS = [['Connect', ['wifi', 'bluetooth', 'remote', 'companion']], ['Play', ['controllers', 'guide', 'players', 'apps', 'import', 'roms', 'windows', 'queue']], ['Look & sound', ['skins', 'looks', 'display', 'cozy', 'sound', 'bright', 'prefs']], ['Social', ['party', 'history', 'milestones', 'stats']], ['Tools', ['files', 'extras', 'routines', 'notifs', 'shots']], ['System', ['sysinfo', 'padtest', 'power', 'new', 'about']]];
     const q = (S.settingsQ || '').toLowerCase().trim(), cats = q ? CATS.filter(([id, ic, name]) => (name + ' ' + (KW[id] || '')).toLowerCase().includes(q)) : CATS;
     let sel = d.cat || (cats.some(c => c[0] === S.settings.lastCat) ? S.settings.lastCat : (cats[0] ? cats[0][0] : 'wifi')), firstEl = null;
     if (!cats.some(c => c[0] === sel) && cats[0]) sel = cats[0][0];
@@ -671,12 +702,12 @@
     let drawT = 0, saveT = 0; const keep = S.setKeep; S.setKeep = null; S.curCat = sel;
     const addCat = ([id, ic, name]) => {
       const m = nav(el('button', 'mi', '<span>' + ic + '</span>' + name)); items[id] = m; if (id === sel) { m.classList.add('sel'); firstEl = m; }
-      m._onfocus = () => { if (sel !== id || !pane.firstChild) {
+      m._onfocus = () => { if (document.body.classList.contains('mouse') && pane.firstChild) return; if (sel !== id || !pane.firstChild) {
         sel = id; S.curCat = id; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel');
         clearTimeout(drawT); drawT = setTimeout(() => { if (pane.isConnected && sel === id) panel(id, pane); }, pane.firstChild ? 110 : 0);   // wait until the cursor rests, so scrolling the list is smooth
         clearTimeout(saveT); saveT = setTimeout(() => { if (S.settings.lastCat !== id) { S.settings.lastCat = id; saveSettings(); } }, 900);   // and do not write to disk on every step
       } };
-      m.onclick = () => { clearTimeout(drawT); if (sel === id && !pane.firstChild) panel(id, pane); const f = pane.querySelector('[data-nav]'); if (f) focus(f); };
+      m.onclick = () => { clearTimeout(drawT); if (sel !== id || !pane.firstChild) { sel = id; S.curCat = id; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); panel(id, pane); if (S.settings.lastCat !== id) { S.settings.lastCat = id; saveSettings(); } } const f = pane.querySelector('[data-nav]'); if (f) focus(f); };
       menuE.appendChild(m);
     };
     if (q) cats.forEach(addCat); else { const seen = new Set(); GROUPS.forEach(([gname, ids]) => { const list = ids.map(i => CATS.find(c => c[0] === i)).filter(Boolean); if (!list.length) return; menuE.appendChild(el('div', 'mgrp', gname.toUpperCase())); list.forEach(c => { seen.add(c[0]); addCat(c); }); }); const rest = CATS.filter(c => !seen.has(c[0])); if (rest.length) { menuE.appendChild(el('div', 'mgrp', 'MORE')); rest.forEach(addCat); } }
@@ -725,7 +756,7 @@
     } else if (id === 'apps') {
       h('Apps'); sub('Add a game or program by its file path. SKBox finds cover art for you.');
       pane.appendChild(row('Add an app', '', '+', () => go('addApp')));
-      S.apps.forEach(a => { pane.appendChild(row(a.name, a.exe + (isPinned(a) ? ' \u00B7 on Home' : ''), 'Edit', () => go('addApp', { app: a }))); });
+      S.apps.forEach(a => { pane.appendChild(row(a.name, kindLine(a) + (isPinned(a) ? ' \u00B7 on Home' : ''), 'Edit', () => go('addApp', { app: a }))); });
       pane.appendChild(row('Fetch game info for all games', 'Descriptions, genres and trailers. Also lets the Library filter by genre.', '\u2192', async () => { const stop = busy('Looking up your games\u2026'); const r = await sk.extras.do('infoFetchAll'); stop(); refreshInfo(); toast(r && r.ok ? r.found + ' of ' + r.tried + ' games found' : ((r && r.error) || 'That did not work')); }));
       pane.appendChild(row('Find missing cover art', 'Looks up covers for every app that has none', '\u2192', async () => { const todo = S.apps.filter(a => !a.kind && !a.cover); if (!todo.length) return toast('Every app already has a cover'); const n = await findCoversFor(todo); toast(n + ' of ' + todo.length + ' covers found'); go('settings', { cat: 'apps' }); }));
       pane.appendChild(row('Open Library', 'Pin or unpin apps on the Home screen', '\u2192', () => go('library')));
@@ -733,7 +764,10 @@
     } else if (id === 'cozy') {
       h('Backgrounds & sound'); sub('Pick a wallpaper. The music and sounds are made inside SKBox, so they work offline.');
       const grid = el('div', 'bgrid'), cur = S.settings.bg || 'dynamic';
+      let lastGrp = '';
       BGS.forEach(([key, name]) => {
+        const grp = key === 'dynamic' ? '' : key.startsWith('px_') ? 'Pixel worlds' : key.startsWith('mesh_') ? 'Soft glow' : key.startsWith('grad_') ? 'Gradients' : 'Scenes';
+        if (grp !== lastGrp && grp) { const gh = el('div', 'bggrp', esc(grp)); grid.appendChild(gh); } lastGrp = grp;
         const b = nav(el('button', 'bgt' + (key === 'dynamic' ? ' dyn' : '') + (cur === key ? ' sel' : ''), key === 'dynamic' ? 'Dynamic<br>(follows the app you pick)' : '<small>' + esc(name) + '</small>'));
         if (key !== 'dynamic') b.style.backgroundImage = 'url("' + bgUrl(key) + '")';
         b.onclick = () => { setBgChoice(key); [...grid.children].forEach(x => x.classList.remove('sel')); b.classList.add('sel'); refreshMoods && refreshMoods(); };
@@ -761,7 +795,7 @@
     } else if (id === 'prefs') {
       h('Preferences'); sub('Press A on a row to change it.');
       const sv = (k, v) => { S.settings[k] = v; saveSettings(); };
-      pane.appendChild(cyc('Look', 'Midnight is the default. OLED black saves power on OLED TVs.', [['midnight', 'Midnight'], ['oled', 'OLED black'], ['daylight', 'Daylight'], ['sunset', 'Sunset'], ['ocean', 'Ocean'], ['forest', 'Forest'], ['rose', 'Rose'], ['cyber', 'Cyber'], ['graphite', 'Graphite'], ['sakura', 'Sakura']], () => S.settings.theme || 'midnight', v => { sv('theme', v); applyTheme(); }));
+      pane.appendChild(cyc('Look', 'Colors for SK Glass. You can also pick one from Settings > Themes.', Object.keys(THEME_META).map(k => [k, THEME_META[k][0]]), () => S.settings.theme || 'midnight', v => { sv('theme', v); applyTheme(); }));
       pane.appendChild(cyc('Text and tile size', 'Bigger is easier to read from the couch.', [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large'], ['huge', 'Huge']], () => S.settings.uiSize || 'normal', v => { sv('uiSize', v); applyTheme(); }));
       pane.appendChild(cyc('Clock', '', [['12', '12-hour'], ['24', '24-hour']], () => S.settings.clock24 ? '24' : '12', v => sv('clock24', v === '24')));
       pane.appendChild(toggle('Clean window for Remote play', 'Only while someone is connected with Remote play, games become a borderless window with no title bar, menu or taskbar in the way. Normal fullscreen is never touched when nobody is connected.', S.settings.gameWindow !== 'off', v => sv('gameWindow', v ? 'on' : 'off')));

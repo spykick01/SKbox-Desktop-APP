@@ -21,6 +21,8 @@
   K.sksMask = maskText;
   sk.on('sks:state', s => { if (!s || !s.id) return; if (s.removed) delete live[s.id]; else live[s.id] = s; if (K.sksOnState) K.sksOnState(s); });
   sk.on('sks:log', m => { if (K.sksOnLog) K.sksOnLog(m); });
+  const statHist = {};   // id -> recent { cpu, mem } samples for the dashboard charts (kept while you look at other screens)
+  sk.on('sks:stats', m => { if (!m || !m.id) return; const a = statHist[m.id] = (statHist[m.id] || []).concat([{ cpu: m.cpu, mem: m.mem }]).slice(-90); statHist[m.id + ':last'] = m; if (K.sksOnStats) K.sksOnStats(m); });
   sk.on('sks:progress', m => { if (K.sksOnProg) K.sksOnProg(m); });
 
   // A box with a title, a line of text and a bar. Returns { set(text, pct), close() }.
@@ -30,24 +32,32 @@
     return { set, close: () => { if (L.isConnected) closeLayer(L); } };
   }
   const withProgress = async (title, id, fn) => { const pl = progressLayer(title); K.sksOnProg = m => { if (!m || (id && m.id !== id)) return; pl.set(m.text, m.pct); }; try { return await fn(pl); } finally { K.sksOnProg = null; pl.close(); } };
-  const card = s => { const st = s.missing ? ['Folder missing', 'bad'] : stOf(s); return (s.icon ? '<img class="sicon" src="' + esc(K.fileUrl(s.icon)) + '" alt="">' : '') + '<div class="sdot s-' + st[1] + '"></div><b>' + esc(s.name) + '</b><small>' + esc(s.typeName + ' ' + s.version + ' \u00B7 ' + gb(s.ram)) + '</small><em>' + st[0] + (s.state === 'running' ? ' \u00B7 ' + s.players.length + ' online' : '') + '</em>'; };
+  const card = s => {
+    const st = s.missing ? ['Folder missing', 'bad'] : stOf(s), on = s.state === 'running', hue = [...String(s.name)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 360, 11), last = statHist[s.id + ':last'];
+    const av = s.icon ? '<img class="sicon" src="' + esc(K.fileUrl(s.icon)) + '" alt="">' : '<div class="sicon sletter" style="background:linear-gradient(145deg,hsl(' + hue + ',55%,42%),hsl(' + ((hue + 40) % 360) + ',60%,22%))">' + esc(String(s.name).slice(0, 1).toUpperCase()) + '</div>';
+    const stats = on ? '<div class="sc-stats"><span>\u{1F465} ' + s.players.length + (s.maxPlayers ? '/' + s.maxPlayers : '') + '</span>' + (last && last.id === s.id ? '<span>CPU ' + Math.round(last.cpu) + '%</span><span>' + (last.mem >= 1073741824 ? (last.mem / 1073741824).toFixed(1) + ' GB' : Math.round(last.mem / 1048576) + ' MB') + '</span>' : '<span>' + fmtUp(s.startedAt) + '</span>') + '</div>' : '<div class="sc-stats dim"><span>' + gb(s.ram) + ' memory</span></div>';
+    return av + '<div class="sc-top"><span class="sdot s-' + st[1] + '"></span><em>' + st[0] + '</em></div><b>' + esc(s.name) + '</b><small>' + esc(s.typeName + ' ' + s.version) + '</small>' + stats;
+  };
 
   // ---------- list ----------
   K.screens.servers = async function (root) {
     hints([['A', 'Open'], ['Y', 'Quick actions'], ['B', 'Back']]); S.backFn = () => K.go('library');
-    root.innerHTML = '<div class="page"><h1>SKServers</h1><div class="sub">Make and run Minecraft servers on this PC, with a plugin and mod store. Pick Paper for plugins, Fabric for mods.</div><div class="sgrid"></div></div>';
-    const grid = root.querySelector('.sgrid'); let first = null;
+    root.innerHTML = '<div class="page"><h1>SKServers</h1><div class="sub">Make and run Minecraft servers on this PC, with a plugin and mod store. Pick Paper for plugins, Fabric for mods.</div><div class="ssum"></div><div class="sgrid"></div></div>';
+    const grid = root.querySelector('.sgrid'), sum = root.querySelector('.ssum'); let first = null;
     const draw = (list, ips, totalMB) => {
       if (!grid.isConnected) return; const keep = K.current() && K.current().dataset.sid; grid.innerHTML = ''; let focusEl = null;
-      list.forEach(s => { const c = nav(el('button', 'scard', card(s))); c.dataset.sid = s.id; c.onclick = () => K.go('server', { id: s.id });
+      const runN = list.filter(x => x.state === 'running').length, plN = list.reduce((a, x) => a + (x.state === 'running' ? x.players.length : 0), 0); sum.innerHTML = list.length ? '<span><b>' + list.length + '</b> server' + (list.length === 1 ? '' : 's') + '</span><span><b>' + runN + '</b> running</span><span><b>' + plN + '</b> player' + (plN === 1 ? '' : 's') + ' online</span>' : '';
+      list = list.slice().sort((x, y) => (y.state === 'running') - (x.state === 'running') || (y.state === 'starting') - (x.state === 'starting'));
+      list.forEach(s => { const c = nav(el('button', 'scard', card(s))); c.dataset.sid = s.id; c.onclick = () => { S.settings.lastServer = s.id; U.saveSettings(); K.go('server', { id: s.id }); };
         c._onopts = () => { const run = ['starting', 'running'].includes(s.state), id = s.id; menu(s.name, [{ label: run ? 'Stop' : 'Start', fn: async () => { const r = await X(run ? 'sksStop' : 'sksStart', { id }); if (r && r.ok === false) say(r); } }, ...(s.state === 'running' ? [{ label: 'Open the console', fn: () => K.go('server', { id, cat: 'console' }) }] : []), { label: 'Back up the world', fn: async () => { if (run) return toast('Stop the server first'); toast('Backing up\u2026'); const r = await X('sksBackup', { id }); toast(r.ok ? 'Backup saved' : (r.error || 'That did not work')); } }, { label: 'Open its folder', fn: () => X('sksOpen', { id, what: 'folder' }) }, { label: 'Back', fn: () => {} }]); }; grid.appendChild(c); if (s.id === keep) focusEl = c; });
       const n = nav(el('button', 'scard new', '<b>+</b><small>New server</small>')); n.onclick = () => createFlow(totalMB || 8192); grid.appendChild(n);
       const imp = nav(el('button', 'scard new', '<b>\u2B07</b><small>Import a server</small>')); imp.onclick = () => importFlow(totalMB || 8192); grid.appendChild(imp);
       if (!list.length) root.querySelector('.sub').textContent = 'No servers yet. Press New server: pick the software and version, accept the Minecraft EULA, and SKBox downloads everything, even Java if you do not have it.';
-      if (!first) { first = focusEl || (list[0] ? grid.firstChild : n); ensureFocus(root, first); } else if (focusEl) focus(focusEl);
+      if (!first) { const lastC = S.settings.lastServer && grid.querySelector('[data-sid="' + S.settings.lastServer + '"]'); first = focusEl || lastC || (list[0] ? grid.firstChild : n); ensureFocus(root, first); } else if (focusEl) focus(focusEl);
     };
     let last = { list: [], totalMB: 8192 }; if (!K.sksRecovered) { K.sksRecovered = true; X('sksRecover').then(r => { if (r && r.restored) { toast('Brought back ' + r.restored + ' server' + (r.restored === 1 ? '' : 's') + ' SKBox had lost track of'); } }); }
     const load = async () => { const r = await X('sksList'); if (!r || !r.ok) return; r.list.forEach(s => { live[s.id] = s; }); last = r; draw(r.list, r.ips, r.totalMB); };
+    let statT = 0; K.sksOnStats = () => { if (!grid.isConnected || Date.now() - statT < 4000) return; statT = Date.now(); draw(Object.values(live), null, last.totalMB); };
     K.sksOnState = () => { if (grid.isConnected) { draw(Object.values(live), null, last.totalMB); } }; await load();
   };
 
@@ -83,11 +93,14 @@
 
   // ---------- import a server you already have ----------
   async function importFlow(totalMB) {
-    menu('Import a server', [{ label: 'From a folder on this PC', fn: () => go2('folder') }, { label: 'From a .zip file', fn: () => go2('zip') }, { label: 'Back', fn: () => {} }]);
+    menu('Import a server', [{ label: 'From a folder on this PC', fn: () => go2('folder') }, { label: 'From a .zip file', fn: () => go2('zip') }, { label: 'Type or paste a path\u2026', fn: () => go2('path') }, { label: 'Back', fn: () => {} }]);
     async function go2(kind) {
-      const picked = await sk.pickFile(kind); if (!picked) return;
-      const pl = progressLayer('Looking at your server\u2026'); let info; try { info = await X('sksImportPrepare', { path: picked }); } finally { pl.close(); }
-      if (!info || !info.ok) return say(info); review(info, totalMB);
+      let picked;
+      if (kind === 'path') picked = await new Promise(res => osk({ title: 'Full path to the server folder or .zip', value: '', submitLabel: 'Look', onDone: v => res((v || '').trim().replace(/^"|"$/g, '')), onCancel: () => res('') }));
+      else picked = await sk.pickFile(kind);
+      if (!picked) return;
+      const pl = progressLayer('Looking at your server\u2026'); let info; try { info = await X('sksImportPrepare', { path: picked }); } catch (e) { info = { ok: false, error: 'Import failed: ' + String((e && e.message) || e).slice(0, 120) }; } finally { pl.close(); }
+      if (!info || !info.ok) return say(info); try { review(info, totalMB); } catch (e) { toast('Could not show the import screen: ' + String((e && e.message) || e).slice(0, 100)); }
     }
   }
   function review(info, totalMB) {
@@ -122,13 +135,13 @@
     root.innerHTML = '<div class="page"><h1></h1></div>'; const page = root.querySelector('.page'), h1 = page.querySelector('h1');
     const split = el('div', 'split'), menuE = el('div', 'menu'), pane = el('div', 'pane'); split.append(menuE, pane); page.appendChild(split);
     const head = () => { s = live[id] || s; const st = stOf(s); h1.innerHTML = esc(s.name) + ' <span class="schip s-' + st[1] + '">' + st[0] + (s.state === 'running' ? ' \u00B7 ' + s.players.length + ' online' : '') + '</span>'; }; head();
-    const cats = [['overview', '\u23FB', 'Overview'], ['console', '\u2328', 'Console'], ['players', '\u{1F465}', 'Players'], ['plugins', '\u{1F9E9}', s.canPlugins ? (s.pluginDir === 'mods' ? 'Mods' : 'Plugins') : 'Plugins'], ['rules', '\u2699', 'Game settings'], ['backups', '\u{1F4BE}', 'Backups'], ['options', '\u{1F6E0}', 'Server options']];
-    let sel = d.cat || 'overview', refs = {}, drawT = 0; const items = {}; let firstEl = null;
+    const cats = [['dashboard', '\u{1F4CA}', 'Dashboard'], ['console', '\u2328', 'Console'], ['players', '\u{1F465}', 'Players'], ['files', '\u{1F4C1}', 'Files'], ['plugins', '\u{1F9E9}', s.canPlugins ? (s.pluginDir === 'mods' ? 'Mods' : 'Plugins') : 'Plugins'], ['rules', '\u2699', 'Game settings'], ['backups', '\u{1F4BE}', 'Backups'], ['overview', '\u{1F310}', 'Connect & update'], ['options', '\u{1F6E0}', 'Server options']];
+    let sel = d.cat || 'dashboard', refs = {}, drawT = 0; const items = {}; let firstEl = null;
     const busyNow = () => ['starting', 'running', 'stopping', 'installing'].includes((live[id] || s).state);
     cats.forEach(([cid, ic, name]) => { const m = nav(el('button', 'mi', '<span>' + ic + '</span>' + name)); items[cid] = m; if (cid === sel) { m.classList.add('sel'); firstEl = m; }
-      m._onfocus = () => { if (sel !== cid || !pane.firstChild) { sel = cid; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); clearTimeout(drawT); drawT = setTimeout(() => { if (pane.isConnected && sel === cid) panel(cid); }, pane.firstChild ? 110 : 0); } };   // draw once the cursor rests, so moving down the menu is smooth
-      m.onclick = () => { clearTimeout(drawT); if (!pane.firstChild || pane.dataset.cat !== cid) panel(cid); const f = pane.querySelector('[data-nav]'); if (f) focus(f); }; menuE.appendChild(m); });
-    S.backFn = () => { const c = K.current && K.current(); if (c && pane.contains(c) && items[sel]) { focus(items[sel]); } else K.go('servers'); };   // B inside a page goes back to the menu first
+      m._onfocus = () => { if (document.body.classList.contains('mouse') && pane.firstChild) return; if (sel !== cid || !pane.firstChild) { sel = cid; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); clearTimeout(drawT); drawT = setTimeout(() => { if (pane.isConnected && sel === cid) panel(cid); }, pane.firstChild ? 110 : 0); } };   // draw once the cursor rests, so moving down the menu is smooth
+      m.onclick = () => { clearTimeout(drawT); if (!pane.firstChild || pane.dataset.cat !== cid) { sel = cid; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); panel(cid); } const f = pane.querySelector('[data-nav]'); if (f) focus(f); }; menuE.appendChild(m); });
+    S.backFn = () => { const c = K.current && K.current(); if (c && pane.contains(c) && pane._filesBack && pane._filesBack()) return; if (c && pane.contains(c) && items[sel]) { focus(items[sel]); } else K.go('servers'); };   // B inside a page goes back to the menu first
     const bk = nav(el('button', 'mi', '<span>\u2190</span>All servers')); bk.onclick = () => K.go('servers'); menuE.appendChild(bk);
 
     K.sksOnState = m => { if (m.id !== id || !pane.isConnected) return; if (m.removed) return K.go('servers'); head(); if (refs.refresh) refs.refresh(); };
@@ -141,9 +154,58 @@
     const start = async () => { const r = await X('sksStart', { id }); if (!r || !r.ok) say(r); }, stop = async () => { await X('sksStop', { id }); };
 
     function panel(cid) {
-      const keepIdx = paneIdx(pane); refs = {}; K.sksOnProg = null; pane.innerHTML = ''; pane.dataset.cat = cid; const h = t => pane.appendChild(el('h2', '', t)), sub = t => pane.appendChild(el('div', 'sub', t)), add = e => { pane.appendChild(e); return e; };
-      if (cid === 'overview') {
-        h('Overview'); if ((live[id] || s).missing) { const mb2 = add(el('div', 'salert', 'SKBox cannot find this server\u2019s folder:<br>' + esc(hideOn() ? '\u2022\u2022\u2022\u2022' : (live[id] || s).path || (live[id] || s).folder) + '<br>If you moved it, point SKBox at the new place.')); const lb = nav(el('button', 'btn p', 'Locate folder')); lb.onclick = async () => { const f = await sk.pickFile('folder'); if (!f) return; const r = await X('sksRelocate', { id, path: f }); if (!r || !r.ok) say(r); else { toast('Found it'); K.go('server', { id, cat: 'overview' }); } }; add(el('div', 'btnrow')).appendChild(lb); }
+      const keepIdx = paneIdx(pane); refs = {}; K.sksOnProg = null; K.sksOnStats = null; pane._filesBack = null; pane.innerHTML = ''; pane.dataset.cat = cid; const h = t => pane.appendChild(el('h2', '', t)), sub = t => pane.appendChild(el('div', 'sub', t)), add = e => { pane.appendChild(e); return e; };
+      if (cid === 'dashboard') {
+        const c0 = () => live[id] || s;
+        const hero = add(el('div', 'dhero2')); const hl = el('div', 'dh-l'), hr = el('div', 'dh-r'); hero.append(hl, hr);
+        const nameE = el('div', 'dh-name'), chip = el('span', 'schip'), addrBtn = nav(el('button', 'dh-addr')), sub2 = el('div', 'dh-sub'); hl.append(nameE, sub2, addrBtn);
+        const bStart = nav(el('button', 'btn p', 'Start')), bRe = nav(el('button', 'btn', 'Restart')), bStop = nav(el('button', 'btn danger', 'Stop')); hr.append(bStart, bRe, bStop);
+        const withPlayers = (title, label, fn) => { const n = (c0().players || []).length; if (n) confirm(title, n + ' player' + (n === 1 ? ' is' : 's are') + ' online right now. They will be kicked.', label, fn); else fn(); };
+        bStart.onclick = () => { const st = c0().state; if (st === 'stopped' || st === 'crashed') start(); }; bStop.onclick = () => { const st = c0().state; if (st === 'running' || st === 'starting') withPlayers('Stop the server?', 'Stop', () => stop()); };
+                bRe.onclick = () => withPlayers('Restart the server?', 'Restart', async () => { toast('Restarting\u2026'); const r = await X('sksRestart', { id }); if (r && !r.ok) say(r); });
+        const err = add(el('div', 'salert')); const cards = add(el('div', 'dcards'));
+        const mkCard = (k, lab) => { const d2 = el('div', 'dcard'); d2.innerHTML = '<small>' + lab + '</small><b></b><i></i>'; cards.appendChild(d2); refs[k] = d2; return d2; };
+        mkCard('cPl', 'Players'); mkCard('cCpu', 'CPU'); mkCard('cMem', 'Memory'); mkCard('cUp', 'Uptime');
+        const charts = add(el('div', 'dcharts')); const mkChart = (k, title) => { const d2 = el('div', 'dchart'); d2.innerHTML = '<div class="dct">' + title + '<em></em></div><div class="dcb"></div>'; charts.appendChild(d2); refs[k] = d2; return d2; };
+        mkChart('chCpu', 'CPU LOAD'); mkChart('chMem', 'MEMORY USAGE');
+        const spark = (vals, max, unit, col) => { const W = 300, H = 90, n = 60, v = vals.slice(-n); const pts = v.map((x, i) => [(i / (n - 1)) * W + (n - v.length) / (n - 1) * W, H - Math.min(1, x / max) * (H - 6) - 3]);
+          const line = pts.map(p2 => p2[0].toFixed(1) + ',' + p2[1].toFixed(1)).join(' '); const area = pts.length ? 'M' + pts[0][0].toFixed(1) + ',' + H + ' L' + line.replace(/ /g, ' L') + ' L' + pts[pts.length - 1][0].toFixed(1) + ',' + H + ' Z' : '';
+          return '<svg viewBox="0 0 ' + W + ' ' + (H + 14) + '" preserveAspectRatio="none"><defs><linearGradient id="g' + col.slice(1) + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + col + '" stop-opacity=".45"/><stop offset="1" stop-color="' + col + '" stop-opacity="0"/></linearGradient></defs>' +
+            [0, .5, 1].map(f => '<line x1="0" x2="' + W + '" y1="' + (3 + (1 - f) * (H - 6)) + '" y2="' + (3 + (1 - f) * (H - 6)) + '" class="gl"/>').join('') + (area ? '<path d="' + area + '" fill="url(#g' + col.slice(1) + ')"/><polyline points="' + line + '" fill="none" stroke="' + col + '" stroke-width="2" vector-effect="non-scaling-stroke"/>' : '') + '</svg><div class="dax"><span>' + unit(max) + '</span><span>' + unit(max / 2) + '</span><span>0</span></div>'; };
+        const fmtG = b => b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : Math.round(b / 1048576) + ' MB';
+        const consoleBox = add(el('div', 'dcon')); const lg = el('div', 'slog dlog'); refs.log = lg; consoleBox.appendChild(lg);
+        const cbar = el('div', 'btnrow'); const cmdB = nav(el('button', 'btn p', '\u276F Type a command\u2026')), saveB = nav(el('button', 'btn', 'Save world')), copyB = nav(el('button', 'btn', 'Copy log')), allB = nav(el('button', 'btn', 'Open full console')); cbar.append(cmdB, saveB, copyB, allB);
+        saveB.onclick = async () => { if (c0().state !== 'running') return toast('The server is not running'); const r = await X('sksCmd', { id, text: 'save-all' }); if (r && r.ok === false) say(r); else toast('Saving the world\u2026'); };
+        copyB.onclick = async () => { const r = await X('sksLog', { id }); if (r && r.ok && r.lines.length) { X('sksCopy', { text: r.lines.slice(-150).join('\n'), long: true }); toast('Copied the last ' + Math.min(150, r.lines.length) + ' lines'); } else toast('Nothing to copy yet'); }; consoleBox.appendChild(cbar);
+        cmdB.onclick = () => osk({ title: 'Server command (no slash)', value: '', submitLabel: 'Send', onDone: async v => { v = (v || '').trim(); if (!v) return; const r = await X('sksCmd', { id, text: v }); if (!r || !r.ok) say(r); }, onCancel: () => {} });
+        allB.onclick = () => { const m = items.console; if (m) { sel = 'console'; Object.values(items).forEach(x => x.classList.remove('sel')); m.classList.add('sel'); panel('console'); const f = pane.querySelector('[data-nav]'); if (f) focus(f); } };
+        X('sksLog', { id }).then(r => { if (lg.isConnected && r.ok) { lg.innerHTML = ''; refs.raw = []; addLog(r.lines.length ? r.lines.slice(-80) : ['Nothing yet. Press Start.']); lg.scrollTop = lg.scrollHeight; } });
+        const plBox = add(el('div', 'dplayers'));
+        refs.refresh = () => {
+          const c = c0(), st = stOf(c), on = c.state === 'running', mx = c.maxPlayers || 0, last = statHist[id + ':last'];
+          nameE.innerHTML = esc(c.name) + ' '; chip.className = 'schip s-' + st[1]; chip.textContent = st[0]; nameE.appendChild(chip);
+          sub2.textContent = c.typeName + ' ' + c.version + ' \u00B7 port ' + c.port + (on ? ' \u00B7 up ' + fmtUp(c.startedAt) : '');
+          const ip = refs.ip; addrBtn.style.display = ip ? '' : 'none'; if (ip) addrBtn.innerHTML = '<span>Join address</span><b>' + esc(hideOn() ? DOTS : ip) + '</b>';
+          bStart.style.display = (c.state === 'stopped' || c.state === 'crashed') ? '' : 'none'; bStop.style.display = (c.state === 'running' || c.state === 'starting') ? '' : 'none'; bRe.style.display = on ? '' : 'none';
+          err.textContent = c.error || ''; err.style.display = c.error ? '' : 'none';
+          const set = (d2, v, sm, pct) => { d2.querySelector('b').textContent = v; d2.querySelector('i').style.width = Math.max(0, Math.min(100, pct || 0)) + '%'; d2.dataset.sm = sm || ''; };
+          set(refs.cPl, on ? c.players.length + (mx ? ' / ' + mx : '') : '\u2014', '', on && mx ? c.players.length / mx * 100 : 0);
+          const cpu = on && c.stats ? c.stats.cpu : null, mem = on && c.stats ? c.stats.mem : null;
+          set(refs.cCpu, cpu == null ? '\u2014' : cpu.toFixed(cpu < 10 ? 1 : 0) + '%', '', cpu || 0); set(refs.cMem, mem == null ? '\u2014' : fmtG(mem) + ' / ' + fmtG(c.ram * 1048576), '', mem ? mem / (c.ram * 1048576) * 100 : 0); set(refs.cUp, on ? fmtUp(c.startedAt) || 'just now' : '\u2014', '', 0);
+          const h = on ? (statHist[id] || []) : []; refs.chCpu.querySelector('.dcb').innerHTML = spark(h.map(x => x.cpu), Math.max(10, Math.ceil(Math.max(0, ...h.map(x => x.cpu)) / 10) * 10 || 10), v => Math.round(v) + '%', '#2dd4bf'); refs.chCpu.querySelector('em').textContent = cpu == null ? '' : '  ' + cpu.toFixed(1) + '%';
+          const mxm = c.ram * 1048576; refs.chMem.querySelector('.dcb').innerHTML = spark(h.map(x => x.mem), mxm, fmtG, '#818cf8'); refs.chMem.querySelector('em').textContent = mem == null ? '' : '  ' + fmtG(mem);
+          plBox.innerHTML = '<h3>Online now' + (on ? ' \u00B7 ' + c.players.length : '') + '</h3>'; if (!on || !c.players.length) plBox.appendChild(el('div', 'sub', on ? 'Nobody online yet.' : 'The server is not running.'));
+          else { const g = el('div', 'dpl'); c.players.forEach(n => { const hue = [...n].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 360, 7); const d2 = el('div', 'dp'); d2.innerHTML = '<i style="background:hsl(' + hue + ',55%,45%)">' + esc(n.slice(0, 1).toUpperCase()) + '</i><span>' + esc(n) + '</span>'; g.appendChild(d2); }); plBox.appendChild(g); }
+        };
+        K.sksOnStats = m => { if (m.id === id && pane.isConnected && pane.dataset.cat === 'dashboard' && refs.refresh) refs.refresh(); };
+        addrBtn.onclick = async () => { if (!refs.ip) return; X('sksCopy', { text: refs.ip }); toast(hideOn() ? 'Copied the address' : 'Copied ' + refs.ip); };
+        X('sksNet', { id }).then(n => { const t = ((K.playit || {}).tunnels || {})[id]; refs.ip = (t && t.address) || ((n.ips || [])[0] ? n.ips[0] + ':' + n.port : ''); if (refs.refresh) refs.refresh(); });
+        X('sksStats', { id }).then(r => { if (r && r.ok && r.hist && r.hist.length && !(statHist[id] || []).length) { statHist[id] = r.hist.map(x => ({ cpu: x.cpu, mem: x.mem })); if (refs.refresh && pane.isConnected) refs.refresh(); } });
+        refs.refresh(); paneRestore(pane, keepIdx); if (!K.current() || !pane.contains(K.current())) { /* keep focus in the menu */ }
+      } else if (cid === 'files') {
+        const host = add(el('div')); K.files.mount(host, { root: 's:' + id, title: (live[id] || s).name }); pane._filesBack = () => host._filesBack && host._filesBack();
+      } else if (cid === 'overview') {
+        h('Connect & update'); if ((live[id] || s).missing) { const mb2 = add(el('div', 'salert', 'SKBox cannot find this server\u2019s folder:<br>' + esc(hideOn() ? '\u2022\u2022\u2022\u2022' : (live[id] || s).path || (live[id] || s).folder) + '<br>If you moved it, point SKBox at the new place.')); const lb = nav(el('button', 'btn p', 'Locate folder')); lb.onclick = async () => { const f = await sk.pickFile('folder'); if (!f) return; const r = await X('sksRelocate', { id, path: f }); if (!r || !r.ok) say(r); else { toast('Found it'); K.go('server', { id, cat: 'overview' }); } }; add(el('div', 'btnrow')).appendChild(lb); }
         const err = add(el('div', 'salert')), info = add(el('div', 'sub')), br = add(el('div', 'btnrow')), main = nav(el('button', 'btn p', 'Start')), again = nav(el('button', 'btn', 'Restart'));
         main.onclick = () => { const st = (live[id] || s).state; if (st === 'stopped' || st === 'crashed') start(); else if (st === 'running' || st === 'starting') stop(); }; again.onclick = async () => { toast('Restarting\u2026'); const r = await X('sksRestart', { id }); if (r && !r.ok) say(r); }; br.append(main, again);
         const players = add(el('div', 'sub')); const addr = add(el('div')), net = add(el('div'));
