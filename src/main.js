@@ -19,6 +19,7 @@ app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 const batteries = {};
 let overlayOpaque = false, padTest = false, fgTarget = null, overlayTarget = null;
 const helperInfo = { error: '', lastGuide: 0, guides: 0, lastKey: '', diag: [] };
+const menuDiag = { opens: 0, focused: 0, notFocused: 0, clicks: 0, relayed: 0, lastMs: -1, lastNote: '' };   // what happened the last times the SK menu opened (shown in Copy diagnostics)
 let win = null, tray = null, kiosk = true, helper = null, game = null, backdrop = null, overlayWin = null, overlayOpen = false, musicWin = null, musicUser = '', musicVisible = false, padCount = 0;
 const send = (ch, ...a) => { try { if (win && !win.isDestroyed()) win.webContents.send(ch, ...a); } catch {} try { if (overlayWin && !overlayWin.isDestroyed()) overlayWin.webContents.send(ch, ...a); } catch {} };
 const nativeHwnd = w => { try { const b = w.getNativeWindowHandle(); return b.length >= 8 ? String(b.readBigUInt64LE(0)) : String(b.readUInt32LE(0)); } catch { return ''; } };
@@ -141,7 +142,7 @@ const extras = require('./lib/extras').create({
   launchApp: id => { let apps = store.read('apps', []); if (!Array.isArray(apps)) apps = apps.apps || []; const a = apps.find(x => x.id === id); if (a) launchApp(a).catch(() => {}); },
   lockPc: () => { if (isWin) execFile('rundll32.exe', ['user32.dll,LockWorkStation'], () => {}); },
   restartHelper: () => restartHelper(),
-  diag: () => ['Helper lines: ' + (helperInfo.diag || []).join(' | '), 'Helper error: ' + (helperInfo.error || 'none')].join('\n')
+  diag: () => ['Helper lines: ' + (helperInfo.diag || []).join(' | '), 'Helper error: ' + (helperInfo.error || 'none'), 'SK menu: opened ' + menuDiag.opens + 'x, got focus ' + menuDiag.focused + 'x (last after ' + menuDiag.lastMs + ' ms), never got focus ' + menuDiag.notFocused + 'x, click-to-focus used ' + menuDiag.clicks + 'x, controller presses passed on ' + menuDiag.relayed + (menuDiag.lastNote ? ', note: ' + menuDiag.lastNote : '')].join('\n')
 });
 const plus = require('./lib/plus').create({
   store, notify, backupDir: path.join(app.getPath('userData'), 'save-backups'), desktop: app.getPath('desktop'), launch: a => launchApp(a), busy: () => !!game, running: id => !!(game && game.id === id), remote: on => setRemote(on), lockPc: () => { if (isWin) execFile('rundll32.exe', ['user32.dll,LockWorkStation'], () => {}); },
@@ -382,7 +383,7 @@ function startHelper() {
   helper.on('diag', l => { helperInfo.diag.push(l); if (helperInfo.diag.length > 12) helperInfo.diag.shift(); });
   helper.on('ready', () => { helperInfo.error = ''; if (remoteLive) helper.remote(store.read('settings', {}).gameWindow !== 'off', fitArgs().fit, fitArgs().taskbar); if (overlayOpen) helper.padIn(true); });
   helper.on('padin', (slot, act) => {
-    try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) overlayWin.webContents.send('padin', slot, act); else if (padTest) send('padtest', slot, act); } catch {}
+    try { if (overlayWin && !overlayWin.isDestroyed() && (overlayOpen || overlayWin.isVisible())) { menuDiag.relayed++; overlayWin.webContents.send('padin', slot, act); } else if (padTest) send('padtest', slot, act); } catch {}
   });
   helper.on('battery', (slot, type, level) => { batteries[slot] = { type, level }; try { plus.battery(slot, type, level); } catch {} send('battery', slot, type, level); });
   helper.on('pads', n => { padCount = n; send('pads', n); const pl = playersMeta(); if (n >= 2 && !pl[1] && game && !overlayOpen) openOverlay({ p2: true }); });
@@ -424,13 +425,28 @@ function openOverlay(opts) {
   overlayTarget = fgTarget && Date.now() - fgTarget.at < 1500 ? fgTarget : (game && game.hwnd ? { hwnd: String(game.hwnd), fs: true } : null); fgTarget = null;
   const moveAside = !!(overlayTarget && overlayTarget.fs && overlayOpaque && helper && helper.ready);
   if (moveAside) helper.minimize(overlayTarget.hwnd);
-  const grab = () => { w.setAlwaysOnTop(true, 'screen-saver'); w.show(); w.moveTop(); w.focus(); try { w.webContents.focus(); } catch {} if (helper) { try { helper.focus(nativeHwnd(w)); } catch {} } };
-  const show = () => { try { grab(); w.webContents.send('overlay:open', overlayStateObj(opts)); } catch {}
-    // a fullscreen game (Cemu and other emulators especially) can keep the keyboard focus for a while: keep asking, both at the
-    // window level and for the page inside it, until the menu really has it. Stops as soon as it has focus or the menu closes.
-    let n = 0; const keep = setInterval(() => { try {
-      if (!overlayOpen || !overlayWin || overlayWin.isDestroyed() || overlayWin !== w || ++n > 28) return clearInterval(keep);
-      if (!w.isFocused() || !w.webContents.isFocused()) grab(); else if (n > 6) clearInterval(keep);
+  // Getting the keyboard / controller focus onto the menu while a fullscreen game (Cemu and other emulators) still holds it.
+  // 1) ask politely (window + page + the native helper), 2) if that did not work, do what you would do by hand: a real mouse click on the
+  // menu window (the menu puts an invisible click-catcher over itself for a moment, so the click can never press a button).
+  const openedAt = Date.now(); menuDiag.opens++;
+  const hasFocus = () => { try { return w.isFocused() && w.webContents.isFocused(); } catch { return false; } };
+  let lastGrab = 0;
+  const grab = (hard) => { try { w.setAlwaysOnTop(true, 'screen-saver'); w.show(); w.moveTop(); w.focus(); w.webContents.focus(); } catch {} if (helper && (hard || Date.now() - lastGrab > 500)) { lastGrab = Date.now(); try { helper.focus(nativeHwnd(w)); } catch {} } };
+  const clickFocus = () => {
+    if (!helper || !helper.ready || store.read('settings', {}).menuClickFocus === false) return false;
+    try {
+      const b = w.getBounds(), cp = screen.getCursorScreenPoint(), inside = cp.x >= b.x && cp.x < b.x + b.width && cp.y >= b.y && cp.y < b.y + b.height;
+      if (!inside) { const prim = screen.getPrimaryDisplay(); if (displayNow().id !== prim.id) return false; hin('IA 32768 32768'); }   // the pointer is somewhere else: bring it to the middle of the menu's screen
+      menuDiag.clicks++; setTimeout(() => hin('IB 0 1'), 40); setTimeout(() => hin('IB 0 0'), 110); return true;
+    } catch { return false; }
+  };
+  const show = () => { try { grab(true); w.webContents.send('overlay:open', overlayStateObj(opts)); } catch {}
+    let n = 0, clicked = false, done = false; const keep = setInterval(() => { try {
+      if (!overlayOpen || !overlayWin || overlayWin.isDestroyed() || overlayWin !== w) return clearInterval(keep);
+      n++;
+      if (hasFocus()) { if (!done) { done = true; menuDiag.focused++; menuDiag.lastMs = Date.now() - openedAt; menuDiag.lastNote = clicked ? 'needed a click' : 'focused by itself'; } if (n > 6) clearInterval(keep); return; }
+      if (n < 5) grab(); else if (n === 5 && !clicked) { clicked = clickFocus(); grab(); } else if (n === 12 && !clicked) { clicked = clickFocus(); }   // ~0.75 s: click; again at ~1.8 s if it still has no focus
+      if (n > 26) { clearInterval(keep); if (!done) { menuDiag.notFocused++; menuDiag.lastNote = 'never got focus' + (clicked ? ' even after a click' : ''); } }
     } catch { clearInterval(keep); } }, 150); };
   const go = () => { if (w.webContents.isLoading()) w.webContents.once('did-finish-load', show); else show(); };
   if (moveAside) setTimeout(go, 220); else go();

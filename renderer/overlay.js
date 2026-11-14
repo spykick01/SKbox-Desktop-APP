@@ -19,12 +19,19 @@
   ['keydown', 'mousemove', 'mousedown', 'wheel'].forEach(ev => document.addEventListener(ev, armIdle, true));
   sk.on('padin', () => armIdle());
   sk.on('overlay:open', s => { try { window.focus(); } catch (_) {} open(s); armIdle(); });
-  sk.on('overlay:close', () => { clearTimeout(idleT); reset(); });
+  sk.on('overlay:close', () => { clearTimeout(idleT); dropCatcher(); reset(); });
   sk.on('pads', n => { if (st) st.pads = n; });
 
   function reset() { clearTimers(); mode = 'menu'; S.screen = 'overlay'; const r = $('#screen'); r.innerHTML = ''; $('#layers').innerHTML = ''; S.osk = false; }
+  // For the first moments after the menu opens, an invisible layer covers it. SKBox may click on the menu to take the focus away from a fullscreen game
+  // (what you would do by hand), and this makes sure that click can never press a button. It disappears by itself, or on the first controller press.
+  let catcher = null, catchT = 0;
+  const dropCatcher = () => { clearTimeout(catchT); if (catcher) { catcher.remove(); catcher = null; } };
+  function putCatcher() { dropCatcher(); catcher = el('div'); catcher.id = 'focuscatch'; ['mousedown', 'mouseup', 'click', 'contextmenu'].forEach(ev => catcher.addEventListener(ev, e => { e.stopPropagation(); e.preventDefault(); }, true)); document.body.appendChild(catcher); catchT = setTimeout(dropCatcher, 2600); }
+  sk.on('padin', () => dropCatcher());
+  window.addEventListener('keydown', () => dropCatcher(), true);
   function open(s) {
-    reset(); st = s; S.settings = s.settings || {}; S.players = s.players || [null, null]; S.apps = s.apps || []; S.active = 0;
+    putCatcher(); reset(); st = s; S.settings = s.settings || {}; S.players = s.players || [null, null]; S.apps = s.apps || []; S.active = 0;
     { const skin = K.applySkin ? K.applySkin(S.settings) : 'glass'; if (skin === 'glass') { document.documentElement.style.setProperty('--a', S.settings.accent || '#2dd4bf'); document.documentElement.style.removeProperty('font-size'); } else document.documentElement.style.fontSize = K.skinScale !== 1 ? 'calc(clamp(13px, 2vh, 26px) * ' + K.skinScale + ')' : ''; }   // the SK menu wears the same theme
     K.padFromHelper = !!s.helper;
     if (OPAQUE) { const b = S.settings.bg || 'dynamic'; K.setWall(b.startsWith('file:') ? fileUrl(b.slice(5)) : (b === 'dynamic' ? '' : 'assets/bg/' + b + '.jpg')); }
@@ -46,8 +53,8 @@
     [0, 1].forEach(i => { const p = S.players[i]; if (p) chips.insertAdjacentHTML('beforeend', '<div class="chip">' + avatar(p) + '<span>' + esc(p.nick || p.u) + '</span><span class="pn">P' + (i + 1) + '</span></div>'); });
     head.appendChild(chips); m.appendChild(head);
     const qbar = el('div', 'qbar'), qb = {}; const qbtn = (key, text, fn) => { const b = nav(el('button', 'qb', text)); b.onclick = fn; qb[key] = b; qbar.appendChild(b); return b; };
-    qbtn('vol', '\u{1F50A}', () => sk.sys.volume('mute')).title = 'Mute / unmute the PC'; qb.vol._adjust = d => { sk.sys.volume(d < 0 ? 'down' : 'up'); K.snd && K.snd.play('move'); };
-    qbtn('shot', '\u{1F4F8}', () => shot()); qbtn('mic', '\u{1F3A4} Mic on', () => { sk.party.cmd('mute', { toggle: true }); }); qb.mic.style.display = 'none';
+    qbtn('vol', '\u{1F50A} Volume', () => sk.sys.volume('mute')).title = 'Mute / unmute the PC'; qb.vol._adjust = d => { sk.sys.volume(d < 0 ? 'down' : 'up'); K.snd && K.snd.play('move'); };
+    qbtn('shot', '\u{1F4F8} Screenshot', () => shot()); qbtn('mic', '\u{1F3A4} Mic on', () => { sk.party.cmd('mute', { toggle: true }); }); qb.mic.style.display = 'none';
     if (S.settings.menuQuick !== false) m.appendChild(qbar);
     if (S.settings.hud) { const hud = el('div', 'hud', 'CPU \u2026'); head.appendChild(hud); const upd = async () => { try { const p = await sk.perf.get(); hud.textContent = 'CPU ' + p.cpu + '%  \u00B7  RAM ' + (p.ramUsed / 1073741824).toFixed(1) + ' / ' + (p.ramTotal / 1073741824).toFixed(0) + ' GB'; } catch (_) {} }; upd(); timers.push(setInterval(upd, 3000)); }
     const party = K.partyUI ? K.partyUI.state() : null, inParty = !!(party && party.status === 'in');
@@ -77,7 +84,7 @@
       const b = nav(el('button', 'mi' + (id === 'close' ? ' danger' : ''), '<span>' + ic + '</span><em>' + esc(label) + '</em>')); menuItems[id] = b; b.dataset.id = id;
       if (id === 'party') { const badge = el('i', 'mbadge' + (inParty ? ' on' : '')); badge.textContent = inParty ? String(party.members.length + 1) : ''; b.appendChild(badge); b._badge = badge; }
       if (first) { b.dataset.first = ''; first = false; }
-      b._onfocus = () => { if (mode === 'menu') preview(id, label, desc); };
+      b._onfocus = () => { if (mode === 'menu') preview(id, label, desc, ic); };
       b.onclick = fn;
       if (id === 'vol') b._adjust = d => { sk.sys.volume(d < 0 ? 'down' : 'up'); sk.sys.volume(d < 0 ? 'down' : 'up'); K.snd && K.snd.play('move'); };
       m.appendChild(b);
@@ -88,7 +95,14 @@
     timers.push(setInterval(() => { const t = head.querySelector('.t'); if (t && st.game) t.textContent = 'Playing for ' + minutes() + ' min \u00B7 ' + K.fmtTime(new Date()); }, 30000));
   }
   function partyPanel() { subView('party', 'Party', ''); panel.innerHTML = ''; K.partyUI.render(panel, { title: 'Party' }); }
-  function preview(id, label, desc) { if (K.partyUI) K.partyUI.detach(); panel.innerHTML = '<h2>' + esc(label) + '</h2><p class="sub">' + esc(desc) + '</p>'; }
+  function preview(id, label, desc, ic) {
+    if (K.partyUI) K.partyUI.detach();
+    const g = st && st.game, rp = st && st.remote;
+    const tile = (k, v) => '<div class="pvt"><small>' + esc(k) + '</small><b>' + esc(v) + '</b></div>';
+    panel.innerHTML = '<div class="pvhero"><div class="pvic">' + (ic || '') + '</div><div class="pvtx"><h2>' + esc(label) + '</h2><p class="sub">' + esc(desc || '') + '</p></div></div>' +
+      '<div class="pvgrid">' + tile(g ? 'Playing' : 'Running', g ? g.name : 'Nothing right now') + tile('Session', g ? minutes() + ' min' : '\u2014') + tile('Controllers', String((st && st.pads) || 0) + ' connected') + tile('Remote play', rp && rp.on ? (rp.client ? rp.client.name : 'On, waiting') : 'Off') + '</div>' +
+      '<div class="pvfoot"><span class="pvkey">A</span> ' + (id === 'vol' ? 'Left and right change volume' : 'Open') + '</div>';
+  }
   function toMenu(id) { clearTimers(); if (mode === 'menu') return; build(); const b = $('#screen').querySelector('.mi[data-id="' + id + '"]'); if (b) focus(b); }
   function subView(id, title, sub) {
     if (K.partyUI) K.partyUI.detach(); mode = id; S.screen = 'overlay'; S.backFn = () => toMenu(id); S.startFn = () => toMenu(id);

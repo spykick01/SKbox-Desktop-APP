@@ -649,6 +649,7 @@
 
   // ---------- settings ----------
   const NEWS = [
+    ['SK menu fix, new look, five themes', 'The SK menu now takes focus over fullscreen games like Cemu by clicking itself once if Windows will not hand it over, and it has a cleaner layout. Five new themes in Settings > Themes: Cozy Cabin, Space HUD, Candy Pop, Obsidian Gold and Sakura Garden.'],
     ['Trusted Remote play and servers on any drive', 'Settings > Remote play has a Trusted mode that skips the PIN on your home network (off by default). SKServers has a Storage button: keep servers, backups and Java on D: instead of C:, and move the ones you already have. Imports now check free space first.'],
     ['Server dashboard, file manager, color themes back', 'SKServers: a Dashboard with live players, CPU, memory and the console; a Files tab to browse and edit server files inside SKBox; richer server cards. Settings > File manager. Themes: your old color themes are back (plus 14 new) and there are 22 new backgrounds. The Settings menu no longer jumps around, the SK menu grabs focus harder, and Home no longer shows file paths.'],
     ['Real themes, server import, easier server pages', 'Settings > Themes: eight full looks (Pixel Craft, Retro Terminal, Game Boy, Synthwave, Aurora, Neo Brutal, Paper and SK Glass). SKServers: import a server from a folder or zip, import a world, export a server, change settings while it runs, and your servers are kept safe across updates. Cinema, Arcade, Zen and Wall modes are gone; Classic and Deck stay.'],
@@ -974,6 +975,7 @@
       pane.appendChild(cyc('Shortest session to record', 'Shorter ones are left out of History', [['1', '1 minute'], ['2', '2 minutes'], ['5', '5 minutes'], ['10', '10 minutes']], () => String(S.settings.minSession === undefined ? 2 : S.settings.minSession), v => sv('minSession', +v)));
       sec('Look & feel');
       pane.appendChild(cyc('Start on', 'What opens after you pick your profile', [['home', 'Home'], ['library', 'Library']], () => S.settings.startScreen || 'home', v => sv('startScreen', v)));
+      pane.appendChild(toggle('SK menu: click to take focus', 'If a fullscreen game keeps the controller from reaching the SK menu, SKBox clicks the menu once (the way you would by hand). Turn off if it ever gets in the way.', S.settings.menuClickFocus !== false, v => sv('menuClickFocus', v)));
       pane.appendChild(cyc('Close the SK menu when idle', 'Closes itself after no input for a while', [['0', 'Never'], ['30', '30 seconds'], ['60', '1 minute'], ['120', '2 minutes']], () => String(S.settings.overlayIdle || 0), v => sv('overlayIdle', +v)));
       pane.appendChild(toggle('Smaller tiles in the Library', 'Fits more games on screen', !!S.settings.compactGrid, v => { sv('compactGrid', v); document.body.classList.toggle('compact', v); }));
       pane.appendChild(toggle('Show hours played on tiles', 'A small badge after the first hour', !!S.settings.hoursBadge, v => sv('hoursBadge', v)));
