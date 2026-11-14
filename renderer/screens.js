@@ -649,6 +649,7 @@
 
   // ---------- settings ----------
   const NEWS = [
+    ['Trusted Remote play and servers on any drive', 'Settings > Remote play has a Trusted mode that skips the PIN on your home network (off by default). SKServers has a Storage button: keep servers, backups and Java on D: instead of C:, and move the ones you already have. Imports now check free space first.'],
     ['Server dashboard, file manager, color themes back', 'SKServers: a Dashboard with live players, CPU, memory and the console; a Files tab to browse and edit server files inside SKBox; richer server cards. Settings > File manager. Themes: your old color themes are back (plus 14 new) and there are 22 new backgrounds. The Settings menu no longer jumps around, the SK menu grabs focus harder, and Home no longer shows file paths.'],
     ['Real themes, server import, easier server pages', 'Settings > Themes: eight full looks (Pixel Craft, Retro Terminal, Game Boy, Synthwave, Aurora, Neo Brutal, Paper and SK Glass). SKServers: import a server from a folder or zip, import a world, export a server, change settings while it runs, and your servers are kept safe across updates. Cinema, Arcade, Zen and Wall modes are gone; Classic and Deck stay.'],
     ['playit.gg, three more modes, tidier Settings', 'SKServers: let friends join from anywhere with playit.gg (no port forwarding), addresses hidden by default, console filter, backup on stop, notifications, duplicate server. Look & modes: Arcade, Zen and Wall. Settings is grouped and no longer jumps around.'],
@@ -1133,10 +1134,16 @@
         if (s.on) {
           const addr = (s.ips[0] || 'this-pc') + ':' + s.port;
           box.appendChild(row('Connect from your Mac or PC', 'Open SKBox Remote and pick this PC, or type this address in any browser: http://' + addr, addr, null));
-          const pr = row('PIN', 'Type this on the other device. Press A for a new PIN.', (s.pin || '').replace(/^(\d{3})(\d{3})$/, '$1 $2'), () => sk.remote.newPin()); pr.dataset.rk = 'pin'; pr.querySelector('.r').style.cssText = 'font-size:1.6rem;font-weight:800;letter-spacing:.12em'; box.appendChild(pr);
+          if (s.trusted) box.appendChild(row('Trusted mode is on', 'No PIN is needed: any device on your home Wi-Fi can connect while Remote play is on.', '\u2713', null));
+          else
+          { const pr = row('PIN', 'Type this on the other device. Press A for a new PIN.', (s.pin || '').replace(/^(\d{3})(\d{3})$/, '$1 $2'), () => sk.remote.newPin()); pr.dataset.rk = 'pin'; pr.querySelector('.r').style.cssText = 'font-size:1.6rem;font-weight:800;letter-spacing:.12em'; box.appendChild(pr); }
           const cr = s.client ? row(s.client.name + ' is playing', (fmtSt(s.stats) || 'Starting stream\u2026') + '. Press A to disconnect.', 'Disconnect', () => sk.remote.kick()) : row('Waiting for a player', 'Nobody is connected.', '', null); cr.dataset.rk = 'client'; box.appendChild(cr);
           if (!s.helper) box.appendChild(row('Keyboard and mouse control is not available', 'The controller helper is not running (see Xbox / PS button). You can still watch and hear the game.', '\u26A0', null));
         }
+        const tm = toggle('Trusted mode: connect without a PIN', 'Skip the PIN while Remote play is on. Only devices on your own home network can ever connect, one at a time. Turn it off on public or shared Wi-Fi.', !!s.cfg.trusted, v => {
+          if (!v) { s.cfg.trusted = false; sk.remote.cfg({ trusted: false }); toast('PIN is needed again'); return; }
+          confirm('Skip the PIN?', 'Anyone on your Wi-Fi who opens your PC\u2019s address will be able to see and control this PC while Remote play is on. Only use this at home, on a network you trust.', 'Turn on trusted mode', () => { s.cfg.trusted = true; sk.remote.cfg({ trusted: true }); toast('Trusted mode is on'); }, false); setTimeout(() => render(s), 0);   // snap the switch back unless you confirm
+        }); tm.dataset.rk = 'trust'; box.appendChild(tm);
         const q = cyc('Quality', 'Lower is smoother on weak Wi-Fi. 1080p 60 needs 5 GHz Wi-Fi or a cable on the PC.', QO, () => s.cfg.quality, v => { s.cfg.quality = v; sk.remote.cfg({ quality: v }); }); q.dataset.rk = 'q'; box.appendChild(q);
         box.appendChild(cyc('Sound quality', 'Higher is cleaner when the game gets loud. It uses a little more Wi-Fi.', [[96, 'Light (96 kbps)'], [128, 'Standard (128 kbps)'], [192, 'High (192 kbps)'], [256, 'Very high (256 kbps)'], [320, 'Maximum (320 kbps)']], () => +s.cfg.audioKbps || 192, v => { s.cfg.audioKbps = +v; sk.remote.cfg({ audioKbps: +v }); }));
         const ai = toggle('Let the other device use keyboard and mouse', 'Off = view only', !!s.cfg.allowInput, v => { s.cfg.allowInput = v; sk.remote.cfg({ allowInput: v }); }); ai.dataset.rk = 'ai'; box.appendChild(ai);

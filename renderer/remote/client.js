@@ -23,18 +23,29 @@
     if (!app) return; $('#hostsBox').hidden = false; $('#hosts').innerHTML = '<small>Searching\u2026</small>';
     let list = []; try { list = await app.discover(); } catch (_) {}
     $('#hosts').innerHTML = ''; if (!list.length) { $('#hosts').innerHTML = '<small>No PC found. Make sure Remote play is on in SKBox, or type the address below.</small>'; return; }
-    list.forEach(h => { const b = document.createElement('button'); b.innerHTML = '<span>' + h.name.replace(/[<>&]/g, '') + '</span><small>' + h.ip + (h.busy ? ' \u00B7 in use' : '') + '</small>'; b.onclick = () => { $('#host').value = h.ip + ':' + h.port; $('#pin').focus(); }; $('#hosts').appendChild(b); });
-    if (list.length === 1 && !$('#host').value) { $('#host').value = list[0].ip + ':' + list[0].port; $('#pin').focus(); }
+    list.forEach(h => { const b = document.createElement('button'); b.innerHTML = '<span>' + h.name.replace(/[<>&]/g, '') + '</span><small>' + h.ip + (h.busy ? ' \u00B7 in use' : '') + '</small>'; b.onclick = () => { $('#host').value = h.ip + ':' + h.port; probe().then(() => { if (!trusted) $('#pin').focus(); }); }; $('#hosts').appendChild(b); });
+    if (list.length === 1 && !$('#host').value) { $('#host').value = list[0].ip + ':' + list[0].port; probe().then(() => { if (!trusted) $('#pin').focus(); }); }
   }
-  $('#scan').onclick = scan; if (app) scan();
+  // Trusted mode: when the PC says no PIN is needed, hide the PIN box and just connect.
+  let trusted = false, probeT = 0;
+  async function probe() {
+    const h = $('#host').value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, ''); trusted = false; const showPin = v => { $('#pin').hidden = !v; const l = document.querySelector('label[for="pin"]'); if (l) l.hidden = !v; };
+    if (h) { try { const c = new AbortController(), t = setTimeout(() => c.abort(), 1800); const r = await fetch('http://' + (h.includes(':') ? h : h + ':47822') + '/api/info', { signal: c.signal }); clearTimeout(t); const j = await r.json(); trusted = !!(j && j.trusted); } catch (_) {} }
+    showPin(!trusted); say(trusted ? 'This PC is in trusted mode: no PIN needed. Just press Connect.' : '');
+  }
+  const probeSoon = () => { clearTimeout(probeT); probeT = setTimeout(probe, 450); };
+  $('#host').addEventListener('input', probeSoon); $('#host').addEventListener('change', probe);
+  $('#scan').onclick = scan; if (app) scan(); if ($('#host').value) probe();   // opened from the PC's own address: its host box is already filled in
   $('#pin').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
   $('#go').onclick = () => connect();
 
   const ice = (p, ms) => new Promise(res => { if (p.iceGatheringState === 'complete') return res(); const t = setTimeout(res, ms); p.addEventListener('icegatheringstatechange', () => { if (p.iceGatheringState === 'complete') { clearTimeout(t); res(); } }); });
   async function connect() {
-    const hostIn = $('#host').value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, ''), pin = $('#pin').value.trim(), name = $('#name').value.trim() || 'Remote player';
+    const hostIn = $('#host').value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, ''), name = $('#name').value.trim() || 'Remote player';
+    let pin = $('#pin').value.trim();
     if (!hostIn) return say('Type the address of your PC (shown in SKBox > Settings > Remote play).', 'err');
-    if (!/^\d{6}$/.test(pin)) return say('Type the 6-digit PIN shown in SKBox.', 'err');
+    if (!trusted && !/^\d{6}$/.test(pin)) { await probe(); if (!trusted) return say('Type the 6-digit PIN shown in SKBox.', 'err'); }
+    if (trusted) pin = '000000';
     store.set('name', name); if (app) store.set('host', hostIn);
     base = 'http://' + (hostIn.includes(':') ? hostIn : hostIn + ':47822'); $('#go').disabled = true; say('Connecting\u2026');
     try {

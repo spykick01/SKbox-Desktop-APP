@@ -622,7 +622,7 @@ ipcMain.handle('companion:set', async (_e, on) => { try { if (on) await companio
 ipcMain.handle('companion:pin', () => (companion ? companion.newPin() : null));
 ipcMain.handle('companion:kick', () => (companion ? companion.kickAll() : null));
 const REMOTE_DIR = () => path.join(__dirname, '..', 'renderer', 'remote');
-const rset = () => { const s = store.read('settings', {}); return { audioKbps: +s.remoteAudioKbps || 192, quality: (() => { const q = ['instant', 'smooth', 'low', 'balanced', 'high', 'sharp'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth'; return (s.remoteSmart !== false && q === 'smooth' && game && /^emu/.test(game.mode || '')) ? 'high' : q; })(), autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, fps: +s.remoteFps || 0, res: +s.remoteRes || 0, kbps: +s.remoteKbps || 0, audio: s.remoteAudio !== false, pref: ['framerate', 'resolution', 'balanced'].includes(s.remotePref) ? s.remotePref : 'framerate', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
+const rset = () => { const s = store.read('settings', {}); return { trusted: s.remoteTrusted === true, audioKbps: +s.remoteAudioKbps || 192, quality: (() => { const q = ['instant', 'smooth', 'low', 'balanced', 'high', 'sharp'].includes(s.remoteQuality) ? s.remoteQuality : 'smooth'; return (s.remoteSmart !== false && q === 'smooth' && game && /^emu/.test(game.mode || '')) ? 'high' : q; })(), autoFix: s.remoteAutoFix !== false, autoQ: s.remoteAutoQ !== false, cursor: s.remoteCursor !== false, fps: +s.remoteFps || 0, res: +s.remoteRes || 0, kbps: +s.remoteKbps || 0, audio: s.remoteAudio !== false, pref: ['framerate', 'resolution', 'balanced'].includes(s.remotePref) ? s.remotePref : 'framerate', allowInput: s.remoteInput !== false, padMode: ['menus', 'keys', 'off'].includes(s.remotePad) ? s.remotePad : 'menus' }; };
 const remoteState = () => Object.assign(remote ? remote.state() : { on: false, port: 0, pin: '', ips: [], client: null }, { stats: remoteStats, cfg: rset(), helper: !!(helper && helper.ready), supported: isWin });
 const pushRemote = () => send('remote:state', remoteState());
 const hin = line => { if (helper && helper.ready) helper.send(line); };
@@ -684,7 +684,7 @@ function remoteEndSession() {
 }
 function remoteInit() {
   if (remote) return remote;
-  remote = new RemoteHost({ name: os.hostname(), version: app.getVersion(), webDir: REMOTE_DIR(), createSession: remoteCreateSession, endSession: () => remoteEndSession() });
+  remote = new RemoteHost({ name: os.hostname(), version: app.getVersion(), trusted: () => store.read('settings', {}).remoteTrusted === true, webDir: REMOTE_DIR(), createSession: remoteCreateSession, endSession: () => remoteEndSession() });
   remote.on('state', pushRemote);
   remote.on('ended', (c, why) => { try { notify('Remote play', (c && c.name ? c.name + ' disconnected' : 'Disconnected')); } catch {} });
   return remote;
@@ -706,6 +706,7 @@ ipcMain.handle('remote:cfg', (_e, patch) => {
   if (['instant', 'smooth', 'low', 'balanced', 'high', 'sharp'].includes(patch.quality)) s.remoteQuality = patch.quality;
   if ([96, 128, 192, 256, 320].includes(+patch.audioKbps)) s.remoteAudioKbps = +patch.audioKbps;
   if (typeof patch.autoFix === 'boolean') s.remoteAutoFix = patch.autoFix;
+  if (typeof patch.trusted === 'boolean') s.remoteTrusted = patch.trusted;
   if (typeof patch.allowInput === 'boolean') s.remoteInput = patch.allowInput;
   if (['menus', 'keys', 'off'].includes(patch.padMode)) { s.remotePad = patch.padMode; if (mapper) mapper.setMode(patch.padMode); }
   store.write('settings', s); pushRemote(); return remoteState();

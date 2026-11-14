@@ -18,7 +18,8 @@ class RemoteHost extends EventEmitter {
     super(); this.o = Object.assign({ name: os.hostname(), version: '0', webDir: '.', httpPort: HTTP_PORT, discPort: DISC_PORT, lan: isLan, createSession: async () => { throw new Error('not ready'); }, endSession: () => {} }, o || {});
     this.on_ = false; this.server = null; this.udp = null; this.port = 0; this.pin = ''; this.session = null; this.fails = {}; this.totalFails = 0; this.lockedUntil = 0;
   }
-  state() { return { on: this.on_, port: this.port, pin: this.on_ ? this.pin : '', ips: this.ips(), name: this.o.name, client: this.session ? { name: this.session.name, ip: this.session.ip, since: this.session.since } : null }; }
+  trusted() { try { return !!(this.on_ && this.o.trusted && this.o.trusted()); } catch { return false; } }   // trusted mode: devices on your home network connect without the PIN while Remote play is on
+  state() { return { on: this.on_, trusted: this.trusted(), port: this.port, pin: this.on_ ? this.pin : '', ips: this.ips(), name: this.o.name, client: this.session ? { name: this.session.name, ip: this.session.ip, since: this.session.since } : null }; }
   ips() { const out = []; const n = os.networkInterfaces(); for (const k in n) for (const a of n[k] || []) if (a.family === 'IPv4' && !a.internal) out.push(a.address); return out.sort((a, b) => (b.startsWith('192.168.') ? 1 : 0) - (a.startsWith('192.168.') ? 1 : 0)); }
   async start() {
     if (this.on_) return this.state();
@@ -72,7 +73,7 @@ class RemoteHost extends EventEmitter {
       const f = FILES[url]; let data; try { data = fs.readFileSync(path.join(this.o.webDir, f[0])); } catch (_) { r.writeHead(404); r.end(); return; }
       r.writeHead(200, { 'Content-Type': f[1], 'Cache-Control': 'no-store' }); r.end(data); return;
     }
-    if (q.method === 'GET' && url === '/api/info') { this.json(r, 200, { skbox: true, name: this.o.name, v: this.o.version, busy: !!this.session }); return; }
+    if (q.method === 'GET' && url === '/api/info') { this.json(r, 200, { skbox: true, name: this.o.name, v: this.o.version, busy: !!this.session, trusted: !!this.trusted() }); return; }
     if (q.method === 'POST' && url === '/api/bye') {
       let b; try { b = await this.body(q, 2000); } catch (_) { this.json(r, 400, { error: 'bad request' }); return; }
       if (this.session && typeof b.token === 'string' && sameStr(b.token, this.session.sid)) this.endSession('The remote player disconnected');
@@ -84,7 +85,7 @@ class RemoteHost extends EventEmitter {
       if (now < this.lockedUntil) { this.json(r, 429, { error: 'Too many wrong PINs. Wait a minute and try again.' }); return; }
       const f = this.fails[ip] || (this.fails[ip] = { n: 0, until: 0 });
       if (now < f.until) { this.json(r, 429, { error: 'Too many wrong PINs. Wait a minute and try again.' }); return; }
-      if (typeof b.pin !== 'string' || !/^\d{6}$/.test(b.pin) || !sameStr(b.pin, this.pin)) {
+      if (!this.trusted() && (typeof b.pin !== 'string' || !/^\d{6}$/.test(b.pin) || !sameStr(b.pin, this.pin))) {
         f.n++; this.totalFails++;
         if (f.n >= 5) { f.until = now + 60000; f.n = 0; }
         if (this.totalFails >= 20) { this.pin = newPin(); this.totalFails = 0; this.lockedUntil = now + 120000; this.emit('state'); }

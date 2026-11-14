@@ -86,7 +86,11 @@ function inspectJar(file) {
 
 function create(ctx) {
   const F = ctx.fetch || ((u, o) => fetch(u, o)), now = () => (ctx.now ? ctx.now() : Date.now());
-  const root = path.join(ctx.dir, 'servers'), javaRoot = path.join(ctx.dir, 'java'), backupRoot = path.join(ctx.dir, 'server-backups');
+  // Where SKBox keeps servers, their backups and the Java it downloads. By default inside SKBox's own data folder (usually on C:), but you can point it at
+  // another drive (Settings stores it as 'sksBase'). Everything below reads these at call time, so changing the base takes effect straight away.
+  const defBase = ctx.dir; let base = defBase, root, javaRoot, backupRoot, indexFile, movingBase = false;
+  const applyBase = b => { base = b; root = path.join(b, 'servers'); javaRoot = path.join(b, 'java'); backupRoot = path.join(b, 'server-backups'); indexFile = path.join(root, '_index.json'); };
+  { const b = ctx.store.read('sksBase', ''); applyBase(typeof b === 'string' && b && path.isAbsolute(b) ? b : defBase); }
   const send = (ch, p) => { try { ctx.send && ctx.send(ch, p); } catch {} };
   const runtime = {};   // id -> { proc, state, startedAt, players, log, err, restarts }
   const cache = {};     // url -> { t, v }
@@ -95,7 +99,7 @@ function create(ctx) {
   const find = id => read().find(s => s.id === id);
   const update = (id, fn) => { const a = read(), i = a.findIndex(s => s.id === id); if (i < 0) return null; fn(a[i]); write(a); return a[i]; };
   const dirOf = s => s.path ? s.path : path.join(root, s.folder);   // a server SKBox made lives in its own folder; an imported one can stay where it is
-  const indexFile = path.join(root, '_index.json'), SIDE = '.skbox-server.json'; let sideCache = {};
+  const SIDE = '.skbox-server.json'; let sideCache = {};
   const sidecarOf = s => ({ skbox: 'server', v: 1, id: s.id, name: s.name, type: s.type, version: s.version, build: s.build || '', ram: s.ram, port: s.port, java: s.java, jar: s.jar || '', plugDir: s.plugDir || '', autoRestart: s.autoRestart !== false, backupOnStop: !!s.backupOnStop, restartAt: s.restartAt || '', motd: s.motd || '' });
   function mirror(a) {   // a second copy of the server list, plus a small file inside each server folder: enough to rebuild the list if SKBox's own settings file were ever lost
     try { fs.mkdirSync(root, { recursive: true }); fs.writeFileSync(indexFile + '.tmp', JSON.stringify({ v: 1, servers: a })); fs.renameSync(indexFile + '.tmp', indexFile); } catch (_) {}
@@ -193,7 +197,7 @@ function create(ctx) {
   const lanIps = () => { const o = []; const n = os.networkInterfaces(); Object.keys(n).forEach(k => (n[k] || []).forEach(a => { if (a.family === 'IPv4' && !a.internal && !/^169\.254\./.test(a.address)) o.push(a.address); })); return o; };
   const iconOf = s => { try { const f = path.join(dirOf(s), 'server-icon.png'); return fs.existsSync(f) ? f : ''; } catch { return ''; } };
   const view = s => { const r = rt(s.id); return Object.assign({}, s, { icon: iconOf(s), inPlace: !!s.path, missing: !fs.existsSync(dirOf(s)),  state: r.state, players: Array.from(r.players), startedAt: r.startedAt || 0, maxPlayers: r.maxPlayers || 0, stats: r.stats ? { cpu: r.stats.cpu, mem: r.stats.mem } : null, error: r.err || '', progress: r.prog || null, pendingCount: Object.keys(s.pending || {}).length, typeName: typeOf(s).name, pluginDir: typeOf(s).dir, canPlugins: !!typeOf(s).dir, mc: s.version }); };
-  const list = () => ({ ok: true, root, list: read().map(view), ips: lanIps(), totalMB: Math.round(os.totalmem() / 1048576), freeMB: Math.round(os.freemem() / 1048576) });
+  const list = () => ({ ok: true, root, base, list: read().map(view), ips: lanIps(), totalMB: Math.round(os.totalmem() / 1048576), freeMB: Math.round(os.freemem() / 1048576) });
   const emit = id => { const s = find(id); if (s) { const v = view(s); send('sks:state', v); if (ctx.onState) { try { ctx.onState(v); } catch (_) {} } } };
   const note = (title, body) => { try { ctx.notify && ctx.notify(title, body); } catch (_) {} };
   const setState = (id, st, err) => { const r = rt(id); r.state = st; r.err = err || ''; emit(id); };
@@ -506,7 +510,9 @@ function create(ctx) {
     const version = String(a.version || info.version || ''); if (!/^\d+(\.\d+){1,2}$/.test(version)) return { ok: false, error: 'Pick the Minecraft version this server runs.' };
     if (!info.eula && !a.eula) return { ok: false, error: 'You have to accept the Minecraft EULA to run a server.' };
     const ram = Math.max(512, Math.min(65536, Math.round(+a.ram || info.ram || 2048))), port = Math.round(+a.port || info.port || 25565); if (!(port >= 1024 && port <= 65535)) return { ok: false, error: 'Use a port between 1024 and 65535.' }; if (read().some(x => x.port === port)) return { ok: false, error: 'Another of your servers already uses port ' + port + '. Pick a different one.' };
-    const mode = im.kind === 'zip' ? 'move' : (['copy', 'inplace'].includes(a.mode) ? a.mode : 'copy'); const id = 's_' + now().toString(36) + Math.random().toString(36).slice(2, 5), folder = slug(name) + '-' + id.slice(-4), target = path.join(root, folder);
+    const modeWanted = im.kind === 'zip' ? 'move' : (['copy', 'inplace'].includes(a.mode) ? a.mode : 'copy');
+    if (modeWanted !== 'inplace' && info.sizeBytes) { const fr = freeOf(root); if (fr != null && info.sizeBytes * 1.05 > fr) return { ok: false, error: 'Not enough room on ' + driveOf(root) + ' for this server (needs ' + gbText(info.sizeBytes) + ', only ' + gbText(fr) + ' free). Change where SKBox keeps servers (SKServers > Storage), or choose "Use it where it is".' }; }
+    const mode = modeWanted; const id = 's_' + now().toString(36) + Math.random().toString(36).slice(2, 5), folder = slug(name) + '-' + id.slice(-4), target = path.join(root, folder);
     try {
       fs.mkdirSync(root, { recursive: true });
       if (mode === 'copy') { await fs.promises.cp(im.dir, target, { recursive: true, filter: src => !/[\\/](session\.lock)$/.test(src) }); }
@@ -517,7 +523,7 @@ function create(ctx) {
       const rec = { id, name, type, version, build: '', ram, port, folder, java: javaFor(version), jar: info.jar, created: now(), autoStart: false, autoRestart: true, jvm: '', motd: '', imported: true }; if (type === 'custom') rec.plugDir = info.plugDir || ''; if (mode === 'inplace') rec.path = im.dir; write(read().concat([rec])); imports.delete(String(a.token));
       let warn = ''; try { await ensureJava(rec.java, id); } catch (e) { warn = 'Java could not be downloaded yet (' + String((e && e.message) || e).slice(0, 80) + '). SKBox will try again when you start the server.'; }
       emit(id); return { ok: true, id, server: view(find(id)), warn, mode };
-    } catch (e) { if (mode === 'copy') try { fs.rmSync(target, { recursive: true, force: true }); } catch {} return { ok: false, error: 'The import did not finish: ' + String((e && e.message) || e).slice(0, 120) }; }
+    } catch (e) { if (mode === 'copy') try { fs.rmSync(target, { recursive: true, force: true }); } catch {} return { ok: false, error: friendlyErr(e, root, 'The import did not finish') }; }
   }
   // put a world (folder or zip) into an existing server; the old world is moved aside, never deleted
   async function worldImport(a) {
@@ -556,6 +562,50 @@ function create(ctx) {
   }
   const tickTimer = setInterval(tick, ctx.tickMs || 15000); if (tickTimer.unref) tickTimer.unref();
 
+
+
+  // ---------- storage location ----------
+  const gbText = b => b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1048576)) + ' MB';
+  const driveOf = p => { const r = path.parse(path.resolve(p)).root; return r ? r.replace(/[\\/]+$/, '') : p; };
+  function freeOf(p) { try { let d = path.resolve(p); while (!fs.existsSync(d)) { const up = path.dirname(d); if (up === d) break; d = up; } const st = fs.statfsSync(d); return Number(st.bavail) * Number(st.bsize); } catch { return null; } }
+  function friendlyErr(e, where, lead) { const c = e && e.code; if (c === 'ENOSPC') return lead + ': the drive ' + driveOf(where) + ' is full. Free some space, or change where SKBox keeps servers (SKServers > Storage).'; if (c === 'EACCES' || c === 'EPERM') return lead + ': Windows would not let SKBox write there. Pick a different folder.'; if (c === 'ENOENT') return lead + ': a file or folder was not found (is the drive plugged in?).'; return lead + ': ' + String((e && e.message) || e).slice(0, 120); }
+  async function treeStats(p) { let bytes = 0, files = 0; const walk = async d => { let es; try { es = await fs.promises.readdir(d, { withFileTypes: true }); } catch { return; } for (const e of es) { const f = path.join(d, e.name); if (e.isDirectory()) await walk(f); else if (e.isFile()) { try { bytes += (await fs.promises.stat(f)).size; files++; } catch {} } } }; await walk(p); return { bytes, files }; }
+  async function copyTree(src, dst, onBytes) { await fs.promises.mkdir(dst, { recursive: true }); const es = await fs.promises.readdir(src, { withFileTypes: true }); for (const e of es) { const a = path.join(src, e.name), b = path.join(dst, e.name); if (e.isDirectory()) await copyTree(a, b, onBytes); else if (e.isFile()) { if (e.name === 'session.lock') continue; await fs.promises.copyFile(a, b); try { onBytes((await fs.promises.stat(b)).size); } catch {} } } }
+  const baseParts = b => ['servers', 'server-backups', 'java'].map(n => [n, path.join(b, n)]);
+  async function baseInfo() {
+    const parts = baseParts(base).filter(x => fs.existsSync(x[1])); let used = 0; for (const x of parts) used += (await treeStats(x[1])).bytes;
+    return { ok: true, base, isDefault: base === defBase, def: defBase, usedBytes: used, freeBytes: freeOf(base), drive: driveOf(base), exists: fs.existsSync(base), running: anyRunning(), servers: read().length, inPlace: read().filter(x => x.path).length };
+  }
+  async function baseMove(a) {
+    a = a || {}; if (movingBase) return { ok: false, error: 'SKBox is already moving your servers.' };
+    if (anyRunning()) return { ok: false, error: 'Stop all your servers first, then try again.' };
+    let to = String(a.to || '').trim(); if (!to || !path.isAbsolute(to)) return { ok: false, error: 'Pick a folder on the drive you want, like D:\\.' };
+    to = path.resolve(to); if (to !== defBase && !/skbox/i.test(path.basename(to))) to = path.join(to, 'SKBox');   // never scatter folders straight into a drive or a general folder
+    if (path.resolve(to) === path.resolve(base)) return { ok: false, error: 'Your servers already live there.' };
+    const inside = (p, q) => { const r = path.relative(p, q); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+    if (inside(base, to) || inside(to, base)) return { ok: false, error: 'Pick a folder that is not inside the current one.' };
+    try { fs.mkdirSync(to, { recursive: true }); fs.accessSync(to, fs.constants.W_OK); } catch (e) { return { ok: false, error: friendlyErr(e, to, 'SKBox cannot use that folder') }; }
+    const setBase = () => { ctx.store.write('sksBase', to === defBase ? '' : to); applyBase(to); sideCache = {}; mirror(read()); };
+    if (a.move === false) { setBase(); emitAll(); return { ok: true, moved: false, base }; }
+    const src = baseParts(base).filter(x => fs.existsSync(x[1])), pairs = src.map(x => [x[1], path.join(to, x[0])]);
+    for (const pr of pairs) { try { if (fs.existsSync(pr[1]) && fs.readdirSync(pr[1]).length) return { ok: false, error: 'That folder already has a "' + path.basename(pr[1]) + '" folder with files in it. Pick an empty folder.' }; } catch {} }
+    movingBase = true; const made = [];
+    try {
+      let total = 0, files = 0; progress('base', 'scan', 0, 'Measuring what to move\u2026'); for (const pr of pairs) { const t = await treeStats(pr[0]); total += t.bytes; files += t.files; }
+      const fr = freeOf(to); if (fr != null && total * 1.05 > fr) return { ok: false, error: 'Not enough room on ' + driveOf(to) + ': needs ' + gbText(total) + ', only ' + gbText(fr) + ' free.' };
+      let done = 0, lastP = -1; const tick = n => { done += n; const pct = total ? Math.min(99, Math.round(done / total * 100)) : 99; if (pct !== lastP) { lastP = pct; progress('base', 'copy', pct, 'Copying to ' + to + ' \u00B7 ' + gbText(done) + ' of ' + gbText(total)); } };
+      for (const pr of pairs) { made.push(pr[1]); await copyTree(pr[0], pr[1], tick); }
+      progress('base', 'verify', 99, 'Checking the copy\u2026'); let got = 0, gotF = 0; for (const pr of pairs) { const t = await treeStats(pr[1]); got += t.bytes; gotF += t.files; }
+      const lock = pairs.length ? 0 : 0; if (gotF < files - 20 || got < total * 0.999 - 1024 * 1024) { throw Object.assign(new Error('The copy did not match the original (' + gotF + ' of ' + files + ' files). Nothing was changed.'), { code: 'VERIFY' }); }
+      const old = base; setBase(); let leftover = 0;
+      progress('base', 'clean', 99, 'Removing the old copy\u2026'); for (const pr of pairs) { try { fs.rmSync(pr[0], { recursive: true, force: true }); } catch { leftover++; } if (fs.existsSync(pr[0])) leftover++; }
+      emitAll(); return { ok: true, moved: true, base, from: old, bytes: total, leftover: leftover > 0 };
+    } catch (e) {
+      for (const d of made) try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
+      return { ok: false, error: e && e.code === 'VERIFY' ? e.message : friendlyErr(e, to, 'The move did not finish. Nothing was changed') };
+    } finally { movingBase = false; }
+  }
+  const emitAll = () => { try { read().forEach(s => emit(s.id)); } catch {} };
 
   // ---------- live CPU and memory ----------
   // One small sampler per running server. CPU is shown as a share of the whole PC (like Task Manager), memory as what Java really uses.
@@ -642,6 +692,7 @@ function create(ctx) {
 
   async function run(name, a) {
     if (typeof name !== 'string' || !name.startsWith('sks')) return null; a = a || {};
+    if (movingBase && !/^(sksBase|sksList|sksStats|sksLog|sksFs(List|Roots|Read))/.test(name)) return { ok: false, error: 'SKBox is moving your servers. Wait until it finishes.' };
     try {
       switch (name) {
         case 'sksList': return list();
@@ -666,6 +717,8 @@ function create(ctx) {
         case 'sksPlugins': return installed(String(a.id || a));
         case 'sksPluginSearch': return await searchPlugins(a);
         case 'sksPluginFeatured': return await featured(String(a.id || a));
+        case 'sksBaseInfo': return await baseInfo();
+        case 'sksBaseMove': return await baseMove(a);
         case 'sksStats': return statsOf(String((a && a.id) || a));
         case 'sksFsRoots': return fsRoots();
         case 'sksFsList': return fsList(a || {});

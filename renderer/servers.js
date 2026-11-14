@@ -42,8 +42,35 @@
   // ---------- list ----------
   K.screens.servers = async function (root) {
     hints([['A', 'Open'], ['Y', 'Quick actions'], ['B', 'Back']]); S.backFn = () => K.go('library');
-    root.innerHTML = '<div class="page"><h1>SKServers</h1><div class="sub">Make and run Minecraft servers on this PC, with a plugin and mod store. Pick Paper for plugins, Fabric for mods.</div><div class="ssum"></div><div class="sgrid"></div></div>';
-    const grid = root.querySelector('.sgrid'), sum = root.querySelector('.ssum'); let first = null;
+    root.innerHTML = '<div class="page"><h1>SKServers</h1><div class="sub">Make and run Minecraft servers on this PC, with a plugin and mod store. Pick Paper for plugins, Fabric for mods.</div><div class="ssum"></div><div class="sstore"></div><div class="sgrid"></div></div>';
+    const grid = root.querySelector('.sgrid'), sum = root.querySelector('.ssum'), stBox = root.querySelector('.sstore'); let first = null;
+    // ----- where servers are stored (move them to another drive) -----
+    const gbT = b => b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1048576)) + ' MB';
+    const finalPath = p => { p = String(p || '').replace(/[\\/]+$/, ''); return !p || /skbox/i.test(p.split(/[\\/]/).pop()) ? p : p + '\\SKBox'; };
+    const storeRefresh = async () => {
+      const r = await X('sksBaseInfo'); if (!stBox.isConnected || !r || !r.ok) return;
+      stBox.innerHTML = ''; const b = nav(el('button', 'btn sstorebtn', '\u{1F4BE} Storage: ' + esc(r.base) + ' \u00B7 ' + gbT(r.usedBytes) + ' used' + (r.freeBytes != null ? ' \u00B7 ' + gbT(r.freeBytes) + ' free on ' + esc(r.drive) : '')));
+      if (!r.exists) b.classList.add('warn'); b.onclick = () => storageMenu(r); stBox.appendChild(b);
+      if (!r.exists) stBox.appendChild(el('div', 'sub', 'That folder cannot be reached right now (is the drive plugged in?). Your servers will show as missing until it is back.'));
+    };
+    const doMove = async (to, move, r) => {
+      if (r.running) return toast('Stop all your servers first');
+      const res = await withProgress('Moving your servers', 'base', () => X('sksBaseMove', { to, move })); if (!res || !res.ok) { say(res); return storeRefresh(); }
+      toast(res.moved ? 'Moved to ' + res.base + (res.leftover ? ' \u00B7 some old files could not be removed from the old folder' : '') : 'New servers will go to ' + res.base); await load(); storeRefresh();
+    };
+    const chooseDest = (to, r) => {
+      const fp = finalPath(to), need = r.usedBytes, has = !!(r.servers || need);
+      menu('Use ' + fp + '?', [
+        { label: has ? 'Move my servers there (' + gbT(need) + ')' : 'Use this folder', fn: () => doMove(to, has, r) },
+        ...(has ? [{ label: 'Only use it for new servers', fn: () => doMove(to, false, r) }] : []),
+        { label: 'Cancel', fn: () => {} }]);
+    };
+    const storageMenu = r => {
+      const items = [{ label: 'Choose a folder or drive\u2026', fn: async () => { const f = await sk.pickFile('folder'); if (f) chooseDest(f, r); } },
+        { label: 'Type a path, like D:\\', fn: () => osk({ title: 'Folder or drive, like D:\\', value: '', submitLabel: 'Next', onDone: v => { v = (v || '').trim().replace(/^"|"$/g, ''); if (v) chooseDest(v, r); }, onCancel: () => {} }) }];
+      if (!r.isDefault) items.push({ label: 'Go back to the default (' + r.def + ')', fn: () => doMove(r.def, !!(r.servers || r.usedBytes), r) });
+      items.push({ label: 'Copy the folder path', fn: () => { X('sksCopy', { text: r.base }); toast('Copied ' + r.base); } }, { label: 'Close', fn: () => {} }); menu('Where SKBox keeps servers', items);
+    };
     const draw = (list, ips, totalMB) => {
       if (!grid.isConnected) return; const keep = K.current() && K.current().dataset.sid; grid.innerHTML = ''; let focusEl = null;
       const runN = list.filter(x => x.state === 'running').length, plN = list.reduce((a, x) => a + (x.state === 'running' ? x.players.length : 0), 0); sum.innerHTML = list.length ? '<span><b>' + list.length + '</b> server' + (list.length === 1 ? '' : 's') + '</span><span><b>' + runN + '</b> running</span><span><b>' + plN + '</b> player' + (plN === 1 ? '' : 's') + ' online</span>' : '';
@@ -56,7 +83,7 @@
       if (!first) { const lastC = S.settings.lastServer && grid.querySelector('[data-sid="' + S.settings.lastServer + '"]'); first = focusEl || lastC || (list[0] ? grid.firstChild : n); ensureFocus(root, first); } else if (focusEl) focus(focusEl);
     };
     let last = { list: [], totalMB: 8192 }; if (!K.sksRecovered) { K.sksRecovered = true; X('sksRecover').then(r => { if (r && r.restored) { toast('Brought back ' + r.restored + ' server' + (r.restored === 1 ? '' : 's') + ' SKBox had lost track of'); } }); }
-    const load = async () => { const r = await X('sksList'); if (!r || !r.ok) return; r.list.forEach(s => { live[s.id] = s; }); last = r; draw(r.list, r.ips, r.totalMB); };
+    const load = async () => { storeRefresh(); const r = await X('sksList'); if (!r || !r.ok) return; r.list.forEach(s => { live[s.id] = s; }); last = r; draw(r.list, r.ips, r.totalMB); };
     let statT = 0; K.sksOnStats = () => { if (!grid.isConnected || Date.now() - statT < 4000) return; statT = Date.now(); draw(Object.values(live), null, last.totalMB); };
     K.sksOnState = () => { if (grid.isConnected) { draw(Object.values(live), null, last.totalMB); } }; await load();
   };
